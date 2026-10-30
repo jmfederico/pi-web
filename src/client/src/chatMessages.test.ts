@@ -191,7 +191,7 @@ describe("chat message normalization", () => {
   it("preserves references without copying base64 or server-supplied URLs", () => {
     const raw = { role: "user", entryId: "image-entry", content: [{ ...imageReference, data: "QUJD", url: "https://remote.test/not-the-proxy" }] };
     const normalized = normalizeMessages([raw]);
-    expect(normalized).toEqual([{ role: "user", entryId: "image-entry", parts: [{ ...imageReference, sourcePart: "content:0" }] }]);
+    expect(normalized).toEqual([{ role: "user", entryId: "image-entry", parts: [imageReference] }]);
     expect(normalizeMessages(normalized)).toEqual(normalized);
   });
 

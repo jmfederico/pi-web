@@ -11,7 +11,7 @@ import { samePromptChipTarget, type PromptChipTarget } from "../promptChips";
 import { isCreatingSessionId } from "../route";
 import { clearDraft, moveDraft, saveDraft } from "../promptDraftStorage";
 import { clearStagedAttachments, moveStagedAttachments } from "../promptAttachmentStaging";
-import { PendingFormState } from "../pendingFormState";
+import { clearAskDraft } from "../askDrafts";
 import { ChatTranscriptStore } from "../chatTranscriptStore";
 import { isHistoryTailSlice } from "../chatHistoryCache";
 import { isShellInput } from "../inputModes";
@@ -75,7 +75,6 @@ export interface SessionControllerDependencies {
   automaticSessionCandidates?: (sessions: SessionInfo[]) => SessionInfo[];
   replacePromptEditorText?: (replacement: PromptEditorTextReplacement) => void | Promise<void>;
   onSelectedSessionReady?: (selection: SelectedSessionReady) => void;
-  pendingForms?: PendingFormState;
   /** Capture before reading; publish only an accepted authoritative runtime snapshot. */
   observeSessionSnapshot?: (machineId: string, sessionId: string) => (status: SessionStatus) => void;
   /** Selection can be restored without joining a transcript hidden by the shell. */
@@ -157,7 +156,6 @@ export class SessionController {
   private readonly automaticSessionCandidates: (sessions: SessionInfo[]) => SessionInfo[];
   private readonly replacePromptEditorText: SessionControllerDependencies["replacePromptEditorText"];
   private readonly onSelectedSessionReady: SessionControllerDependencies["onSelectedSessionReady"];
-  readonly pendingForms: PendingFormState;
   private readonly observeSessionSnapshot: SessionControllerDependencies["observeSessionSnapshot"];
   private readonly isChatVisible: () => boolean;
   private selectedSessionLoadDeferred = false;
@@ -213,7 +211,6 @@ export class SessionController {
     this.automaticSessionCandidates = deps.automaticSessionCandidates ?? ((sessions) => sessions);
     this.replacePromptEditorText = deps.replacePromptEditorText;
     this.onSelectedSessionReady = deps.onSelectedSessionReady;
-    this.pendingForms = deps.pendingForms ?? new PendingFormState();
     this.observeSessionSnapshot = deps.observeSessionSnapshot;
     this.isChatVisible = deps.isChatVisible ?? (() => true);
     this.onModelScopeChanged = deps.onModelScopeChanged;
@@ -1084,7 +1081,6 @@ export class SessionController {
     if (session === undefined || !isTransientNewSessionInfo(session, this.statusForSession(session))) return;
     const pendingStart = isClientPendingStartSessionInfo(session) ? this.pendingSessionStarts.get(session.id) : undefined;
     if (pendingStart !== undefined) {
-      this.pendingForms.clearScope(machineSessionKey(pendingStart.machineId, pendingStart.tempId));
       pendingStart.discarded = true;
       pendingStart.queuedSends = [];
     }
@@ -1266,7 +1262,7 @@ export class SessionController {
     const machineId = selectedMachineId(this.getState());
     const errorOwner = this.captureSessionErrorOwner(session);
     try {
-      this.applyStatus(await this.api.setModel(session, provider, modelId, machineId), machineId);
+      this.applyStatus(await this.api.setModel(session, provider, modelId, machineId));
       await this.refreshAvailableThinkingLevels();
     } catch (error) {
       this.reportSessionError(session, machineId, error, errorOwner);
@@ -1279,7 +1275,7 @@ export class SessionController {
     const machineId = selectedMachineId(this.getState());
     const errorOwner = this.captureSessionErrorOwner(session);
     try {
-      this.applyStatus(await this.api.cycleModel(session, direction, machineId), machineId);
+      this.applyStatus(await this.api.cycleModel(session, direction, machineId));
       await this.refreshAvailableThinkingLevels();
     } catch (error) {
       this.reportSessionError(session, machineId, error, errorOwner);
@@ -1317,7 +1313,7 @@ export class SessionController {
     const machineId = selectedMachineId(this.getState());
     const errorOwner = this.captureSessionErrorOwner(session);
     try {
-      this.applyStatus(await this.api.setThinkingLevel(session, level, machineId), machineId);
+      this.applyStatus(await this.api.setThinkingLevel(session, level, machineId));
     } catch (error) {
       this.reportSessionError(session, machineId, error, errorOwner);
     }
@@ -1329,7 +1325,7 @@ export class SessionController {
     const machineId = selectedMachineId(this.getState());
     const errorOwner = this.captureSessionErrorOwner(session);
     try {
-      this.applyStatus(await this.api.cycleThinkingLevel(session, machineId), machineId);
+      this.applyStatus(await this.api.cycleThinkingLevel(session, machineId));
     } catch (error) {
       this.reportSessionError(session, machineId, error, errorOwner);
     }
@@ -1420,7 +1416,6 @@ export class SessionController {
     const selectionSeq = this.selectionSeq;
     try {
       const response = await close(session, machineId);
-      this.pendingForms.syncDialogs(machineSessionKey(machineId, session.id), (response.sessionStatus.pendingDialogs ?? []).map((dialog) => dialog.dialogId));
       if (!this.isCurrentSessionSelection(session.id, machineId, selectionSeq)) return;
       // When this call closed the dialog, its outcome is recorded right away so
       // the card shows what the user gave; the daemon's dialog.closed event
@@ -1454,8 +1449,6 @@ export class SessionController {
     const selectionSeq = this.selectionSeq;
     try {
       const response = await close({ ...session, id: backendSessionId }, pending.machineId);
-      const scopeId = this.pendingSessionStarts.get(session.id) === pending ? session.id : backendSessionId;
-      this.pendingForms.syncDialogs(machineSessionKey(pending.machineId, scopeId), (response.sessionStatus.pendingDialogs ?? []).map((dialog) => dialog.dialogId));
       if (selectionSeq !== this.selectionSeq || this.getState().selectedSession?.id !== session.id) return;
       // Same outcome-first ordering as the ready-session path: the card shows
       // what the user gave, and the daemon's dialog.closed frame then finds
@@ -1480,7 +1473,7 @@ export class SessionController {
     const selectionSeq = this.selectionSeq;
     try {
       const status = await send(session, machineId);
-      this.pendingForms.clearAsk(machineSessionKey(machineId, session.id), askId);
+      clearAskDraft(machineSessionKey(machineId, session.id), askId);
       if (this.isCurrentSessionSelection(session.id, machineId, selectionSeq)) this.applyStatus(status);
     } catch (error) {
       this.reportSessionError(session, machineId, error, errorOwner);
@@ -1944,7 +1937,6 @@ export class SessionController {
     }
 
     rememberCachedNewSession(session, pending.machineId);
-    this.pendingForms.promoteScope(machineSessionKey(pending.machineId, tempId), machineSessionKey(pending.machineId, session.id));
     moveDraft(machineSessionKey(pending.machineId, tempId), machineSessionKey(pending.machineId, session.id));
     moveStagedAttachments(machineSessionKey(pending.machineId, tempId), machineSessionKey(pending.machineId, session.id));
     const cachedSession = markCachedNewSessionInfo(session, pending.machineId);
@@ -2058,7 +2050,6 @@ export class SessionController {
     const pending = this.pendingSessionStarts.get(tempId);
     if (pending === undefined) return;
     this.pendingSessionStarts.delete(tempId);
-    this.pendingForms.clearScope(machineSessionKey(pending.machineId, tempId));
     const wasDiscarded = pending.discarded;
     // The pending start is dead: stop routing its dialog frames (a card on the
     // failed row could never be answered) and drop the early-subscribed socket
@@ -2243,10 +2234,8 @@ export class SessionController {
     });
   }
 
-  private applyStatus(status: SessionStatus, machineId = selectedMachineId(this.getState())) {
-    this.pendingForms.syncDialogs(machineSessionKey(machineId, status.sessionId), (status.pendingDialogs ?? []).map((dialog) => dialog.dialogId));
+  private applyStatus(status: SessionStatus) {
     const state = this.getState();
-    if (selectedMachineId(state) !== machineId) return;
     const isSelected = state.selectedSession?.id === status.sessionId;
     const clearsStaleActivity = state.sessionActivities[status.sessionId]?.phase === "active" && !isSessionActive(status);
     this.setState({
@@ -2283,13 +2272,9 @@ export class SessionController {
 
   private recordClosedDialog(closed: ClosedExtensionDialog): void {
     const state = this.getState();
-    const pendingDialogs = state.pendingDialogs.filter((pending) => pending.dialogId !== closed.dialog.dialogId);
-    if (state.selectedSession !== undefined) {
-      this.pendingForms.syncDialogs(machineSessionKey(selectedMachineId(state), state.selectedSession.id), pendingDialogs.map((dialog) => dialog.dialogId));
-    }
     if (state.closedDialogs.some((entry) => entry.dialog.dialogId === closed.dialog.dialogId)) return;
     this.setState({
-      pendingDialogs,
+      pendingDialogs: state.pendingDialogs.filter((pending) => pending.dialogId !== closed.dialog.dialogId),
       closedDialogs: [...state.closedDialogs, closed],
     });
   }
@@ -2501,8 +2486,7 @@ export class SessionController {
    * truthful too — the readiness swap seeds the selected status from it.
    */
   private applyPendingStartStatus(pending: PendingSessionStart, status: SessionStatus): void {
-    this.applyStatus(status, pending.machineId);
-    this.pendingForms.syncDialogs(machineSessionKey(pending.machineId, pending.tempId), (status.pendingDialogs ?? []).map((dialog) => dialog.dialogId));
+    this.applyStatus(status);
     if (pending.discarded || this.getState().selectedSession?.id !== pending.tempId) return;
     this.setState({ pendingDialogs: status.pendingDialogs ?? [] });
   }

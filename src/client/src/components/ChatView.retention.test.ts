@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { ChatView } from "./ChatView";
 import { applyTranscriptEvent } from "../chatTranscript";
 import type { ChatLine } from "./shared";
@@ -7,7 +7,6 @@ import type { ChatLine } from "./shared";
 afterEach(() => {
   document.body.replaceChildren();
   localStorage.clear();
-  vi.restoreAllMocks();
 });
 
 function textMessage(role: ChatLine["role"], text: string): ChatLine {
@@ -87,19 +86,8 @@ describe("transcript DOM ownership", () => {
     await settle(view);
     const reply = transcript(view).querySelector("article[data-index='1']");
     const formatted = reply?.querySelector("formatted-text");
-    const events = transcript(view).querySelector<HTMLDetailsElement>("details.event-group");
-    if (thinking && events !== null) {
-      events.open = true;
-      events.dispatchEvent(new Event("toggle"));
-      await settle(view);
-    }
-    const eventBody = events?.querySelector("section.group-msg");
-    const thinkingText = eventBody?.querySelector("formatted-text");
+    const events = transcript(view).querySelector("details.event-group");
     expect(reply).not.toBeNull();
-    if (thinking) {
-      expect(eventBody).toBeInstanceOf(HTMLElement);
-      expect(thinkingText).toBeInstanceOf(HTMLElement);
-    }
 
     view.messages = applyTranscriptEvent(view.messages, {
       type: "message.end",
@@ -112,11 +100,7 @@ describe("transcript DOM ownership", () => {
     expect(transcript(view).querySelector("article[data-index='1']")).toBe(reply);
     expect(reply?.querySelector("formatted-text")).toBe(formatted);
     expect(reply?.getAttribute("data-scroll-anchor-id")).toContain("reply-id");
-    if (thinking) {
-      expect(transcript(view).querySelector("details.event-group")).toBe(events);
-      expect(events?.querySelector("section.group-msg")).toBe(eventBody);
-      expect(eventBody?.querySelector("formatted-text")).toBe(thinkingText);
-    }
+    if (thinking) expect(transcript(view).querySelector("details.event-group")).toBe(events);
 
     // Durable identity continues to own the same node after a history prepend,
     // even when raw page offsets and normalized display indexes differ.
@@ -124,30 +108,6 @@ describe("transcript DOM ownership", () => {
     view.messages = [{ ...textMessage("user", "earlier"), entryId: "earlier-id" }, ...view.messages];
     await settle(view);
     expect(transcript(view).querySelector("article[data-index='2']")).toBe(reply);
-  });
-
-  it("retains an expanded activity group and its existing children when earlier events merge into it", async () => {
-    const view = new ChatView();
-    view.sessionId = "session";
-    view.messageStart = 10;
-    const event: ChatLine = { role: "assistant", entryId: "existing", parts: [{ type: "thinking", text: "existing reasoning" }] };
-    view.messages = [event, { ...textMessage("assistant", "answer"), entryId: "answer" }];
-    document.body.append(view);
-    await settle(view);
-    const group = transcript(view).querySelector<HTMLDetailsElement>("details.event-group");
-    if (group === null) throw new Error("Missing activity group");
-    group.open = true;
-    group.dispatchEvent(new Event("toggle"));
-    await settle(view);
-    const child = group.querySelector("section[data-index='10']");
-    expect(child).not.toBeNull();
-
-    view.messageStart = 9;
-    view.messages = [{ role: "assistant", entryId: "earlier", parts: [{ type: "thinking", text: "earlier reasoning" }] }, ...view.messages];
-    await settle(view);
-    expect(transcript(view).querySelector("details.event-group")).toBe(group);
-    expect(group.open).toBe(true);
-    expect(group.querySelector("section[data-index='10']")).toBe(child);
   });
 
   it("replaces a committed message with a different entry at the same index", async () => {

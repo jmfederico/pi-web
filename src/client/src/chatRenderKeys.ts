@@ -3,8 +3,6 @@ export interface ChatRenderItem {
   slot: string;
   /** Authoritative identity, once the message has been committed. */
   identity?: string;
-  /** Group members let prepends/growth retain the owner even when an edge changes. */
-  identities?: readonly string[];
 }
 
 interface RenderKey extends ChatRenderItem {
@@ -23,25 +21,15 @@ export class ChatRenderKeys {
       this.previous = [];
       this.sequence = 0;
     }
-    const identities = new Map<string, string[]>();
-    for (const item of this.previous) {
-      for (const identity of item.identities ?? (item.identity === undefined ? [] : [item.identity])) {
-        const owners = identities.get(identity) ?? [];
-        owners.push(item.key);
-        identities.set(identity, owners);
-      }
-    }
+    const identities = new Map(this.previous.filter((item) => item.identity !== undefined).map((item) => [item.identity, item.key]));
     const provisional = new Map(this.previous.filter((item) => item.identity === undefined).map((item) => [item.slot, item.key]));
-    const used = new Set<string>();
-    this.previous = items.map((item) => {
-      const candidates = item.identities ?? (item.identity === undefined ? [] : [item.identity]);
-      const inherited = candidates.flatMap((identity) => identities.get(identity) ?? []).find((key) => !used.has(key));
-      const fallback = provisional.get(item.slot);
-      const key = inherited ?? (fallback !== undefined && !used.has(fallback) ? fallback : `render:${String(this.sequence++)}`);
-      used.add(key);
-      return { ...item, key };
-    });
-    // Reconcile only the current render, not every message ever visited.
+    this.previous = items.map((item) => ({
+      ...item,
+      key: (item.identity === undefined ? undefined : identities.get(item.identity))
+        ?? provisional.get(item.slot)
+        ?? `render:${String(this.sequence++)}`,
+    }));
+    // Retain only the rendered window, not every message ever visited.
     return this.previous.map((item) => item.key);
   }
 }

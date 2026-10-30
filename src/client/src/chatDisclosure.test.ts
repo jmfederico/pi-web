@@ -34,16 +34,6 @@ describe("ChatDisclosureController", () => {
     expect(controller.isOpen("remote-only", false)).toBe(true);
   });
 
-  it("distinguishes stored choices from untouched defaults", () => {
-    const controller = new ChatDisclosureController(new MemoryDisclosureStorage());
-    controller.syncSession("session");
-    expect(controller.storedChoice("untouched")).toBeUndefined();
-    controller.applyToggle("closed", false, true);
-    controller.applyToggle("open", true, false);
-    expect(controller.storedChoice("closed")).toBe(false);
-    expect(controller.storedChoice("open")).toBe(true);
-  });
-
   it("keeps a default-open live group closed after the user closes it", () => {
     const storage = new MemoryDisclosureStorage();
     const controller = new ChatDisclosureController(storage);

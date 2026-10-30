@@ -80,12 +80,6 @@ export class ChatDisclosureController {
     return true;
   }
 
-  storedChoice(key: string): boolean | undefined {
-    if (this.openGroupKeys.has(key)) return true;
-    if (this.closedDefaultOpenGroupKeys.has(key)) return false;
-    return undefined;
-  }
-
   snapshot(): ChatDisclosureSnapshot {
     return {
       open: [...this.openGroupKeys],

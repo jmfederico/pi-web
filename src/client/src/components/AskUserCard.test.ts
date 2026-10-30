@@ -2,76 +2,12 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AskUserOutcome, AskUserQuestion, AskUserRequest } from "../../../shared/apiTypes";
-import { PendingFormState } from "../pendingFormState";
 import { loadAskDraft, saveAskDraft } from "../askDrafts";
 import { AskUserCard, type AskUserSubmitCallback } from "./AskUserCard";
 
 afterEach(() => {
   document.body.replaceChildren();
   localStorage.clear();
-});
-
-describe("ask-user-card external lifetime", () => {
-  it("restores memory drafts without storage, keeps confirmation local, and shares in-flight sends across remounts", async () => {
-    const unavailable = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("unavailable"); });
-    const unreadable = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("unavailable"); });
-    const state = new PendingFormState();
-    let finish!: () => void;
-    const submit = vi.fn<AskUserSubmitCallback>(() => new Promise<void>((resolve) => { finish = resolve; }));
-    const ask = openAsk([question("text", "Text?", []), question("later", "Later?", [])]);
-    const mount = async (scope = "machine:session"): Promise<AskUserCard> => {
-      const card = await mountOpenAsk(ask, submit);
-      card.formState = state;
-      card.draftSessionId = scope;
-      await card.updateComplete;
-      return card;
-    };
-    try {
-      const first = await mount();
-      const text = requiredElement(renderRoot(first).querySelector("textarea"), "text");
-      text.value = "memory draft";
-      text.dispatchEvent(new Event("input"));
-      await first.updateComplete;
-      buttonWithText(renderRoot(first), "Send answers").click();
-      await first.updateComplete;
-      first.remove();
-      const second = await mount();
-      expect(renderRoot(second).querySelector("textarea")?.value).toBe("memory draft");
-      expect(renderRoot(second).querySelector(".send-anyway")).toBeNull();
-      buttonWithText(renderRoot(second), "Send answers").click();
-      await second.updateComplete;
-      const send = requiredElement(renderRoot(second).querySelector<HTMLButtonElement>(".send-anyway"), "confirmation");
-      send.click();
-      await Promise.resolve();
-      expect(submit).toHaveBeenCalledOnce();
-      second.remove();
-      const third = await mount();
-      expect(buttonWithText(renderRoot(third), "Sending…").disabled).toBe(true);
-      expect(renderRoot(third).querySelector("fieldset")?.disabled).toBe(true);
-      renderRoot(third).querySelector("form")?.dispatchEvent(new Event("submit", { cancelable: true }));
-      expect(submit).toHaveBeenCalledOnce();
-      const isolated = await mount("other-machine:session");
-      expect(renderRoot(isolated).querySelector("textarea")?.value).toBe("");
-      third.draftSessionId = "rebound";
-      await third.updateComplete;
-      finish();
-      await Promise.resolve();
-      await Promise.resolve();
-      await third.updateComplete;
-      expect(renderRoot(third).querySelector("textarea")?.value).toBe("");
-      const retry = await mount();
-      expect(renderRoot(retry).querySelector("textarea")?.value).toBe("memory draft");
-      buttonWithText(renderRoot(retry), "Send answers").click();
-      await retry.updateComplete;
-      buttonWithText(renderRoot(retry), "Send anyway").click();
-      await Promise.resolve();
-      expect(submit).toHaveBeenCalledTimes(2);
-      finish();
-    } finally {
-      unavailable.mockRestore();
-      unreadable.mockRestore();
-    }
-  });
 });
 
 describe("ask-user-card live form", () => {
@@ -357,7 +293,6 @@ describe("ask-user-card live form", () => {
     buttonWithText(reloadedRoot, "Send answers").click();
     await Promise.resolve();
     expect(onSubmit).toHaveBeenCalledWith("ask-1", { answers: [{ id: "editor", values: ["vim"] }] });
-    await reloaded.formState.get({ scope: reloaded.draftSessionId, kind: "ask", requestId: "ask-1" }).operation;
     buttonWithText(reloadedRoot, "Add a comment").click();
     await reloaded.updateComplete;
     expect(commentTextarea(reloadedRoot, 0).value).toBe("Only for quick edits.");
@@ -393,7 +328,6 @@ describe("ask-user-card live form", () => {
     expect(onSubmit).toHaveBeenCalledWith("ask-1", {
       answers: [{ id: "editor", values: ["vim"], comment: "Only for quick edits." }],
     });
-    await reloaded.formState.get({ scope: reloaded.draftSessionId, kind: "ask", requestId: "ask-1" }).operation;
     inputWithValue(reloadedRoot, "__pi_web_other__").click();
     await reloaded.updateComplete;
     expect(requiredElement(reloadedRoot.querySelector("textarea"), "custom textarea").value).toBe("Emacs");

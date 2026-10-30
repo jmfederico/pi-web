@@ -14,7 +14,6 @@ import {
   type ExtensionDialogCloseReason,
   type PendingExtensionDialog,
 } from "../../../shared/apiTypes";
-import { PendingFormState, pendingFormKey, type PendingFormIdentity } from "../pendingFormState";
 import type { ClosedExtensionDialog } from "../appState";
 
 export type ExtensionDialogAnswerCallback = (dialogId: string, value: ExtensionDialogAnswer) => void | Promise<void>;
@@ -76,8 +75,8 @@ export function extensionDialogCountdownText(timeoutAt: string | undefined, nowM
  * One extension dialog opened by `ctx.ui.confirm()`, `ctx.ui.select()`, or
  * `ctx.ui.input()`.
  *
- * The supplied form state owns input and in-flight operations across remounts.
- * Countdown and answer reveal remain card-local; the daemon remains the
+ * The card owns only browser-local form state (the half-typed input, the
+ * in-flight close flag, the display-only countdown); the daemon remains the
  * source of truth for whether the dialog is open. Closed mode renders the
  * settled outcome — a browser-local record that stays until dismissed — for a
  * browser that saw the dialog open.
@@ -96,17 +95,8 @@ export class ExtensionDialogCard extends LitElement {
   @property({ attribute: false }) onCancel?: ExtensionDialogCancelCallback;
   @property({ attribute: false }) onDismiss?: ExtensionDialogDismissCallback;
 
-  @property({ attribute: false }) formState: PendingFormState = new PendingFormState();
-  @property({ attribute: false }) formScope = "";
-  private unsubscribe: (() => void) | undefined;
-  private boundState?: PendingFormState;
-  private boundKey?: string;
-
-  private get formIdentity(): PendingFormIdentity {
-    return { scope: this.formScope, kind: "dialog", requestId: this.outcome?.dialog.dialogId ?? this.dialog?.dialogId ?? "" };
-  }
-  private get inputValue(): string { return this.formState.get(this.formIdentity).input; }
-  private get closing(): boolean { return this.formState.get(this.formIdentity).operation !== undefined; }
+  @state() private inputValue = "";
+  @state() private closing = false;
   @state() private answerVisible = false;
   @state() private countdownNow = 0;
   private dialogIdentity: string | undefined;
@@ -115,34 +105,24 @@ export class ExtensionDialogCard extends LitElement {
   override connectedCallback(): void {
     super.connectedCallback();
     this.syncCountdownTimer();
-    this.requestUpdate();
   }
 
   override disconnectedCallback(): void {
     this.answerVisible = false;
-    this.unsubscribe?.();
-    this.unsubscribe = undefined;
     this.stopCountdownTimer();
     super.disconnectedCallback();
   }
 
   protected override willUpdate(changed: PropertyValues<this>): void {
-    const key = pendingFormKey(this.formIdentity);
-    const active = this.isConnected && this.dialog !== undefined && this.outcome === undefined;
-    if (!active || this.boundState !== this.formState || this.boundKey !== key || this.unsubscribe === undefined) {
-      this.unsubscribe?.();
-      this.unsubscribe = undefined;
-      this.boundState = this.formState;
-      this.boundKey = key;
-      if (active) this.unsubscribe = this.formState.subscribe(this.formIdentity, () => { this.requestUpdate(); });
-    }
-    if (!changed.has("dialog") && !changed.has("outcome") && !changed.has("formScope") && !changed.has("formState")) return;
+    if (!changed.has("dialog") && !changed.has("outcome")) return;
     // Identity is keyed by dialogId, not object identity: status refreshes
     // re-project the same open dialog as a new object and must not wipe a
     // half-typed answer or an in-flight close.
     const identity = this.currentIdentity();
     if (identity !== this.dialogIdentity) {
       this.dialogIdentity = identity;
+      this.inputValue = "";
+      this.closing = false;
       this.answerVisible = false;
     }
     this.syncCountdownTimer();
@@ -260,13 +240,11 @@ export class ExtensionDialogCard extends LitElement {
   }
 
   private answerDialog(dialog: PendingExtensionDialog, value: ExtensionDialogAnswer): void {
-    const callback = this.onAnswer;
-    if (callback !== undefined) this.closeWith(dialog, () => callback(dialog.dialogId, value));
+    this.closeWith(dialog, () => this.onAnswer?.(dialog.dialogId, value));
   }
 
   private cancelDialog(dialog: PendingExtensionDialog): void {
-    const callback = this.onCancel;
-    if (callback !== undefined) this.closeWith(dialog, () => callback(dialog.dialogId));
+    this.closeWith(dialog, () => this.onCancel?.(dialog.dialogId));
   }
 
   private submitInput(event: SubmitEvent, dialog: PendingExtensionDialog): void {
@@ -276,18 +254,24 @@ export class ExtensionDialogCard extends LitElement {
   }
 
   private closeWith(dialog: PendingExtensionDialog, close: () => void | Promise<void>): void {
-    if (this.closing || this.outcome !== undefined || this.dialog?.dialogId !== dialog.dialogId) return;
-    void this.formState.runExclusive(this.formIdentity, close)
+    if (this.closing) return;
+    this.closing = true;
+    const dialogId = dialog.dialogId;
+    void Promise.resolve()
+      .then(close)
       .catch(() => {
         // The parent controller owns the visible transport error. Keeping this
         // card usable is the only recovery needed at this boundary.
+      })
+      .finally(() => {
+        if (this.dialog?.dialogId === dialogId) this.closing = false;
       });
   }
 
   private changeInput(event: Event): void {
     const input = event.currentTarget;
     if (!(input instanceof HTMLInputElement)) return;
-    this.formState.setInput(this.formIdentity, input.value.slice(0, EXTENSION_DIALOG_INPUT_MAX_LENGTH));
+    this.inputValue = input.value;
   }
 
   private dismissClosed(closed: ClosedExtensionDialog): void {
@@ -295,8 +279,8 @@ export class ExtensionDialogCard extends LitElement {
   }
 
   private currentIdentity(): string | undefined {
-    if (this.outcome !== undefined) return JSON.stringify(["closed", this.formScope, this.outcome.dialog.dialogId]);
-    if (this.dialog !== undefined) return JSON.stringify(["open", this.formScope, this.dialog.dialogId]);
+    if (this.outcome !== undefined) return `closed:${this.outcome.dialog.dialogId}`;
+    if (this.dialog !== undefined) return `open:${this.dialog.dialogId}`;
     return undefined;
   }
 

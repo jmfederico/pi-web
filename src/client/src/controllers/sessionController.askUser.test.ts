@@ -101,7 +101,6 @@ describe("SessionController question responses", () => {
       expect(calls).toEqual([{ askId: ask.askId, answers: [{ id: "q1", values: ["pg"] }], machineId: "local" }]);
       expect(loadAskDraft(sessionKey(oldSession.id), ask.askId)).toEqual({});
       expect(h.state().status).toEqual(returnedStatus);
-      expect(h.controller.pendingForms.get({ scope: sessionKey(oldSession.id), kind: "ask", requestId: ask.askId }).answers).toEqual({});
     } finally {
       h.controller.dispose();
     }

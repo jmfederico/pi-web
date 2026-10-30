@@ -10,8 +10,6 @@ import { ChatMessageActionController } from "./ChatMessageActionController";
 import * as transcript from "./chatTranscriptTemplates";
 import type { TranscriptRenderContext } from "./chatTranscriptTemplates";
 import { ChatDisclosureController } from "../chatDisclosure";
-import { chatPartIdentity, chatLinePresentationIdentity } from "../chatPresentationIdentity";
-import { PendingFormState } from "../pendingFormState";
 import { writeClipboardText } from "../clipboard";
 import { type QueuedMessageAction, type QueuedMessageActionTarget } from "../queuedMessageActions";
 import { chatQueuedMessageSections, renderQueuedMessageSection, type QueuedMessageSection } from "./chat/QueuedMessages";
@@ -23,7 +21,7 @@ import { canonicalEntryActionHeaders, groupChatMessages, groupConsecutiveImageOu
 import { openTranscriptQuestion, transcriptQuestionOutcomes } from "../chatQuestions";
 import { ChatScrollFlows } from "../ChatScrollFlows";
 import { chatScrollScopeKey } from "../chatScrollPosition";
-import { ChatRenderKeys, type ChatRenderItem } from "../chatRenderKeys";
+import { ChatRenderKeys } from "../chatRenderKeys";
 import { DEFAULT_CHAT_BEHAVIORS, type ChatBehaviors } from "../chatBehaviors";
 import type { AskUserSubmission, PendingExtensionDialog, QueuedSessionMessage, SessionActivity, SessionRef, SessionStatus } from "../api";
 import type { ClosedExtensionDialog } from "../appState";
@@ -116,7 +114,6 @@ export class ChatView extends LitElement {
   }
 
   @property({ attribute: false }) messages: ChatLine[] = [];
-  @property({ attribute: false }) formState = new PendingFormState();
   @property() sessionId = "";
   @property({ attribute: false }) onNavigationChange?: (controls: TemplateResult) => void;
   @property() sessionCwd = "";
@@ -292,7 +289,6 @@ export class ChatView extends LitElement {
     }
     if (changed.has("sessionId") || changed.has("machineId") || (changed.has("behaviors") && !this.behaviors.loadImages)) this.imageGalleryDialog?.close();
     if (changed.has("sessionId") || changed.has("machineId")) {
-      this.activityOwners.clear();
       this.transientDisclosures.clear();
       this.lastOpenQuestionId = undefined;
       this.queuedCopyFailed = false;
@@ -341,7 +337,6 @@ export class ChatView extends LitElement {
   }
 
   private readonly renderKeys = new ChatRenderKeys();
-  private readonly activityOwners = new Map<string, { keys: ChatRenderKeys; choice?: boolean }>();
 
   override render() {
     const sourceGroups = this.groupedMessages();
@@ -352,11 +347,16 @@ export class ChatView extends LitElement {
     // DOM reuse, clearing the part reclaims the end markers that the current Lit
     // build retains when repeat items are removed.
     const transcriptIdentity = machineSessionKey(this.machineId, this.sessionId);
-    const keys = this.renderKeys.reconcile(transcriptIdentity, groups.map((group) => this.renderItem(group)));
-    const retainedKeys = new Set(keys);
-    for (const key of this.activityOwners.keys()) {
-      if (!retainedKeys.has(key)) this.activityOwners.delete(key);
-    }
+    const keys = this.renderKeys.reconcile(transcriptIdentity, groups.map((group) => {
+      const source = group.kind === "tool-images" ? group.outputs[0] : group;
+      const index = source.kind === "group" ? source.startIndex : source.index;
+      const message = source.kind === "group" ? source.messages[0]?.message : source.message;
+      const identity = chatLineScrollIdentity(message);
+      return {
+        slot: JSON.stringify([group.kind, index, message?.role]),
+        ...(identity === undefined ? {} : { identity: JSON.stringify([group.kind, identity]) }),
+      };
+    }));
     return html`
       ${this.renderTopNotices()}
       <div class=${this.behaviors.visualEffects ? "chat-wrap" : "chat-wrap plain"}>
@@ -376,14 +376,9 @@ export class ChatView extends LitElement {
             groups,
             (_group, index) => keys[index],
             (group, index) => {
-              const messages = group.kind === "group" ? group.messages.map((event) => event.message)
-                : group.kind === "tool-images" ? group.outputs.map((output) => output.message) : [group.message];
-              const live = this.isLiveTailGroup(groups, index);
-              // A retained activity body needs only its own header ownership.
-              const headers = new Set(messages.filter((message) => entryActionHeaders.has(message)));
-              if (group.kind === "group") return this.renderMessageGroup(group, live, headers, keys[index] ?? String(index));
-              if (group.kind === "tool-images") return this.renderToolImageOutputs(group, headers);
-              return this.renderMessage(group.message, group.index, headers);
+              if (group.kind === "group") return this.renderMessageGroup(group, this.isLiveTailGroup(groups, index), entryActionHeaders);
+              if (group.kind === "tool-images") return this.renderToolImageOutputs(group, entryActionHeaders);
+              return this.renderMessage(group.message, group.index, entryActionHeaders);
             },
           ))}
           ${this.renderQueuedMessages()}
@@ -394,30 +389,6 @@ export class ChatView extends LitElement {
       </div>
       <pi-web-image-gallery-dialog></pi-web-image-gallery-dialog>
     `;
-  }
-
-  private groupedMessages(): ChatGroup[] {
-    if (this.groupedMessagesInput === this.messages && this.groupedMessagesStart === this.messageStart) return this.groupedMessagesCache;
-    this.groupedMessagesInput = this.messages;
-    this.groupedMessagesStart = this.messageStart;
-    this.groupedMessagesCache = groupChatMessages(this.messages, this.messageStart);
-    return this.groupedMessagesCache;
-  }
-
-  private renderItem(group: ChatDisplayGroup): ChatRenderItem {
-    const source = group.kind === "tool-images" ? group.outputs[0] : group;
-    const index = source.kind === "group" ? source.startIndex : source.index;
-    const messages = group.kind === "group" ? group.messages.map((event) => event.message)
-      : group.kind === "tool-images" ? group.outputs.map((output) => output.message) : [group.message];
-    const identities = messages.flatMap((message) => {
-      const identity = this.linePresentationIdentity(message);
-      return identity === undefined ? [] : [JSON.stringify([group.kind, identity])];
-    });
-    const item = {
-      slot: JSON.stringify([group.kind, index, messages[0]?.role]),
-      ...(identities[0] === undefined ? {} : { identity: identities[0], identities }),
-    };
-    return item;
   }
 
   private renderNavigation() {
@@ -441,6 +412,14 @@ export class ChatView extends LitElement {
         .onDismissAllNotifications=${this.onDismissAllNotifications}
       ></session-notification-tray>
     </div>`;
+  }
+
+  private groupedMessages(): ChatGroup[] {
+    if (this.groupedMessagesInput === this.messages && this.groupedMessagesStart === this.messageStart) return this.groupedMessagesCache;
+    this.groupedMessagesInput = this.messages;
+    this.groupedMessagesStart = this.messageStart;
+    this.groupedMessagesCache = groupChatMessages(this.messages, this.messageStart);
+    return this.groupedMessagesCache;
   }
 
   private isLiveTailGroup(groups: readonly ChatDisplayGroup[], index: number): boolean {
@@ -503,8 +482,6 @@ export class ChatView extends LitElement {
         (closed) => html`
           <extension-dialog-card
             class="closed-dialog-card"
-            .formState=${this.formState}
-            .formScope=${machineSessionKey(this.machineId, this.sessionId)}
             .outcome=${closed}
             .onDismiss=${this.onDismissClosedDialog}
           ></extension-dialog-card>
@@ -513,8 +490,6 @@ export class ChatView extends LitElement {
       ${open === undefined ? null : html`
         <extension-dialog-card
           class="open-dialog-card"
-          .formState=${this.formState}
-          .formScope=${machineSessionKey(this.machineId, this.sessionId)}
           .dialog=${open}
           .onAnswer=${this.onAnswerDialog}
           .onCancel=${this.onCancelDialog}
@@ -568,29 +543,15 @@ export class ChatView extends LitElement {
       machineId: this.machineId,
       sessionId: this.sessionId,
       session: this.transcriptSession(),
-      // Retained handlers must not pin the transcript array from their render.
-      sourceMessage: (index) => this.messages[index - this.messageStart],
-      partIntentKey: (message, part, index, partIndex) => this.partIntentKey(message, part, index, partIndex),
-      rowIdentity: (message) => this.linePresentationIdentity(message),
-      rowKey: (message, index) => {
-        const first = message.parts[0];
-        return first === undefined || chatPartIdentity(message, first) === undefined
-          ? JSON.stringify(["legacy-row", index, message.role, first?.type])
-          : JSON.stringify(["row", message.role, this.partIntentKey(message, first, index, 0)]);
-      },
-      formState: this.formState,
+      messages: this.messages,
+      messageStart: this.messageStart,
       behaviors: this.behaviors,
       contentRendering: this.contentRendering,
       workspaceContext: this.workspaceContext,
       anchors: { message: chatMessageAnchorKey, event: chatEventAnchorKey },
       disclosure: {
         isOpen: (key, defaultOpen) => this.isDisclosureOpen(key, defaultOpen),
-        toggle: (key, event, defaultOpen, renderedOpen) => {
-          const details = event.currentTarget;
-          if (!(details instanceof HTMLDetailsElement) || details.open === renderedOpen) return;
-          this.persistDisclosureChoice(key, details.open, defaultOpen);
-          this.requestUpdate();
-        },
+        toggle: (key, event, defaultOpen) => { this.onDisclosureToggle(key, event, defaultOpen); },
       },
       metadata: {
         expandedKey: this.expandedMetaKey,
@@ -599,24 +560,12 @@ export class ChatView extends LitElement {
       },
       actions: this.messageActionController,
       openQuestionId: () => this.openQuestion()?.askId,
-      questionOutcomes: (id) => this.questionOutcomes.get(id) ?? [],
-      hasQuestion: (id) => this.questionIds.has(id),
+      questionOutcomes: this.questionOutcomes,
+      questionIds: this.questionIds,
       askDraftSessionId: this.askDraftSessionId,
       onSubmitAsk: this.onSubmitAsk,
       openImageGallery: (images, index) => { this.openToolImageGallery(images, index); },
     };
-  }
-
-  private linePresentationIdentity(message: ChatLine): string | undefined {
-    return chatLinePresentationIdentity(message) ?? chatLineScrollIdentity(message);
-  }
-
-  private partIntentKey(message: ChatLine, part: ChatPart, index: number, partIndex: number): string {
-    const scope = machineSessionKey(this.machineId, this.sessionId);
-    if (message.streamId !== undefined) {
-      return JSON.stringify([scope, message.streamId, part.sourcePart ?? [part.type, partIndex]]);
-    }
-    return JSON.stringify([scope, chatPartIdentity(message, part) ?? ["legacy-slot", message.entryId ?? index, part.type, partIndex]]);
   }
 
   private renderMessage(message: ChatLine, index: number, entryActionHeaders: ReadonlySet<ChatLine>) {
@@ -627,31 +576,17 @@ export class ChatView extends LitElement {
     return transcript.renderToolImageOutputs(this.transcriptRenderContext(), group, entryActionHeaders);
   }
 
-  private renderMessageGroup(group: Extract<ChatGroup, { kind: "group" }>, liveTail: boolean, entryActionHeaders: ReadonlySet<ChatLine>, renderKey: string) {
+  private renderMessageGroup(group: Extract<ChatGroup, { kind: "group" }>, liveTail: boolean, entryActionHeaders: ReadonlySet<ChatLine> = new Set()) {
     // Quiet mode keeps the live group expanded-on-demand: it is the one group a
     // reader opens while work is running, so its identity must not change as it grows.
     const defaultOpen = liveTail && !this.quietMode;
     const disclosureKey = this.groupDisclosureKey(group, liveTail);
-    let owner = this.activityOwners.get(renderKey);
-    if (owner === undefined) {
-      const choice = this.behaviors.rememberDisclosures
-        ? this.disclosures.storedChoice(disclosureKey) : this.transientDisclosures.get(disclosureKey);
-      owner = { keys: new ChatRenderKeys(), ...(choice === undefined ? {} : { choice }) };
-      this.activityOwners.set(renderKey, owner);
-    }
-    const currentOwner = owner;
-    const open = owner.choice ?? this.isDisclosureOpen(disclosureKey, defaultOpen);
+    const open = this.isDisclosureOpen(disclosureKey, defaultOpen);
     return transcript.renderMessageGroup(this.transcriptRenderContext(), group, liveTail, entryActionHeaders, {
       open,
       anchor: this.groupAnchorKey(group, liveTail),
-      toggle: (event) => {
-        const details = event.currentTarget;
-        if (!(details instanceof HTMLDetailsElement) || details.open === open) return;
-        currentOwner.choice = details.open;
-        this.persistDisclosureChoice(disclosureKey, details.open, defaultOpen);
-        this.requestUpdate();
-      },
-    }, owner.keys);
+      toggle: (event) => { this.onDisclosureToggle(disclosureKey, event, defaultOpen); },
+    });
   }
 
   private messageMetaLabel(message: ChatLine): string {
@@ -675,9 +610,13 @@ export class ChatView extends LitElement {
       : this.transientDisclosures.get(key) ?? defaultOpen;
   }
 
-  private persistDisclosureChoice(key: string, open: boolean, defaultOpen: boolean): void {
-    if (this.behaviors.rememberDisclosures) this.disclosures.applyToggle(key, open, defaultOpen);
-    else this.transientDisclosures.set(key, open);
+  private onDisclosureToggle(key: string, event: Event, defaultOpen: boolean) {
+    const details = event.currentTarget;
+    if (!(details instanceof HTMLDetailsElement)) return;
+    const changed = this.isDisclosureOpen(key, defaultOpen) !== details.open;
+    if (this.behaviors.rememberDisclosures) this.disclosures.applyToggle(key, details.open, defaultOpen);
+    else this.transientDisclosures.set(key, details.open);
+    if (changed) this.requestUpdate();
   }
 
   private get handlesScrollIntent(): boolean {

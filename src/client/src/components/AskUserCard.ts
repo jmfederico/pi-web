@@ -1,8 +1,7 @@
 import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { localization, LocalizationController } from "../localization/browser";
 import definitions from "./askUser.messages";
-import { LitElement, css, html, type TemplateResult } from "lit";
-import { PendingFormState, pendingFormKey, type PendingFormIdentity } from "../pendingFormState";
+import { LitElement, css, html, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { ifDefined } from "lit/directives/if-defined.js";
 import { uiButtonStyles } from "./ui/controlStyles";
@@ -22,6 +21,8 @@ import {
   answeredCount,
   isCommentOpen,
   isCustomAnswerSelected,
+  loadAskDraft,
+  saveAskDraft,
   toSubmission,
   unansweredQuestions,
   type AskDraftAnswer,
@@ -50,8 +51,8 @@ interface DisplayedRecordAnswer {
 /**
  * One question set posted by `ask_user`.
  *
- * The transcript projection owns availability. The supplied form state owns
- * drafts and sends; closed requests and records never expose answer controls.
+ * The transcript projection owns availability. This component owns only local
+ * drafts; closed requests and response records never expose answer controls.
  */
 @customElement("ask-user-card")
 export class AskUserCard extends LitElement {
@@ -71,40 +72,19 @@ export class AskUserCard extends LitElement {
   @property({ attribute: false }) draftSessionId = "";
   @property({ attribute: false }) onSubmit: AskUserSubmitCallback | undefined;
 
-  @property({ attribute: false }) formState: PendingFormState = new PendingFormState();
-  private unsubscribe: (() => void) | undefined;
-  private boundState?: PendingFormState;
-  private boundKey?: string;
-
-  private get formIdentity(): PendingFormIdentity {
-    return { scope: this.draftSessionId, kind: "ask", requestId: this.outcome?.askId ?? this.ask?.askId ?? "" };
-  }
-
-  private get answers(): AskDraftAnswers { return this.formState.get(this.formIdentity).answers; }
+  @state() private answers: AskDraftAnswers = {};
   @state() private confirmingPartialSubmit = false;
-  private get submitting(): boolean { return this.formState.get(this.formIdentity).operation !== undefined; }
+  @state() private submitting = false;
+  private modelIdentity: string | undefined;
 
-  override connectedCallback(): void {
-    super.connectedCallback();
-    this.requestUpdate();
-  }
-
-  override disconnectedCallback(): void {
-    this.unsubscribe?.();
-    this.unsubscribe = undefined;
-    super.disconnectedCallback();
-  }
-
-  protected override willUpdate(): void {
-    const key = pendingFormKey(this.formIdentity);
-    const active = this.isConnected && this.outcome === undefined && this.ask !== undefined && this.open && this.onSubmit !== undefined;
-    if (active && this.boundState === this.formState && this.boundKey === key && this.unsubscribe !== undefined) return;
-    this.unsubscribe?.();
-    this.unsubscribe = undefined;
-    if (this.boundState !== this.formState || this.boundKey !== key || !active) this.confirmingPartialSubmit = false;
-    this.boundState = this.formState;
-    this.boundKey = key;
-    if (active) this.unsubscribe = this.formState.subscribe(this.formIdentity, () => { this.requestUpdate(); });
+  protected override willUpdate(changed: PropertyValues<this>): void {
+    if (!changed.has("ask") && !changed.has("outcome") && !changed.has("draftSessionId")) return;
+    const identity = this.currentModelIdentity();
+    if (identity === this.modelIdentity) return;
+    this.modelIdentity = identity;
+    this.answers = this.loadCurrentDraft();
+    this.confirmingPartialSubmit = false;
+    this.submitting = false;
   }
 
   override render(): TemplateResult | null {
@@ -161,7 +141,6 @@ export class AskUserCard extends LitElement {
         class=${`question${answered ? " answered" : ""}`}
         aria-describedby=${ifDefined(detailId)}
         tabindex="-1"
-        ?disabled=${this.submitting}
       >
         <legend>
           <span class="question-number">${askUserMessages.t("questionNumber", { number: index + 1 })}</span>
@@ -389,13 +368,13 @@ export class AskUserCard extends LitElement {
   }
 
   private setAnswer(question: AskUserQuestion, patch: Partial<AskDraftAnswer>): void {
-    if (this.submitting) return;
     // Keep editing buffers independent of which controls are active. Only
     // toSubmission decides what is sent; switching controls never erases text.
     const answer: AskDraftAnswer = { values: [], ...this.answers[question.id], ...patch };
     const next: AskDraftAnswers = { ...this.answers, [question.id]: answer };
+    this.answers = next;
     this.confirmingPartialSubmit = false;
-    this.formState.setAnswers(this.formIdentity, next);
+    if (this.ask !== undefined && this.draftSessionId !== "") saveAskDraft(this.draftSessionId, this.ask.askId, next);
   }
 
   private handleSubmit(event: SubmitEvent, ask: AskUserRequest): void {
@@ -410,12 +389,21 @@ export class AskUserCard extends LitElement {
 
   private submitAnswers(ask: AskUserRequest, submission = toSubmission(ask.questions, this.answers)): void {
     if (this.submitting || !this.open) return;
+    this.submitting = true;
     const callback = this.onSubmit;
-    if (callback === undefined || this.ask?.askId !== ask.askId) return;
-    void this.formState.runExclusive(this.formIdentity, () => callback(ask.askId, submission))
+    if (callback === undefined) {
+      this.submitting = false;
+      return;
+    }
+    const askId = ask.askId;
+    void Promise.resolve()
+      .then(() => callback(askId, submission))
       .catch(() => {
         // The parent controller owns the visible transport error. Keeping this
         // card and its draft intact is the only recovery needed at this boundary.
+      })
+      .finally(() => {
+        if (this.ask?.askId === askId) this.submitting = false;
       });
   }
 
@@ -467,6 +455,18 @@ export class AskUserCard extends LitElement {
 
   private optionLabel(question: AskUserQuestion, value: string): string {
     return question.options.find((option) => option.value === value)?.label ?? value;
+  }
+
+  private currentModelIdentity(): string | undefined {
+    if (this.outcome !== undefined) return `record:${this.draftSessionId}:${this.outcome.askId}`;
+    if (this.ask !== undefined) return `request:${this.draftSessionId}:${this.ask.askId}`;
+    return undefined;
+  }
+
+  private loadCurrentDraft(): AskDraftAnswers {
+    const askId = this.outcome?.askId ?? this.ask?.askId;
+    if (askId === undefined || this.draftSessionId === "") return {};
+    return loadAskDraft(this.draftSessionId, askId);
   }
 
   private questionGroupName(ask: AskUserRequest, question: AskUserQuestion): string {

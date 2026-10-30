@@ -90,24 +90,6 @@ afterEach(async () => {
 });
 
 describe("application rendering boundaries", () => {
-  it("does not retarget a retired form callback to a different selected session", async () => {
-    const submit = vi.spyOn(SessionController.prototype, "submitAsk").mockResolvedValue(undefined);
-    const app = await mountApp({ selectedWorkspace: workspace, selectedSession: session, sessions: [session], mainView: "chat" });
-    await settle(app);
-    const first = app.renderRoot.querySelector<ChatView>("chat-view");
-    const retiredSubmit = first?.onSubmitAsk;
-    if (retiredSubmit === undefined) throw new Error("Missing submit callback");
-    const other = { ...session, id: "other" };
-    patchState(app, { selectedSession: other, sessions: [session, other] });
-    await settle(app);
-    await retiredSubmit("ask", { answers: [] });
-    expect(submit).not.toHaveBeenCalled();
-    const current = app.renderRoot.querySelector<ChatView>("chat-view");
-    await current?.onSubmitAsk?.("current-ask", { answers: [] });
-    expect(submit).toHaveBeenCalledExactlyOnceWith("current-ask", { answers: [] });
-    expect(current?.formState).toBe(first?.formState);
-  });
-
   it("places sustained stale-chat feedback above the conversation, outside the composer, and hides it after recovery", async () => {
     vi.useFakeTimers();
     const app = await mountApp({ selectedWorkspace: workspace, selectedSession: session, sessions: [session], mainView: "chat", conversationSync: "stale" });

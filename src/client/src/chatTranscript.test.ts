@@ -91,7 +91,7 @@ describe("assistant stream identity", () => {
     ] };
     let messages = seedStreamingPartial([], partial);
     messages = applyTranscriptEvent(messages, { type: "assistant.delta", streamId: start.streamId, text: " after" }) ?? messages;
-    expect(messages[0]?.parts).toEqual([{ type: "text", text: "before after", sourcePart: "content:0" }]);
+    expect(messages[0]?.parts).toEqual([{ type: "text", text: "before after" }]);
     const final = { ...start, content: [{ type: "text", text: "before after" }, partial.content[1]] };
     messages = applyTranscriptEvent(messages, { type: "message.end", message: final }) ?? messages;
     expect(messages).toEqual(normalizeMessages([final]));
@@ -103,9 +103,7 @@ describe("assistant stream identity", () => {
       messages = applyTranscriptEvent(messages, { ...toolStart, toolCallId: "call-2" }) ?? messages;
       messages = applyTranscriptEvent(messages, { type: "assistant.delta", streamId: start.streamId, text: "answer" }) ?? messages;
       expect(messages.filter((line) => line.role === "assistant")).toEqual([
-        { role: "assistant", streamId: start.streamId,
-          meta: normalizeMessages([finalAssistant])[0]?.meta,
-          parts: [{ type: "text", text: "answer" }] },
+        { ...normalizeMessages([{ ...start, content: [{ type: "text", text: "answer" }] }])[0] },
       ]);
     }
   });

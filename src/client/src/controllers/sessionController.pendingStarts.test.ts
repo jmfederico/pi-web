@@ -19,7 +19,7 @@ describe("SessionController pending starts", () => {
       startSession: () => startRequest.promise,
       transcriptSnapshot: (session) => {
         snapshotCalls.push(sessionLookupId(session));
-        return Promise.resolve({ page: emptyPage, status: { ...status(sessionLookupId(session)), pendingDialogs: [{ dialogId: "startup-input", kind: "input", title: "Input", askedAt: "now", runScoped: true }] }, seq: 0, partial: null });
+        return Promise.resolve({ page: emptyPage, status: status(sessionLookupId(session)), seq: 0, partial: null });
       },
     };
     const controller = new SessionController(
@@ -38,9 +38,6 @@ describe("SessionController pending starts", () => {
     expect(state.sessions.map((session) => session.id)).toEqual([temporarySession?.id]);
     expect(state.activity).toMatchObject({ sessionId: temporarySession?.id, phase: "active", label: "Creating session" });
     expect(snapshotCalls).toEqual([]);
-    if (temporarySession === undefined) throw new Error("Expected temporary session");
-    const identity = { scope: sessionKey(temporarySession.id), kind: "dialog" as const, requestId: "startup-input" };
-    controller.pendingForms.setInput(identity, "half typed");
 
     startRequest.resolve(started);
     await start;
@@ -48,8 +45,6 @@ describe("SessionController pending starts", () => {
     expect(state.sessions.map((session) => session.id)).toEqual(["started-session"]);
     expect(state.selectedSession?.id).toBe("started-session");
     expect(snapshotCalls).toEqual(["started-session"]);
-    expect(controller.pendingForms.get({ ...identity, scope: sessionKey(started.id) }).input).toBe("half typed");
-    expect(controller.pendingForms.get(identity).input).toBe("");
   });
 
   it("publishes the stable session id before replacing a pending rendered selection", async () => {
@@ -557,25 +552,12 @@ describe("SessionController pending starts", () => {
     const start = controller.startSession();
     const temporaryId = state.selectedSession?.id;
     if (temporaryId === undefined) throw new Error("Expected a temporary session id");
-    const identity = { scope: sessionKey(temporaryId), kind: "dialog" as const, requestId: "startup-input" };
-    controller.pendingForms.setInput(identity, "private draft");
-    const response = deferred<undefined>();
-    const operation = controller.pendingForms.runExclusive(identity, () => response.promise);
 
     // Workspace navigation resets the visible session list while the create is
     // still pending. The rejection must remain attributable to workspace-1.
     state = { ...state, selectedWorkspace: otherWorkspace, sessions: [], selectedSession: undefined };
     startRequest.reject(new Error("late backend failure"));
     await start;
-
-    expect(controller.pendingForms.get(identity).input).toBe("");
-    expect(controller.pendingForms.get(identity).operation).toBe(operation);
-    response.resolve(undefined);
-    await operation;
-    expect(controller.pendingForms.get(identity).operation).toBeUndefined();
-    // A closed scope no longer blocks promotion from another startup.
-    controller.pendingForms.setInput({ ...identity, scope: "next-start" }, "next draft");
-    expect(() => { controller.pendingForms.promoteScope("next-start", identity.scope); }).not.toThrow();
 
     const originScope = workspaceBrowserErrorScope("local", workspace.projectId, workspace.id);
     expect(state.browserErrors[browserErrorScopeKey(originScope)]?.message).toBe("Failed to start session: late backend failure");
@@ -614,8 +596,6 @@ describe("SessionController pending starts", () => {
     const start = controller.startSession();
     const temporaryId = state.selectedSession?.id;
     if (temporaryId === undefined) throw new Error("Expected temporary session id");
-    const identity = { scope: sessionKey(temporaryId), kind: "dialog" as const, requestId: "startup-input" };
-    controller.pendingForms.setInput(identity, "private draft");
     await controller.send("queued before discard");
     expect(state.clientQueuedSessionMessages[temporaryId]).toEqual([{ kind: "followUp", text: "queued before discard" }]);
 
@@ -623,7 +603,6 @@ describe("SessionController pending starts", () => {
     expect(state.sessions).toEqual([]);
     expect(state.selectedSession).toBeUndefined();
     expect(state.clientQueuedSessionMessages[temporaryId]).toBeUndefined();
-    expect(controller.pendingForms.get(identity).input).toBe("");
 
     startRequest.resolve(started);
     await start;
