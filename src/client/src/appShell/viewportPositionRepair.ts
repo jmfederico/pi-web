@@ -8,6 +8,7 @@ export interface ViewportPositionRepairScheduler {
   scrollTo(x: number, y: number): void;
   readonly documentElement: { scrollTop: number } | undefined;
   readonly body: { scrollTop: number } | undefined;
+  readonly viewportScale?: number | undefined;
 }
 
 export class ViewportPositionRepairer {
@@ -51,7 +52,13 @@ export class ViewportPositionRepairer {
     }
   }
 
+  repairNow(): void {
+    this.resetViewportScroll();
+  }
+
   private resetViewportScroll(): void {
+    // Resume retries may still be pending when the user starts pinch zooming.
+    if ((this.scheduler.viewportScale ?? 1) !== 1) return;
     this.scheduler.scrollTo(0, 0);
     const documentElement = this.scheduler.documentElement;
     if (documentElement !== undefined) documentElement.scrollTop = 0;
@@ -62,6 +69,9 @@ export class ViewportPositionRepairer {
 
 export function createBrowserViewportPositionRepairScheduler(): ViewportPositionRepairScheduler {
   return {
+    get viewportScale(): number | undefined {
+      return window.visualViewport?.scale;
+    },
     requestAnimationFrame(callback: () => void): number {
       return window.requestAnimationFrame(callback);
     },

@@ -70,6 +70,7 @@ import { REQUIRED_TERMINAL_BROWSER_FACADE_CAPABILITY, requiredTerminalUnavailabl
 import { createWorkspaceFiles as createPluginWorkspaceFiles } from "../plugins/workspaceFiles";
 import { contributionQueryFromRecord, isContributionQueryLocalKey, patchContributionQueryRecord, readContributionQuery, readContributionQueryRecord, setContributionQueryKey, writeContributionQueryRecord, type ContributionQueryRecord } from "../namespacedQueryArgs";
 import { AppShellController } from "../appShell/appShellController";
+import { ShellViewportController } from "../appShell/shellViewportController";
 import { BrowserResumeController } from "../appShell/browserResumeController";
 import { NavigationSectionsController, type NavigationSection } from "../appShell/navigationState";
 import { PanelCollapseController, mainViewClass } from "../appShell/panelCollapseController";
@@ -174,6 +175,7 @@ export class PiWebApp extends LitElement {
     super();
     new LocalizationController(this, localization, () => { this.invalidateWorkspaceSurface(); });
     stylesheetIntegrationCapability.createController(this);
+    new ShellViewportController(this, () => this.appShell.isMobileNavigationLayout || this.appShell.isPwaDisplayMode);
   }
 
   /** Page-scoped injection seam for independently composing chat behavior. */
