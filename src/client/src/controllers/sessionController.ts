@@ -1060,7 +1060,14 @@ export class SessionController {
         if (selectedSession === undefined) return;
         const refreshedSelected = sessions.find((session) => session.id === selectedSession.id);
         if (refreshedSelected !== undefined) {
-          if (refreshedSelected !== selectedSession) this.setState({ selectedSession: refreshedSelected });
+          if (selectedSession.archived !== true && refreshedSelected.archived === true) {
+            // External lifecycle commands retire the live binding just like native archive.
+            const change = selectionAfterArchivingSession(this.automaticSessionCandidates(sessions), selectedSession.id, selectedSession.id);
+            if (change.type === "select") await this.selectSessionAfterNavigation(change.session, expected);
+            else if (change.type === "clear") await this.clearSessionAfterNavigation(expected);
+          } else if (selectedSession.archived === true && refreshedSelected.archived !== true) {
+            await this.selectSessionAfterNavigation(refreshedSelected, expected);
+          } else if (refreshedSelected !== selectedSession) this.setState({ selectedSession: refreshedSelected });
           return;
         }
         const next = this.automaticReplacementSession(sessions);

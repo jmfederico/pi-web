@@ -95,15 +95,15 @@ describe("session cleanup planning", () => {
     expect(plan.totals).toEqual({ archiveCount: 1, deleteCount: 1 });
   });
 
-  it("requires a resolved pin snapshot only when skipPinned is enabled", () => {
-    expect(normalizeSessionCleanupRequest({ skipPinned: true, excludedPinnedSessionIds: ["a", "a"] })).toEqual({ thresholds: {}, excludedPinnedSessionIds: ["a"] });
-    expect(normalizeSessionCleanupRequest({ skipPinned: true, excludedPinnedSessionIds: [] })).toEqual({ thresholds: {}, excludedPinnedSessionIds: [] });
+  it("requests daemon pin resolution and ignores untrusted legacy snapshots", () => {
+    expect(normalizeSessionCleanupRequest({ skipPinned: true, excludedPinnedSessionIds: ["a", "a"] })).toEqual({ thresholds: {}, skipPinned: true });
+    expect(normalizeSessionCleanupRequest({ skipPinned: true, excludedPinnedSessionIds: [] })).toEqual({ thresholds: {}, skipPinned: true });
     expect(normalizeSessionCleanupRequest({ skipPinned: false, excludedPinnedSessionIds: ["a"] })).toEqual({ thresholds: {} });
     for (const skipPinned of [null, "true", 1]) {
       expect(() => normalizeSessionCleanupRequest({ skipPinned })).toThrow("skipPinned field must be a boolean");
     }
     for (const excludedPinnedSessionIds of [undefined, null, "a", [1], [""]]) {
-      expect(() => normalizeSessionCleanupRequest({ skipPinned: true, excludedPinnedSessionIds })).toThrow("requires resolved");
+      expect(normalizeSessionCleanupRequest({ skipPinned: true, excludedPinnedSessionIds })).toEqual({ thresholds: {}, skipPinned: true });
     }
   });
 

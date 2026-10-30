@@ -6,4 +6,10 @@ export type KnownPiPackage = KnownAutoInstallablePiPackage;
 /** Shipped packages offered by Settings. Optional entries must stay out of the auto-install allowlist. */
 export const KNOWN_PI_PACKAGES: readonly KnownPiPackage[] = [
   ...KNOWN_AUTO_INSTALLABLE_PI_PACKAGES,
+  {
+    id: "@jmfederico/pi-web-scheduled-tasks",
+    label: "Scheduled agent tasks (beta)",
+    description: "Agent-managed schedules and a persistent execution ledger. Disabled by default.",
+    shippedPathSegments: ["dist", "pi-packages", "scheduled-tasks"],
+  },
 ];

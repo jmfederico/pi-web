@@ -19,6 +19,7 @@ function daemonCollaborators(patch: Partial<SessionServiceDependencyInput> = {})
     agentDir: AGENT_DIR,
     sessionEvents: new PiSessionEventConnections(),
     archiveStore: emptyArchiveStore(),
+    sessionPins: { pinnedSessionIds: () => Promise.resolve([]) },
     modelRuntime: testModelRuntime,
     sessionManager: sessionGateway([]),
     workspaceActivity: new WorkspaceActivityService(),

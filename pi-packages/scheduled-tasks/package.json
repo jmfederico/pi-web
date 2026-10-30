@@ -1,0 +1,30 @@
+{
+  "name": "@jmfederico/pi-web-scheduled-tasks",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "AI-operated scheduled tasks with a persistent execution ledger.",
+  "keywords": [
+    "pi-package"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": ["./extensions/index.js"],
+    "skills": ["./skills"]
+  },
+  "piWeb": {
+    "plugins": [
+      {
+        "id": "scheduled-tasks",
+        "defaultEnabled": false,
+        "browserRoot": "browser",
+        "module": "browser/pi-web-plugin.js",
+        "serverModule": "server-plugin.js",
+        "machineSpecific": true
+      }
+    ]
+  }
+}

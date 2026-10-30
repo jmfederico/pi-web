@@ -19,6 +19,14 @@ export interface PluginSessionSnapshot {
     readonly name?: string;
     readonly metadata?: SessionUiMetadata;
     readonly archived: boolean;
+    /** ISO timestamp for creation, or null when unknown. */
+    readonly created: string | null;
+    /** ISO timestamp for last session-file modification, matching native idle-age rules; null when unknown. */
+    readonly modified: string | null;
+    /** ISO archive-entry timestamp, or null when not archived or unknown. Not the archive file's modification time. */
+    readonly archivedAt: string | null;
+    /** True when any durable pin protects this ID from native cleanup, including retained scopes. */
+    readonly pinned: boolean;
     readonly runtime: "not-hosted" | "idle" | "busy";
 }
 export interface PluginWorkspaceSelection {

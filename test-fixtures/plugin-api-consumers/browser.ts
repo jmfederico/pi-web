@@ -9,6 +9,8 @@ import type {
   PluginNavigationPatchDestination,
   PluginNavigationOptions,
   PluginRuntimeContext,
+  PluginRuntimeContextV5,
+  PluginSessionSnapshot,
   QualifiedContributionId,
   SessionLabelContext,
   ContentRenderingCapability,
@@ -37,6 +39,28 @@ import type {
   MaintenanceTerminal,
   TerminalCommandRun,
 } from "@jmfederico/pi-web/plugin-api";
+
+export function previewSessionAgePolicy(sessions: readonly PluginSessionSnapshot[], cutoff: number) {
+  return sessions.filter((session) => {
+    if (session.pinned !== false || session.runtime === "busy") return false;
+    const timestamp = session.archived ? session.archivedAt : session.modified;
+    return timestamp !== null && Date.parse(timestamp) < cutoff;
+  });
+}
+
+export async function manageSavedSession(context: PluginRuntimeContextV5): Promise<void> {
+  const sessions = context.sessions;
+  if (sessions === undefined) return; // Hosts predating this optional service.
+  const selected = { projectId: "fixture-project", workspaceId: "fixture-workspace", sessionId: "fixture-session" };
+  await sessions.get(selected);
+  await sessions.pin(selected);
+  await sessions.unpin(selected);
+  await sessions.archive(selected);
+  await sessions.restore(selected);
+  await sessions.delete(selected);
+  // @ts-expect-error Session paths are resolved by the host, not supplied as authority.
+  await sessions.archive({ cwd: "/repo", sessionId: selected.sessionId });
+}
 
 // Existing plugins can extend workspace run records and read their identity
 // without a maintenance-scope check.

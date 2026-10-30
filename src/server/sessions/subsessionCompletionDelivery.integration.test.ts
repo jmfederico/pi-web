@@ -13,7 +13,7 @@ import { createSubsessionCompletionDelivery } from "./subsessionCompletionDelive
 // Real Pi tool-result, boundary-draft, and settlement semantics. Only the
 // provider transport and the independently running child's runtime are fake.
 describe("subsession completion delivery through native Pi", () => {
-  it.each(["yield-ready", "check-ready", "yield-race", "natural-stop", "nested-check", "check-rejected", "parent-error", "parent-aborted"] as const)("delivers a child result once through %s", async (scenario) => {
+  it.each(["yield-ready", "check-ready", "yield-race", "turn-ready", "natural-stop", "nested-check", "check-rejected", "parent-error", "parent-aborted"] as const)("delivers a child result once through %s", async (scenario) => {
     const failed = scenario === "parent-error" || scenario === "parent-aborted";
     const directory = await mkdtemp(join(tmpdir(), "pi-web-subsession-delivery-"));
     const modelRuntime = await createTestModelRuntime();
@@ -55,7 +55,7 @@ describe("subsession completion delivery through native Pi", () => {
     await loader.reload();
     const { session } = await createAgentSession({
       cwd: directory, agentDir: directory, sessionManager: SessionManager.inMemory(directory),
-      settingsManager, resourceLoader: loader, modelRuntime, model: testModel(), tools: ["yield_to_subsessions", "check_subsession", "nested_check"],
+      settingsManager, resourceLoader: loader, modelRuntime, model: testModel(), tools: ["yield_to_subsessions", "check_subsession", "nested_check", "independent_work"],
       customTools: [...createSubsessionToolDefinitions(directory, {
         spawn: (input) => hosted.spawnSubsession(input),
         stop: (...args) => hosted.stopSubsession(...args),
@@ -65,6 +65,9 @@ describe("subsession completion delivery through native Pi", () => {
         join: (...args) => hosted.joinSubsessions(...args),
         check: (...args) => hosted.checkSubsession(...args),
         read: (...args) => hosted.readSubsession(...args),
+      }), defineTool({
+        name: "independent_work", label: "Independent work", description: "Continue work without inspecting the child.", parameters: Type.Object({}),
+        execute: () => Promise.resolve({ content: [{ type: "text" as const, text: "Independent step finished" }], details: {} }),
       }), defineTool({
         name: "nested_check", label: "Nested check", description: "Read the child through a nested tool.", parameters: Type.Object({}),
         async execute(_id, _args, _signal, _onUpdate, ctx) {
@@ -92,12 +95,12 @@ describe("subsession completion delivery through native Pi", () => {
     const modelInputs: string[] = [];
     session.agent.streamFunction = (_model, context) => {
       requests += 1;
-      if (requests > (scenario === "check-rejected" ? 3 : 2)) throw new Error("duplicate child input caused an extra provider request");
+      if (requests > 2) throw new Error("duplicate child input caused an extra provider request");
       if (requests === 1 && scenario !== "yield-race") finishChild();
       const inputs = context.messages.filter((message) => message.role === "user" || message.role === "toolResult");
       modelInputs.push(inputs.map((message) => typeof message.content === "string" ? message.content
         : message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n")).join("\n"));
-      const toolName = scenario === "nested-check" ? "nested_check"
+      const toolName = scenario === "turn-ready" ? "independent_work" : scenario === "nested-check" ? "nested_check"
         : scenario === "check-ready" || scenario === "check-rejected" ? "check_subsession" : "yield_to_subsessions";
       const hasToolCall = requests === 1 && scenario !== "natural-stop" && !failed;
       const stopReason = failed ? (scenario === "parent-error" ? "error" : "aborted") : hasToolCall ? "toolUse" : "stop";
@@ -126,7 +129,7 @@ describe("subsession completion delivery through native Pi", () => {
       await new Promise<void>((resolve) => setImmediate(resolve));
       const joined = await hosted.joinSubsessions(session.sessionId);
       expect(joined.completions).toHaveLength(failed ? 1 : 0);
-      expect(requests).toBe(failed ? 1 : scenario === "check-rejected" ? 3 : 2);
+      expect(requests).toBe(failed ? 1 : 2);
       if (!failed) {
         const inspected = scenario === "check-ready" || scenario === "nested-check";
         expect(modelInputs.at(-1)?.split("CHILD_FINAL_ANSWER")).toHaveLength(inspected ? 2 : 1);
@@ -139,7 +142,7 @@ describe("subsession completion delivery through native Pi", () => {
       if (scenario === "natural-stop") expect(session.sessionManager.getBranch().some((entry) => entry.type === "custom" && entry.customType === "earlier-boundary-proof")).toBe(true);
       expect(sendMessage).not.toHaveBeenCalled(); // No rendered answer was enqueued separately.
       const notices = session.messages.filter((message) => message.role === "custom" && message.customType === "subsession.completion");
-      expect(notices).toHaveLength(scenario === "yield-race" || scenario === "natural-stop" || scenario === "check-rejected" ? 1 : 0);
+      expect(notices).toHaveLength(scenario === "yield-race" || scenario === "turn-ready" || scenario === "natural-stop" || scenario === "check-rejected" ? 1 : 0);
       for (const notice of notices) {
         expect(JSON.stringify(notice)).not.toContain("CHILD_FINAL_ANSWER");
         if (notice.role !== "custom") throw new Error("Expected custom lifecycle notice");

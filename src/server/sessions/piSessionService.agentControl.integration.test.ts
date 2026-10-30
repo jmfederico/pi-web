@@ -211,7 +211,7 @@ describe("agent control composed with native Pi sessions", () => {
     }
   });
 
-  it.each(["idle", "working"] as const)("returns the message tool before a %s recipient finishes and delivers a content-only custom follow-up", async (state) => {
+  it.each(["idle", "working"] as const)("returns the message tool before a %s recipient finishes and delivers content-only custom steering", async (state) => {
     const f = await fixture();
     const initialEntered = gate();
     const messageEntered = gate();
@@ -277,7 +277,7 @@ describe("agent control composed with native Pi sessions", () => {
       expect(f.session.isStreaming).toBe(true);
       expect(sendCustomMessage).toHaveBeenCalledExactlyOnceWith(
         { customType: "session.message", content: deliveredContent, display: true, details },
-        { triggerTurn: true, deliverAs: "followUp" },
+        { triggerTurn: true, deliverAs: "steer" },
       );
       // The visible transcript and model context both retain sender provenance;
       // metadata alone would not reach the model. This grants no control authority.

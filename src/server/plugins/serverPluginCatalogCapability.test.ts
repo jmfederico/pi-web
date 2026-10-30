@@ -5,6 +5,7 @@ import type { WorkspaceListing } from "../../shared/apiTypes.js";
 import { createServerPluginCatalogCapabilityFactory } from "./serverPluginCatalogCapability.js";
 
 const repositoryPath = resolve("/repo");
+const dates = { created: null, modified: null, archivedAt: null };
 
 function fixture() {
   const project = { id: "project", name: "Project", path: repositoryPath, createdAt: "private" };
@@ -20,19 +21,20 @@ function fixture() {
     return Promise.resolve(project);
   }) };
   const workspaces = { resolve: vi.fn(() => Promise.resolve({ projectId: project.id, status: "provider" as const, diagnostics: [], workspaces: rows })) };
-  const sessions = { listCatalogSessions: vi.fn((cwd: string, signal?: AbortSignal): Promise<readonly PluginSessionSnapshot[]> => {
+  const sessions = { listCatalogSessions: vi.fn((cwd: string, signal?: AbortSignal): Promise<readonly Omit<PluginSessionSnapshot, "pinned">[]> => {
     signal?.throwIfAborted();
     return Promise.resolve([
-    { id: "cold", cwd, archived: true, runtime: "not-hosted", metadata },
-    { id: "idle", cwd: repositoryPath, archived: false, runtime: "idle" },
-    { id: "busy", cwd: repositoryPath, archived: false, runtime: "busy", name: "Working" },
+    { id: "cold", cwd, ...dates, archived: true, runtime: "not-hosted", metadata },
+    { id: "idle", cwd: repositoryPath, ...dates, archived: false, runtime: "idle" },
+    { id: "busy", cwd: repositoryPath, ...dates, archived: false, runtime: "busy", name: "Working" },
   ]);
   }) };
+  const pins = { pinnedSessionIds: vi.fn(() => Promise.resolve(["cold"])) };
   const lifetime = new AbortController();
-  const instance = createServerPluginCatalogCapabilityFactory({ projects, workspaces, sessions }).create({
+  const instance = createServerPluginCatalogCapabilityFactory({ projects, workspaces, sessions, pins }).create({
     pluginId: "consumer", packageRoot: "/plugins/consumer", lifetimeSignal: lifetime.signal,
   });
-  return { project, workspace, metadata, projects, workspaces, sessions, lifetime, instance,
+  return { project, workspace, metadata, projects, workspaces, sessions, pins, lifetime, instance,
     catalog: PI_WEB_HOST_CATALOG_CAPABILITY.parse(instance.value),
     replaceWorkspaces: (next: readonly WorkspaceListing[]) => { rows = next; },
   };
@@ -60,6 +62,19 @@ describe("server plugin catalog capability", () => {
     expect(f.sessions.listCatalogSessions).toHaveBeenCalledWith(repositoryPath, expect.any(AbortSignal));
   });
 
+  it("refreshes the native cleanup pin union on every read and fails rather than guessing unpinned", async () => {
+    const f = fixture();
+    const listed = await f.catalog.sessions.list(selection);
+    expect(listed.find(({ id }) => id === "cold")?.pinned).toBe(true);
+    expect(listed.find(({ id }) => id === "busy")?.pinned).toBe(false);
+    expect(f.pins.pinnedSessionIds).toHaveBeenCalledExactlyOnceWith();
+    f.pins.pinnedSessionIds.mockResolvedValue(["busy"]);
+    expect(await f.catalog.sessions.get({ ...selection, sessionId: "busy" })).toMatchObject({ pinned: true });
+    expect(listed.find(({ id }) => id === "busy")?.pinned).toBe(false);
+    f.pins.pinnedSessionIds.mockRejectedValue(new Error("Pin storage unavailable"));
+    await expect(f.catalog.sessions.list(selection)).rejects.toThrow("Pin storage unavailable");
+  });
+
   it("re-resolves authority and rejects stale workspaces, missing projects and sessions", async () => {
     const f = fixture();
     await expect(f.catalog.sessions.get({ ...selection, sessionId: "missing" })).rejects.toThrow("session is stale or unavailable");
@@ -75,13 +90,13 @@ describe("server plugin catalog capability", () => {
     f.replaceWorkspaces([{ ...f.workspace, projectId: "other" }]);
     await expect(f.catalog.workspaces.list("project")).rejects.toThrow("outside selected project");
     f.replaceWorkspaces([f.workspace]);
-    f.sessions.listCatalogSessions.mockResolvedValueOnce([{ id: "cold", cwd: "/other", archived: false, runtime: "not-hosted" }]);
+    f.sessions.listCatalogSessions.mockResolvedValueOnce([{ id: "cold", cwd: "/other", ...dates, archived: false, runtime: "not-hosted" }]);
     await expect(f.catalog.sessions.list(selection)).rejects.toThrow("outside selected workspace");
   });
 
   it("rejects in-flight results and future reads after lifetime revocation or disposal", async () => {
     const f = fixture();
-    let finish!: (rows: readonly PluginSessionSnapshot[]) => void;
+    let finish!: (rows: readonly Omit<PluginSessionSnapshot, "pinned">[]) => void;
     f.sessions.listCatalogSessions.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     const pending = f.catalog.sessions.list(selection);
     await vi.waitFor(() => { expect(f.sessions.listCatalogSessions).toHaveBeenCalledOnce(); });

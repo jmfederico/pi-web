@@ -139,7 +139,7 @@ describe("PiWebApp workspace topology refresh wiring", () => {
 });
 
 describe("PiWebApp realtime workspace invalidations", () => {
-  it.each(["local", "machine-a"])("refreshes only topology for a matching project on %s, even while the agent is active", (machineId) => {
+  it.each(["local", "machine-a"])("refreshes topology and session lifecycle for a matching project on %s, even while the agent is active", (machineId) => {
     const app = createApp();
     selectSessionForPolling(app, true);
     setAppState(app, { selectedMachine: machine(machineId), selectedProject: project });
@@ -154,7 +154,7 @@ describe("PiWebApp realtime workspace invalidations", () => {
 
     expect(sourceMachineId).toBe(machineId);
     expect(refreshTopology).toHaveBeenCalledOnce();
-    expect(refreshSessions).not.toHaveBeenCalled();
+    expect(refreshSessions).toHaveBeenCalledExactlyOnceWith(machineId, { recoverNetwork: true });
     expect(applySessionEvent).not.toHaveBeenCalled();
   });
 
@@ -166,10 +166,12 @@ describe("PiWebApp realtime workspace invalidations", () => {
     const app = createApp();
     setAppState(app, { selectedMachine: machine("machine-a"), selectedProject });
     const refreshTopology = spyOnTopologyRefresh(app);
+    const refreshSessions = spyOnWorkspaceSessionsRefresh(app);
 
     deliverRealtimeEvent(app, source, { type: "workspaces.changed", projectId });
 
     expect(refreshTopology).not.toHaveBeenCalled();
+    expect(refreshSessions).not.toHaveBeenCalled();
   });
 
   it("coalesces a burst of notifications through the existing WorkspaceController", async () => {

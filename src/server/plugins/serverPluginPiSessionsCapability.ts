@@ -15,13 +15,20 @@ import { createServerPluginWorkspacesCapabilityFactory } from "./serverPluginWor
 const DEFAULT_MAX_CONCURRENT_RUNS_PER_PLUGIN = 4;
 const COMPLETION_ERROR_MAX_BYTES = 4 * 1024;
 
+type RunSettings = Pick<PiWebHostPiSessionRunInput, "model" | "thinkingLevel">;
+interface StartedRun extends RunSettings {
+  readonly id: string;
+  readonly completion: Promise<void>;
+}
+
 interface HostPiSessionService {
   createHostedSession(cwd: string, signal: AbortSignal): Promise<{ readonly id: string }>;
   startOneShotRun(
     cwd: string,
     prompt: string,
     signal: AbortSignal,
-  ): Promise<{ readonly id: string; readonly completion: Promise<void> }>;
+    settings?: RunSettings,
+  ): Promise<StartedRun>;
 }
 
 export interface CreateServerPluginPiSessionsCapabilityOptions {
@@ -114,18 +121,28 @@ export function createServerPluginPiSessionsCapabilityFactory(
             });
             assertActive(context, revoked);
 
-            let started: { readonly id: string; readonly completion: Promise<void> };
+            let started: StartedRun;
             try {
               started = await options.sessions.startOneShotRun(
                 authority.workspace.path,
                 input.prompt,
                 startupLifetime.signal,
+                {
+                  ...(input.model === undefined ? {} : { model: input.model }),
+                  ...(input.thinkingLevel === undefined ? {} : { thinkingLevel: input.thinkingLevel }),
+                },
               );
             } catch (error) {
               if (revoked || context.lifetimeSignal.aborted) {
                 throw revokedError(context, error);
               }
-              throw capabilityError(context.pluginId, "could not start a PI session", error);
+              const wrapped = capabilityError(context.pluginId, "could not start a PI session", error);
+              // Only these service-owned codes guarantee no prompt was submitted.
+              const code: unknown = error instanceof Error ? Reflect.get(error, "code") : undefined;
+              if (code === "PI_SESSION_MODEL_UNAVAILABLE" || code === "PI_SESSION_THINKING_UNAVAILABLE") {
+                throw Object.assign(wrapped, { code });
+              }
+              throw wrapped;
             }
             // Always consume the outcome, even if revocation wins this await.
             // A returned session is already published and must not be reclaimed.
@@ -133,7 +150,11 @@ export function createServerPluginPiSessionsCapabilityFactory(
               .finally(() => { admissions.delete(admission); });
             handedOffCompletion = true;
             assertActive(context, revoked);
-            return Object.freeze({ sessionId: started.id, completion });
+            return Object.freeze({
+              sessionId: started.id, completion,
+              ...(started.model === undefined ? {} : { model: started.model }),
+              ...(started.thinkingLevel === undefined ? {} : { thinkingLevel: started.thinkingLevel }),
+            });
           } finally {
             if (!handedOffCompletion) admissions.delete(admission);
             admission.settle();

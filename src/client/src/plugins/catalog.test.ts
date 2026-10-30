@@ -1,18 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 import { createPluginCatalog, type PluginCatalogRequester } from "./catalog";
 
+const metadata = { created: null, modified: null, archivedAt: null, pinned: false };
 const project = { id: "p/a", name: "Project", path: "/project" };
 const workspace = { id: "w/b", projectId: project.id, path: "/project", label: "Main", isMain: true };
 
 describe("machine-bound plugin catalogs", () => {
   it("captures the target and encodes every identifier without exposing private session data", async () => {
     const requester = vi.fn<PluginCatalogRequester>((path) => Promise.resolve(path.endsWith("/sessions/s%2Fc")
-      ? { id: "s/c", cwd: "/project", archived: false, runtime: "not-hosted", path: "/private/session.jsonl", firstMessage: "secret" }
+      ? { id: "s/c", cwd: "/project", ...metadata, archived: false, runtime: "not-hosted", path: "/private/session.jsonl", firstMessage: "secret" }
       : workspace));
     const catalog = createPluginCatalog("remote/a", undefined, requester);
     expect(await catalog.workspaces.get({ projectId: project.id, workspaceId: workspace.id })).toEqual(workspace);
     expect(await catalog.sessions.get({ projectId: project.id, workspaceId: workspace.id, sessionId: "s/c" })).toEqual({
-      id: "s/c", cwd: "/project", archived: false, runtime: "not-hosted",
+      id: "s/c", cwd: "/project", ...metadata, archived: false, runtime: "not-hosted",
     });
     expect(requester.mock.calls.map(([path]) => path)).toEqual([
       "api/machines/remote%2Fa/plugin-catalog/projects/p%2Fa/workspaces/w%2Fb",

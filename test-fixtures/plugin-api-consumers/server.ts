@@ -2,6 +2,7 @@ import {
   createCompanionBackend,
   PI_WEB_HOST_PI_SESSIONS_CAPABILITY,
   PI_WEB_HOST_CATALOG_CAPABILITY,
+  PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY,
   PI_WEB_HOST_WORKSPACES_CAPABILITY,
 } from "@jmfederico/pi-web/server-plugin-api";
 import type {
@@ -40,6 +41,7 @@ const plugin: PiWebServerPlugin = {
   requires: [
     fixtureDependency,
     PI_WEB_HOST_CATALOG_CAPABILITY,
+    PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY,
     PI_WEB_HOST_WORKSPACES_CAPABILITY,
     PI_WEB_HOST_PI_SESSIONS_CAPABILITY,
   ],
@@ -58,6 +60,14 @@ const plugin: PiWebServerPlugin = {
         // Capability versions are independent of the legacy v3 entrypoint.
         const catalog = capabilities.resolve(PI_WEB_HOST_CATALOG_CAPABILITY);
         await catalog.projects.list({ signal });
+        const lifecycle = capabilities.resolve(PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY);
+        const selected = { projectId: "fixture-project", workspaceId: "fixture-workspace", sessionId: "fixture-session" };
+        await lifecycle.get(selected, { signal });
+        await lifecycle.pin(selected, { signal });
+        await lifecycle.unpin(selected, { signal });
+        await lifecycle.archive(selected, { signal });
+        await lifecycle.restore(selected, { signal });
+        await lifecycle.delete(selected, { signal });
         const workspaces: PiWebHostWorkspacesV1 = capabilities.resolve(PI_WEB_HOST_WORKSPACES_CAPABILITY);
         const authority = await workspaces.resolve({
           projectId: "fixture-project",

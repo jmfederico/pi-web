@@ -31,8 +31,8 @@ export function createSendSessionMessageToolDefinition(spawningCwd: string, deps
   return defineTool<typeof SendSessionMessageParams, SendSessionMessageResult>({
     name: "send_session_message",
     label: "Send session message",
-    description: "Send a message to any session in the same project on the same machine. An idle session starts a run; a busy session queues it as a follow-up. A message may wake a stopped session. This creates no parent-child relationship, provides no access to results, and grants no control over the target session.",
-    promptSnippet: "send_session_message: start an idle session or queue a follow-up in a busy session; no relationship, results, or control",
+    description: "Send a message to any session in the same project on the same machine. An idle session starts a run; a busy session receives it as steering at the next safe agent boundary. A message may wake a stopped session. This creates no parent-child relationship, provides no access to results, and grants no control over the target session.",
+    promptSnippet: "send_session_message: start an idle session or steer a busy session; no relationship, results, or control",
     parameters: SendSessionMessageParams,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await deps.send({
@@ -43,7 +43,7 @@ export function createSendSessionMessageToolDefinition(spawningCwd: string, deps
       });
       const text = result.delivery === "started"
         ? `Message accepted for session ${result.sessionId}; requested a new run.`
-        : `Message queued as a follow-up in session ${result.sessionId}.`;
+        : `Message accepted for steering in session ${result.sessionId}; delivery waits for a safe agent boundary.`;
       return { content: [{ type: "text", text }], details: result };
     },
   });
