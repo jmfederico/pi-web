@@ -1,7 +1,8 @@
 import type { QualifiedContributionId, QualifiedThemeContribution, QualifiedThemePairContribution } from "./plugins/types";
 
 import type { PiWebConfigResponse, PiWebThemePreference } from "../../shared/apiTypes";
-import { parseThemePreference } from "../../shared/themePreference";
+import { DEFAULT_THEME_PREFERENCE, parseThemePreference } from "../../shared/themePreference";
+export { DEFAULT_THEME_PREFERENCE } from "../../shared/themePreference";
 
 export type ThemePreference = PiWebThemePreference;
 
@@ -11,6 +12,8 @@ export interface ResolveThemePreferenceOptions {
   preference: ThemePreference;
   prefersLight: boolean;
   fallbackThemeId?: QualifiedContributionId;
+  /** Discovery has not finished; an absent preference is not unavailable yet. */
+  pending?: boolean;
 }
 
 export interface ThemePreferenceResolution {
@@ -21,8 +24,6 @@ export interface ThemePreferenceResolution {
 }
 
 export const CLASSIC_THEME_ID: QualifiedContributionId = "themes:classic";
-export const DEFAULT_THEME_ID: QualifiedContributionId = "themes:pi-web-dark";
-export const DEFAULT_THEME_PREFERENCE: ThemePreference = { themeId: DEFAULT_THEME_ID, auto: true };
 export const THEME_STORAGE_KEY = "pi-web-app-theme";
 
 export interface ThemePolicy {
@@ -73,9 +74,9 @@ export function clearStoredThemePreference(): void {
   }
 }
 
-export function effectiveThemePreference(local: ThemePreference | undefined, configuredDefault: ThemePreference | undefined): ThemePreference {
-  if (themePolicy.enforcedBy !== undefined) return themePolicy.defaultPreference ?? DEFAULT_THEME_PREFERENCE;
-  return local ?? configuredDefault ?? themePolicy.defaultPreference ?? DEFAULT_THEME_PREFERENCE;
+export function effectiveThemePreference(local: ThemePreference | undefined, configuredDefault: ThemePreference | undefined, policy: ThemePolicy = themePolicy): ThemePreference {
+  if (policy.enforcedBy !== undefined) return policy.defaultPreference ?? DEFAULT_THEME_PREFERENCE;
+  return local ?? configuredDefault ?? policy.defaultPreference ?? DEFAULT_THEME_PREFERENCE;
 }
 
 // Preserve the released v4 palette allowlist without turning tokens into a v5 API.
@@ -90,6 +91,14 @@ const legacyThemeTokens = [
   "--pi-success-bg-overlay", "--pi-terminal-selection",
 ] as const;
 
+export function clearPiWebTheme(): void {
+  const root = document.documentElement;
+  delete root.dataset["piWebTheme"];
+  root.style.removeProperty("color-scheme");
+  for (const token of legacyThemeTokens) root.style.removeProperty(token);
+  syncThemeColor();
+}
+
 export function applyPiWebTheme(theme: QualifiedThemeContribution): void {
   const root = document.documentElement;
   root.dataset["piWebTheme"] = theme.id;
@@ -99,11 +108,32 @@ export function applyPiWebTheme(theme: QualifiedThemeContribution): void {
     if (value === undefined) root.style.removeProperty(token);
     else root.style.setProperty(token, value);
   }
+  syncThemeColor();
+}
+
+function syncThemeColor(): void {
+  const root = document.documentElement;
+  const metas = [...document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')];
+  // Before a theme commits, let the browser choose its own chrome colour.
+  if (root.dataset["piWebTheme"] === undefined) {
+    for (const meta of metas) meta.remove();
+    return;
+  }
+  // Called only after palette adoption, so browser chrome follows the committed CSS.
+  const background = getComputedStyle(root).getPropertyValue("--pi-bg").trim();
+  if (background === "") return;
+  if (metas.length === 0) {
+    const meta = document.createElement("meta");
+    meta.name = "theme-color";
+    document.head.append(meta);
+    metas.push(meta);
+  }
+  for (const meta of metas) meta.content = background;
 }
 
 export function resolveThemePreference(options: ResolveThemePreferenceOptions): ThemePreferenceResolution {
   const fallbackTheme = findFallbackTheme(options.themes, options.fallbackThemeId ?? CLASSIC_THEME_ID);
-  const selectedTheme = options.themes.find((candidate) => candidate.id === options.preference.themeId) ?? fallbackTheme;
+  const selectedTheme = options.themes.find((candidate) => candidate.id === options.preference.themeId) ?? (options.pending === true ? undefined : fallbackTheme);
   if (selectedTheme === undefined) {
     return { selectedTheme: undefined, activeTheme: undefined, selectedThemePair: undefined, fallbackTheme };
   }

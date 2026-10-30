@@ -312,7 +312,8 @@ async function createSessionDaemonRuntime() {
     });
     projectLifecycleForFailedConstruction = projectLifecycle;
     const projectWorkspaceDeps = { projects, workspaces: workspaceProviders };
-    const spawnTargets = config.spawnSessions ? new ProjectScopedSpawnTargetResolver(projectWorkspaceDeps) : undefined;
+    const messageTargets = new ProjectScopedSpawnTargetResolver(projectWorkspaceDeps);
+    const spawnTargets = config.spawnSessions ? messageTargets : undefined;
     // A plugin may open a session during activation. Install discovery before
     // session_start, but publish backend authority only after startup health.
     let companionOptions: {
@@ -332,6 +333,8 @@ async function createSessionDaemonRuntime() {
       workspaceActivity,
       logger: app.log,
       ...(spawnTargets === undefined ? {} : { spawnTargets }),
+      messageTargets,
+      sessionMessagesEnabled: config.sessionMessages,
       subsessionsEnabled: config.subsessions,
       askUserEnabled: config.askUser,
       config: configService,

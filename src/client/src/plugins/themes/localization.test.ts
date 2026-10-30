@@ -1,72 +1,29 @@
-// @vitest-environment happy-dom
-import { afterEach, expect, it, vi } from "vitest";
-import { localization } from "../../localization/browser";
-import { SettingsThemePanel } from "../../components/settings/SettingsThemePanel";
-import { PluginRegistry } from "../registry";
-import { themePackPlugin } from "./index";
+import { expect, it } from "vitest";
+import { LocalizationService } from "../../localization/service";
+import { localizeBuiltInThemeMetadata } from "./index";
 import definitions from "./themes.messages";
 
-const registries: PluginRegistry[] = [];
-const releases: (() => void)[] = [];
-afterEach(async () => {
-  document.body.replaceChildren();
-  for (const registry of registries.splice(0)) await registry.dispose();
-  for (const release of releases.splice(0)) release();
-  await localization.setPreferences({ language: "en", formatLocale: "en" });
-  localStorage.clear();
-});
-
-it("keeps every theme and pair label live while preserving stylesheets, identities and staged settings", async () => {
-  const catalog = Object.fromEntries(Object.entries(definitions).map(([key, value]) => [key, `Übersetzt '<img>' ${value.message}`]));
-  releases.push(localization.registerCatalog({
+it("keeps static built-in theme and pair labels live without changing catalog identities", async () => {
+  const localization = new LocalizationService({ development: true });
+  const catalog = Object.fromEntries(Object.entries(definitions).map(([key, value]) => [key, `Translated ${value.message}`]));
+  localization.registerCatalog({
     id: "themes-test", namespace: "plugin:themes:themes", locale: "de", load: () => Promise.resolve(catalog),
-  }));
-  const registry = new PluginRegistry();
-  registries.push(registry);
-  await registry.register({ id: "themes", plugin: themePackPlugin });
-  const themes = registry.getThemes();
-  const pairs = registry.getThemePairs();
-  const contributions = [...themes, ...pairs, ...registry.getFileIconThemes()];
-  const originalLabels = contributions.map(({ name, description }) => ({ name, description }));
-  const identity = themes.map(({ id, colorScheme, stylesheets }) => ({ id, colorScheme, stylesheets }));
-  const pairing = pairs.map(({ id, light, dark }) => ({ id, light, dark }));
-  expect(originalLabels.flatMap(({ name, description }) => [name, description])).toEqual(Object.values(definitions).map(({ message }) => message));
-
-  const panel = new SettingsThemePanel();
-  panel.themes = themes;
-  panel.onUseLocal = vi.fn();
-  document.body.append(panel);
-  await panel.updateComplete;
-  const select = panel.renderRoot.querySelector("select");
-  if (select === null) throw new Error("Expected theme selector");
-  select.value = "themes:paper";
-  select.dispatchEvent(new Event("change"));
-  await panel.updateComplete;
-  select.focus();
-
+  });
+  const ids = ["pi-web-dark", "pi-web-light", "classic", "paper", "graphite", "pi-web", "paper-graphite"];
+  const contributions = ids.map((id) => localizeBuiltInThemeMetadata({
+    id: `themes:${id}`, name: "Fallback", description: "Fallback", stylesheets: [{ id: "palette", url: `${id}.css` }],
+  }, localization));
+  const labels = Object.values(definitions).slice(0, -2).map(({ message }) => message);
+  const identities = contributions.map(({ id, stylesheets }) => ({ id, stylesheets }));
+  expect(contributions.flatMap(({ name, description }) => [name, description])).toEqual(labels);
   for (const language of ["de", "en-XA", "ar-XB", "en"]) {
     await localization.setPreferences({ language, formatLocale: "en" });
-    await panel.updateComplete;
-    for (const [index, contribution] of contributions.entries()) {
-      const original = originalLabels[index];
-      if (language === "en") expect({ name: contribution.name, description: contribution.description }).toEqual(original);
-      else {
-        expect(contribution.name).not.toBe(original?.name);
-        expect(contribution.description).not.toBe(original?.description);
-      }
-    }
-    if (language === "de") {
-      expect(contributions.flatMap(({ name, description }) => [name, description])).toEqual(Object.values(catalog).map((value) => value.replaceAll("'", "")));
-    }
-    expect([...select.options].map((option) => option.textContent)).toEqual(themes.map(({ name }) => name));
-    expect(panel.renderRoot.querySelector("select")).toBe(select);
-    expect(panel.shadowRoot?.activeElement).toBe(select);
-    expect(select.value).toBe("themes:paper");
-    expect(panel.renderRoot.querySelector("img")).toBeNull();
-    expect(panel.onUseLocal).not.toHaveBeenCalled();
-    expect(themes.map(({ id, colorScheme, stylesheets }) => ({ id, colorScheme, stylesheets }))).toEqual(identity);
-    expect(pairs.map(({ id, light, dark }) => ({ id, light, dark }))).toEqual(pairing);
+    const translated = contributions.flatMap(({ name, description }) => [name, description]);
+    if (language === "en") expect(translated).toEqual(labels);
+    else if (language === "de") expect(translated).toEqual(labels.map((label) => `Translated ${label}`));
+    else for (const [index, label] of translated.entries()) expect(label).not.toBe(labels[index]);
+    expect(contributions.map(({ id, stylesheets }) => ({ id, stylesheets }))).toEqual(identities);
   }
-  panel.renderRoot.querySelector("button")?.click();
-  expect(panel.onUseLocal).toHaveBeenCalledExactlyOnceWith({ themeId: "themes:paper", auto: true });
+  const external = { id: "other:paper", name: "Other Paper" };
+  expect(localizeBuiltInThemeMetadata(external, localization)).toBe(external);
 });

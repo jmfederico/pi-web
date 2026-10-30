@@ -1,31 +1,34 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-pi-web-loading>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>PI WEB</title>
-    <meta name="theme-color" content="#0d1117" />
+    <script id="pi-web-theme-data" type="application/json"></script>
     <link rel="icon" type="image/svg+xml" href="%BASE_URL%favicon.svg" />
     <link rel="apple-touch-icon" href="%BASE_URL%apple-touch-icon.png" />
     <link rel="manifest" crossorigin="use-credentials" href="%BASE_URL%manifest.webmanifest" />
     <style>
       :root {
-        color-scheme: dark;
+        color-scheme: light dark;
         --pi-control-font-size: 16px;
         --pi-control-font-family: var(--pi-font, system-ui, sans-serif);
         --pi-control-monospace-font-family: var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
-        --pi-bg: #0d1117;
-        --pi-surface: #161b22;
-        --pi-surface-hover: #21262d;
+        /* A neutral startup palette follows the scheme; runtime themes own exact colours. */
+        --pi-bg: var(--pi-initial-bg);
+        --pi-initial-bg: Canvas;
+        --pi-initial-text: CanvasText;
+        --pi-surface: color-mix(in srgb, var(--pi-bg) 95%, var(--pi-text));
+        --pi-surface-hover: color-mix(in srgb, var(--pi-bg) 90%, var(--pi-text));
         --pi-terminal-bg: #05070a;
         --pi-terminal-text: #e6edf3;
-        --pi-border: #30363d;
-        --pi-border-muted: #21262d;
-        --pi-text: #e6edf3;
-        --pi-text-secondary: #c9d1d9;
-        --pi-text-bright: #f0f6fc;
-        --pi-muted: #8b949e;
-        --pi-dim: #6e7681;
+        --pi-border: color-mix(in srgb, var(--pi-bg) 75%, var(--pi-text));
+        --pi-border-muted: color-mix(in srgb, var(--pi-bg) 88%, var(--pi-text));
+        --pi-text: var(--pi-initial-text);
+        --pi-text-secondary: var(--pi-text);
+        --pi-text-bright: var(--pi-text);
+        --pi-muted: color-mix(in srgb, var(--pi-text) 65%, var(--pi-bg));
+        --pi-dim: color-mix(in srgb, var(--pi-text) 50%, var(--pi-bg));
         --pi-accent: #58a6ff;
         --pi-accent-border: #2f81f7;
         --pi-selection-bg: #0d2847;
@@ -45,17 +48,29 @@
         --pi-shadow-soft: #0006;
         --pi-shadow: #0008;
         --pi-shadow-strong: #000b;
-        --pi-bg-overlay-soft: #0d1117dd;
-        --pi-bg-overlay: #0d1117e6;
+        --pi-bg-overlay-soft: color-mix(in srgb, var(--pi-bg) 87%, transparent);
+        --pi-bg-overlay: color-mix(in srgb, var(--pi-bg) 90%, transparent);
         --pi-success-bg-overlay: #0f1b12ee;
         --pi-terminal-selection: #264f78;
       }
       html, body { margin: 0; height: 100%; overflow: hidden; background: var(--pi-bg); color: var(--pi-text); }
       body { min-height: 100dvh; }
+      html[data-pi-web-loading] pi-web-app { visibility: hidden; }
+      #pi-web-startup { position: fixed; inset: 0; display: grid; place-content: center; justify-items: center; color-scheme: light dark; background: Canvas; color: CanvasText; font: 16px system-ui, sans-serif; }
+      /* Match the PI WEB mark in favicon.svg; the surrounding loader uses system colours. */
+      #pi-web-startup svg { width: 96px; height: 16px; overflow: visible; color: #00f0d8; fill: currentColor; filter: drop-shadow(0 0 4px color-mix(in srgb, currentColor 25%, transparent)); animation: pi-web-startup-glow 2400ms ease-in-out infinite alternate; }
+      @media (prefers-color-scheme: light) { #pi-web-startup svg { color: #008c82; } }
+      html[data-pi-web-deployment="dev"] #pi-web-startup svg { color: #a371f7; }
+      @keyframes pi-web-startup-glow { to { filter: drop-shadow(0 0 8px color-mix(in srgb, currentColor 45%, transparent)); } }
+      @media (prefers-reduced-motion: reduce) { #pi-web-startup svg { animation: none; } }
+      html:not([data-pi-web-loading]) #pi-web-startup { display: none; }
     </style>
   </head>
   <body>
+    <div id="pi-web-startup" role="status" aria-label="Loading PI WEB">
+      <svg viewBox="0 0 768 128" aria-hidden="true"><rect width="768" height="128" /></svg>
+    </div>
     <pi-web-app></pi-web-app>
-    <script type="module" src="/src/main.ts"></script>
+    <script type="module" src="/src/startup.ts"></script>
   </body>
 </html>

@@ -320,8 +320,8 @@ server {
                 Use the same pattern for <code>/test/ai/</code> by changing both Nginx locations. If your proxy uses
                 bearer tokens, SSO, or another authentication mechanism, keep that policy on the prefixed application
                 location and continue forwarding the headers or cookies it requires; the slashless redirect serves no
-                PI WEB content. Do not create unprotected exceptions for <code>/api/</code> or
-                <code>/pi-web-plugins/</code>.
+                PI WEB content. Do not create unprotected exceptions for <code>/api/</code>,
+                <code>/pi-web-plugins/</code>, or <code>/pi-web-theme-assets/</code>.
               </p>
               <p>
                 Open the trailing-slash URL, such as <code>https://pi.example.com/ai/</code>. The UI, plugins, and

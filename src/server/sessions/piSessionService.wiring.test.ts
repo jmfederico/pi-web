@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentSessionServices, CreateAgentSessionServicesOptions, InlineExtension } from "../../piSdk.js";
@@ -33,9 +33,11 @@ beforeEach(() => {
 
 describe("PiSessionService builtin extension factory wiring", () => {
   it.each([
-    { label: "without prompt additions", sections: [] },
-    { label: "with prompt additions", sections: ["PI WEB deployment facts"] },
-  ])("preserves factories, event bus, and prompt options $label", async ({ sections }) => {
+    { label: "without prompt additions", sections: [], parentId: undefined },
+    { label: "with prompt additions", sections: ["PI WEB deployment facts"], parentId: undefined },
+    { label: "with parent context", sections: [], parentId: "parent-session" },
+    { label: "with parent context and prompt additions", sections: ["PI WEB deployment facts"], parentId: "parent-session" },
+  ])("preserves factories, event bus, and prompt options $label", async ({ sections, parentId }) => {
     const directory = await mkdtemp(join(tmpdir(), "pi-web-wiring-"));
     const modelRuntime = await createTestModelRuntime();
     const service = new PiSessionService(new CapturingSessionEventHub(), {
@@ -47,18 +49,22 @@ describe("PiSessionService builtin extension factory wiring", () => {
     });
 
     try {
-      await expect(service.start(directory)).rejects.toThrow("capture-only session services");
+      const parentSession = parentId === undefined ? undefined : join(directory, "parent.jsonl");
+      if (parentSession !== undefined) {
+        await writeFile(parentSession, `${JSON.stringify({ type: "session", version: 3, id: parentId, cwd: directory, timestamp: new Date().toISOString() })}\n`);
+      }
+      await expect(service.start(directory, parentSession === undefined ? {} : { parentSession })).rejects.toThrow("capture-only session services");
       expect(captureServices).toHaveBeenCalledTimes(1);
       const options = captureServices.mock.calls[0]?.[0].resourceLoaderOptions;
       expect(options?.extensionFactories).toEqual(expect.arrayContaining(builtinFactories));
       expect(options?.eventBus).toBeDefined();
-      if (sections.length === 0) {
+      if (sections.length === 0 && parentId === undefined) {
         expect(options?.appendSystemPromptOverride).toBeUndefined();
       } else {
-        expect(options?.appendSystemPromptOverride?.(["Existing prompt section"])).toEqual([
-          "Existing prompt section",
-          ...sections,
-        ]);
+        const appended = options?.appendSystemPromptOverride?.(["Existing prompt section"]);
+        expect(appended?.slice(0, 1 + sections.length)).toEqual(["Existing prompt section", ...sections]);
+        expect(appended).toHaveLength(1 + sections.length + (parentId === undefined ? 0 : 1));
+        if (parentId !== undefined) expect(appended?.at(-1)).toContain(`Parent session ID: ${parentId}`);
       }
     } finally {
       try {

@@ -7,10 +7,10 @@ describe("configuration namespace identifiers", () => {
     expect(piWebConfigSettingPointers({
       plugins: { "plugin~/id": { enabled: false, settings: { "a.b~/c": { nested: true } } } },
       defaultLocalization: { language: "de" }, defaultTheme: { themeId: "themes:light", auto: false },
-      pathAccess: { allowedPaths: [] },
+      pathAccess: { allowedPaths: [] }, sessionMessages: false,
     })).toEqual([
       "/plugins/plugin~0~1id/enabled", "/plugins/plugin~0~1id/settings/a.b~0~1c",
-      "/defaultLocalization/language", "/defaultTheme", "/pathAccess/allowedPaths",
+      "/defaultLocalization/language", "/defaultTheme", "/pathAccess/allowedPaths", "/sessionMessages",
     ]);
   });
 

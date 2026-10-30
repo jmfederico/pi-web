@@ -24,6 +24,9 @@ it("keeps action content parent-owned and uses a named trigger", async () => {
   expect(trigger.getAttribute("aria-label")).toBe("Message actions");
   expect(trigger.getAttribute("aria-controls")).toBe(panel.id);
   expect(panel.getAttribute("popover")).toBe("auto");
+  expect(trigger.classList.contains("ui-popup-trigger")).toBe(true);
+  expect(panel.classList.contains("ui-popup-panel")).toBe(true);
+  expect(panel.dataset["uiContext"]).toBe("message-actions");
   expect(slot.assignedElements()).toEqual([content]);
   const copy = vi.fn(); action.addEventListener("click", copy); action.click();
   expect(copy).toHaveBeenCalledOnce();

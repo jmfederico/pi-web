@@ -108,6 +108,7 @@ import type { SessionUiMetadata } from "../../shared/pluginApiTypes.js";
 import { readSessionUiMetadata, requireSessionUiMetadata, SESSION_UI_METADATA_CUSTOM_TYPE } from "./sessionMetadata.js";
 import { createSubsessionToolDefinitions, type SpawnSubsessionInvocation, type SpawnSubsessionResult, type SubsessionCheckResult, type SubsessionJoinResult, type SubsessionReadQuery, type SubsessionReadResult, type SubsessionStatus, type SubsessionSummary, type SubsessionToolDeps } from "./spawnSubsessionTool.js";
 import { buildTranscriptView, type TranscriptView } from "./subsessionTranscript.js";
+import { createSendSessionMessageToolDefinition, type SendSessionMessageInvocation, type SendSessionMessageResult, type SendSessionMessageToolDeps } from "./sendSessionMessageTool.js";
 import { createSubsessionCompletionDelivery, type SubsessionCompletionDeliveryDeps } from "./subsessionCompletionDelivery.js";
 import { completionReceiptIds, persistedSubsessionCompletions, renderSubsessionCompletions, SUBSESSION_COMPLETION_ENTRY_TYPE, SUBSESSION_NOTIFICATION_CUSTOM_TYPE, SUBSESSION_RECEIPT_ENTRY_TYPE, SubsessionCompletionInbox, type SubsessionCompletion } from "./subsessionCompletionInbox.js";
 import { annotateAssistantThinkingLevel, historyMessagesFromEntries } from "./transcriptMessages.js";
@@ -799,9 +800,12 @@ export function createPiWebCustomToolDefinitions(
   spawn?: SpawnSessionFn,
   subsessions?: SubsessionToolDeps,
   askUserEnabled = false,
+  messaging?: SendSessionMessageToolDeps,
 ) {
   return [
     createPiWebEditToolDefinition(cwd),
+    // Messaging does not grant delegation or child-management capabilities.
+    ...(messaging === undefined ? [] : [createSendSessionMessageToolDefinition(cwd, messaging)]),
     ...(delegationEnabled && spawn !== undefined ? [createSpawnSessionToolDefinition(cwd, { spawn })] : []),
     ...(delegationEnabled && subsessions !== undefined ? createSubsessionToolDefinitions(cwd, subsessions) : []),
     // Asking the user is not delegation: the questions land in the session the
@@ -1005,9 +1009,15 @@ function createDefaultRuntimeFactory(
   subsessions?: SubsessionToolDeps & SubsessionCompletionDeliveryDeps,
   askUserEnabled = false,
   appendSystemPromptSections: readonly string[] = [],
+  messaging?: SendSessionMessageToolDeps,
 ): PiWebCreateAgentSessionRuntimeFactory {
-  const resourceLoaderOptions = piWebResourceLoaderOptions(appendSystemPromptSections);
   return async ({ cwd, agentDir, sessionManager, sessionStartEvent, initialModel, initialThinkingLevel, delegationToolsEnabled }) => {
+    const parentSessionFile = sessionManager.getHeader()?.parentSession;
+    const parentHeader = parentSessionFile === undefined ? undefined : await readSessionHeaderSummary(parentSessionFile);
+    const resourceLoaderOptions = piWebResourceLoaderOptions([
+      ...appendSystemPromptSections,
+      ...(parentHeader === undefined ? [] : [`<pi_web_session_context>\nParent session ID: ${parentHeader.id}\n</pi_web_session_context>`]),
+    ]);
     // PI WEB always honors pi's project-trust model. When the workspace ships
     // trust-requiring resources, trust is resolved exactly once, mirroring the
     // SDK's flow: the resource loader first loads the pre-trust extension set
@@ -1067,7 +1077,7 @@ function createDefaultRuntimeFactory(
     const resolvedDelegationToolsEnabled = delegationToolsEnabled
       ?? await sessionAllowsDelegationTools(sessionManager, sessionManagers);
     dispatchEnabled = resolvedDelegationToolsEnabled;
-    const customTools = createPiWebCustomToolDefinitions(cwd, resolvedDelegationToolsEnabled, spawn, subsessions, askUserEnabled);
+    const customTools = createPiWebCustomToolDefinitions(cwd, resolvedDelegationToolsEnabled, spawn, subsessions, askUserEnabled, messaging);
     const result = await createAgentSessionFromServices({
       services,
       sessionManager,
@@ -1122,6 +1132,10 @@ export interface PiSessionServiceDependencies {
    * Omit to keep the capability disabled.
    */
   spawnTargets?: SpawnTargetResolver;
+  /** Project boundary for relationship-free messaging, independent of spawning flags. */
+  messageTargets?: SpawnTargetResolver;
+  /** Disable session messaging even when a project-scope resolver is available. Defaults to true. */
+  sessionMessagesEnabled?: boolean;
   /**
    * When true (and `spawnTargets` is provided), the tracked-subsession
    * tools are available to sessions whose creation provenance permits
@@ -1257,6 +1271,7 @@ export class PiSessionService implements SessionRouteService {
   private readonly modelRuntime: ModelRuntime;
   private readonly workspaceActivity: Pick<WorkspaceActivityService, "applySessionStatus" | "applySessionActivity" | "removeSession" | "reconcileSessionActivity"> | undefined;
   private readonly spawnTargets: SpawnTargetResolver | undefined;
+  private readonly messageTargets: SpawnTargetResolver | undefined;
   private readonly logger: PiSessionLogger;
   private readonly queueCompatibility = new QueueCompatibilityGuard<PiAgentSession>((session, err) => {
     this.logger.info({ sessionId: session.sessionId, err }, "Disabled SDK-dependent queue controls after an incompatible queue interface");
@@ -1291,6 +1306,7 @@ export class PiSessionService implements SessionRouteService {
     this.sessionManager = deps.sessionManager;
     this.modelRuntime = deps.modelRuntime;
     this.spawnTargets = deps.spawnTargets;
+    this.messageTargets = deps.sessionMessagesEnabled === false ? undefined : deps.messageTargets ?? deps.spawnTargets;
     this.logger = deps.logger ?? noopLogger;
     this.now = deps.now ?? (() => new Date());
     this.activityMarker = new SessionActivityMarker({
@@ -1320,6 +1336,9 @@ export class PiSessionService implements SessionRouteService {
       this.spawnTargets === undefined ? undefined : (input) => this.spawnSession(input),
       !subsessionsActive ? undefined : {
         spawn: (input) => this.spawnSubsession(input),
+        archive: (parentSessionId, sessionId, parentSessionFile) => this.archiveSubsession(parentSessionId, sessionId, parentSessionFile),
+        stop: (parentSessionId, sessionId, parentSessionFile) => this.stopSubsession(parentSessionId, sessionId, parentSessionFile),
+        resume: (parentSessionId, sessionId, prompt, parentSessionFile) => this.resumeSubsession(parentSessionId, sessionId, prompt, parentSessionFile),
         list: (parentSessionId, parentSessionFile) => this.listSubsessions(parentSessionId, parentSessionFile),
         join: (parentSessionId, parentSessionFile, toolCallId) => this.joinSubsessions(parentSessionId, parentSessionFile, toolCallId),
         prepare: (parentSessionId, parentSessionFile) => this.prepareSubsessionDelivery(parentSessionId, parentSessionFile),
@@ -1328,6 +1347,7 @@ export class PiSessionService implements SessionRouteService {
       },
       deps.askUserEnabled === true,
       deps.appendSystemPromptSections ?? [],
+      this.messageTargets === undefined ? undefined : { send: (input) => this.sendSessionMessage(input) },
     );
     this.createAgentRuntime = deps.createAgentRuntime ?? defaultCreateAgentRuntime;
     this.workspaceActivity = deps.workspaceActivity;
@@ -1488,6 +1508,7 @@ export class PiSessionService implements SessionRouteService {
       thresholds: plan.thresholds,
       generatedAt: plan.generatedAt,
       skippedBusySessionIds: [...skippedBusySessionIds],
+      ...(plan.skippedPinnedSessionIds === undefined ? {} : { skippedPinnedSessionIds: plan.skippedPinnedSessionIds }),
     });
   }
 
@@ -2115,6 +2136,77 @@ export class PiSessionService implements SessionRouteService {
     if (session !== undefined) this.publishStatus(session);
   }
 
+  /** Interrupt a direct child's current run without closing its conversation. */
+  async stopSubsession(parentSessionId: string, sessionId: string, parentSessionFile?: string): Promise<SubsessionSummary> {
+    const child = await this.openSubsession(parentSessionId, sessionId, parentSessionFile);
+    const cwd = child.sessionManager.getCwd();
+    await this.abort({ id: sessionId, cwd });
+    return { sessionId, cwd, status: this.subsessionStatus(child) };
+  }
+
+  /** Start another run in a direct child's conversation, without prompt expansion. */
+  async resumeSubsession(parentSessionId: string, sessionId: string, prompt?: string, parentSessionFile?: string): Promise<SubsessionSummary> {
+    const child = await this.openSubsession(parentSessionId, sessionId, parentSessionFile);
+    const cwd = child.sessionManager.getCwd();
+    await this.assertWritable({ id: sessionId, cwd });
+    this.assertTreeNavigationInactive(child, "resume a subsession");
+    if (this.hasActiveWork(child)) throw new Error("Subsession is already working");
+    const text = requirePromptText(prompt ?? "Continue your previous task from the current conversation and workspace state. Check any interrupted work before repeating it.");
+    void this.beginPromptSubmission(child, text, undefined, [], true, false).catch(() => undefined);
+    return { sessionId, cwd, status: "working" };
+  }
+
+  /** Archive a direct child using the same idle-only operation as the browser. */
+  async archiveSubsession(parentSessionId: string, sessionId: string, parentSessionFile?: string): Promise<void> {
+    const child = await this.openSubsession(parentSessionId, sessionId, parentSessionFile);
+    await this.archive({ id: sessionId, cwd: child.sessionManager.getCwd() });
+  }
+
+  /** Send content, not control authority, to a named session in the same project. */
+  async sendSessionMessage(input: SendSessionMessageInvocation): Promise<SendSessionMessageResult> {
+    if (this.messageTargets === undefined) throw new Error("Session messaging is unavailable");
+    const message = requirePromptText(input.message);
+    const active = this.active.get(input.sessionId);
+    const target = active === undefined
+      ? (await this.sessionManager.listAll()).find((entry) => entry.id === input.sessionId)
+      : { id: input.sessionId, cwd: active.runtime.cwd };
+    if (target === undefined) throw new Error("Session not found");
+    const decision = await this.messageTargets.resolveSpawnTarget(input.sendingCwd, target.cwd);
+    if (!decision.allowed) throw new Error("Session messaging is limited to sessions in the same registered project");
+    const ref = { id: input.sessionId, cwd: decision.cwd };
+    await this.assertWritable(ref);
+    const session = await this.getOrOpen(ref);
+    this.assertTreeNavigationInactive(session, "receive a session message");
+    const delivery = this.hasActiveWork(session) ? "queued" : "started";
+    let agentStarted = false;
+    const unsubscribe = session.subscribe((event) => {
+      if (getString(event, "type") === "agent_start") agentStarted = true;
+    });
+    // A custom-message turn may run for minutes. Never wait for its answer in
+    // the sender: reciprocal messages must not deadlock their tool calls.
+    void this.runSessionEntryMutation(session, "receive a session message", async () => {
+      if (session.isCompacting || session.isBashRunning) await session.waitForIdle();
+      if (!this.isCurrentActiveSession(session)) throw new Error("Session was closed before message delivery");
+      await session.sendCustomMessage({
+        customType: "session.message",
+        content: `Message from session ${input.sendingSessionId}:\n\n${message}`,
+        display: true,
+        details: { sendingSessionId: input.sendingSessionId },
+      }, { triggerTurn: true, deliverAs: "followUp" });
+    }).catch((error: unknown) => {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logger.info({ sessionId: input.sessionId, sendingSessionId: input.sendingSessionId, error: detail }, "session message delivery failed");
+      if (!this.isCurrentActiveSession(session)) return;
+      this.publishActivity(session, { kind: "error" }, "error", detail);
+      this.events.publish(session.sessionId, { type: "session.error", message: detail });
+      if (!agentStarted && this.subsessionLinkForActiveChild(session) !== undefined) this.subsessionNotifyArmed.set(session.sessionId, true);
+      this.updateSubsessionTracking(session);
+      this.publishStatus(session);
+    }).finally(unsubscribe);
+    this.logger.info({ sendingSessionId: input.sendingSessionId, sessionId: input.sessionId, delivery }, "session message accepted");
+    return { sessionId: input.sessionId, delivery };
+  }
+
   /** Summaries of the tracked subsessions spawned by `parentSessionId`. */
   async listSubsessions(parentSessionId: string, parentSessionFile?: string): Promise<SubsessionSummary[]> {
     const parentFile = nonEmptyString(parentSessionFile);
@@ -2125,7 +2217,7 @@ export class PiSessionService implements SessionRouteService {
     return Promise.all(authorizedChildIds.map(async (childId) => ({ sessionId: childId, ...(await this.subsessionSummaryFields(childId)) })));
   }
 
-  /** Collect ready answers before deciding whether the parent needs to wait. */
+  /** Collect unread run snapshots; the yield tool exposes only their lifecycle facts. */
   async joinSubsessions(parentSessionId: string, parentSessionFile?: string, toolCallId?: string): Promise<SubsessionJoinResult> {
     const subsessions = await this.listSubsessions(parentSessionId, parentSessionFile);
     this.reconcileSubsessionCompletions(parentSessionId, parentSessionFile);
@@ -3866,6 +3958,7 @@ export class PiSessionService implements SessionRouteService {
       archivedRecords,
       activeSessions: this.cleanupActiveSessionStatuses(),
       thresholds: request.thresholds,
+      ...(request.excludedPinnedSessionIds === undefined ? {} : { excludedPinnedSessionIds: request.excludedPinnedSessionIds }),
       ...(request.projectCwds === undefined ? {} : { projectCwds: request.projectCwds }),
       now: this.now(),
     });
@@ -5286,6 +5379,7 @@ function previewResponseFromPlan(plan: SessionCleanupPlan): ClientSessionCleanup
     projects: plan.projects,
     totals: plan.totals,
     ...(plan.skippedBusySessionIds.length === 0 ? {} : { skippedBusySessionIds: plan.skippedBusySessionIds }),
+    ...(plan.skippedPinnedSessionIds === undefined ? {} : { skippedPinnedSessionIds: plan.skippedPinnedSessionIds }),
   };
 }
 

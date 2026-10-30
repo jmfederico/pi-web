@@ -15,7 +15,7 @@ import { uiSettingsStyles } from "../ui/settingsStyles";
 import "./SettingsPanelFrame";
 import type { SettingsNotice } from "./SettingsPanelFrame";
 import { enforcedSetting, settingControls, type ResetSettings } from "./settingsConfigUpdate";
-import { askUserConfigPatch, spawnSessionsConfigPatch, subsessionsConfigPatch } from "./settingsSessiondConfig";
+import { askUserConfigPatch, sessionMessagesConfigPatch, spawnSessionsConfigPatch, subsessionsConfigPatch } from "./settingsSessiondConfig";
 
 export const sessiondMessages = localization.registerMessages("core.settingsSessiond", source);
 const codeTag = (chunks: unknown[]): TemplateResult => html`<code dir="ltr">${chunks}</code>`;
@@ -64,6 +64,8 @@ export class SettingsSessiondPanel extends LitElement {
     const subsessionsOverridden = enforcedSetting(config, "/subsessions") !== undefined;
     // On by default; also requires spawn to be enabled.
     const effectiveSubsessions = config?.effectiveConfig.subsessions === true && effectiveSpawn;
+    const sessionMessagesOverridden = enforcedSetting(config, "/sessionMessages") !== undefined;
+    const effectiveSessionMessages = config?.effectiveConfig.sessionMessages !== false;
     const askUserOverridden = enforcedSetting(config, "/askUser") !== undefined;
     const effectiveAskUser = config?.effectiveConfig.askUser === true;
     return html`
@@ -120,6 +122,23 @@ export class SettingsSessiondPanel extends LitElement {
             <label class="toggle ui-checkbox-field">
               <input
                 type="checkbox"
+                id="session-messages"
+                aria-describedby="session-messages-help"
+                .checked=${live(effectiveSessionMessages)}
+                ?disabled=${this.loading || this.saving || sessionMessagesOverridden}
+                @change=${(event: Event) => { void this.toggleSessionMessages(event); }}
+              >
+              <span>${sessiondMessages.t("sessionMessages")}</span>
+            </label>
+            <small id="session-messages-help">
+              ${sessiondMessages.rich("sessionMessagesHelp", { code: codeTag, tool: "send_session_message" })}
+              ${sessionMessagesOverridden ? sessiondMessages.rich("envOverride", { variable: "PI_WEB_SESSION_MESSAGES", code: codeTag }) : null}
+            </small>
+          </div>
+          <div class="field ui-form-field">
+            <label class="toggle ui-checkbox-field">
+              <input
+                type="checkbox"
                 id="ask-user"
                 aria-describedby="ask-user-help"
                 .checked=${live(effectiveAskUser)}
@@ -133,13 +152,14 @@ export class SettingsSessiondPanel extends LitElement {
               ${askUserOverridden ? sessiondMessages.rich("envOverride", { variable: "PI_WEB_ASK_USER", code: codeTag }) : null}
             </small>
           </div>
-          ${["spawnSessions", "subsessions", "askUser"].map((key) => settingControls(config, `/${key}`, this.loading || this.saving, this.onReset))}
+          ${["spawnSessions", "subsessions", "sessionMessages", "askUser"].map((key) => settingControls(config, `/${key}`, this.loading || this.saving, this.onReset))}
           <section class="effective-card ui-settings-summary" aria-labelledby="restart-summary-heading" aria-describedby="restart-summary-help">
             <h3 id="restart-summary-heading">${sessiondMessages.t("restartHeading")}</h3>
             <small id="restart-summary-help">${sessiondMessages.t("restartHelp")}</small>
             <dl>
               <div><dt>${sessiondMessages.t("spawnSummary")}</dt><dd>${effectiveSpawn ? sessiondMessages.t("enabled") : html`<span class="muted">${sessiondMessages.t("disabled")}</span>`}</dd></div>
               <div><dt>${sessiondMessages.t("subsessionsSummary")}</dt><dd>${effectiveSubsessions ? sessiondMessages.t("enabled") : html`<span class="muted">${sessiondMessages.t("disabled")}</span>`}</dd></div>
+              <div><dt>${sessiondMessages.t("sessionMessagesSummary")}</dt><dd>${effectiveSessionMessages ? sessiondMessages.t("enabled") : html`<span class="muted">${sessiondMessages.t("disabled")}</span>`}</dd></div>
               <div><dt>${sessiondMessages.t("askUserSummary")}</dt><dd>${effectiveAskUser ? sessiondMessages.t("enabled") : html`<span class="muted">${sessiondMessages.t("disabled")}</span>`}</dd></div>
             </dl>
           </section>
@@ -272,6 +292,11 @@ export class SettingsSessiondPanel extends LitElement {
   private async toggleSubsessions(event: Event): Promise<void> {
     const enabled = event.target instanceof HTMLInputElement && event.target.checked;
     await this.onSave?.(subsessionsConfigPatch(enabled));
+  }
+
+  private async toggleSessionMessages(event: Event): Promise<void> {
+    const enabled = event.target instanceof HTMLInputElement && event.target.checked;
+    await this.onSave?.(sessionMessagesConfigPatch(enabled));
   }
 
   private async toggleAskUser(event: Event): Promise<void> {

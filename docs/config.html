@@ -312,10 +312,12 @@
 <details class="config-details"><summary>Theme defaults and device choices</summary>
 <p>In <strong>Settings → General → Theme</strong>, choose a theme and <strong>Auto</strong> mode, then:</p>
 <ul><li><strong>Use on this device</strong> saves a choice for this browser only.</li><li><strong>Set as default</strong> shares a default without replacing existing device choices.</li><li><strong>Use the default</strong> clears this browser’s override.</li></ul>
-<p>Unless <code>PI_WEB_DEFAULT_THEME</code> enforces the theme, device choices take precedence over the configured default, then the built-in default (PI WEB Dark with Auto on). Enforcement locks theme controls and preserves the device choice for when policy is removed. Auto follows the device’s light/dark preference for paired themes; unpaired themes stay selected. Unavailable themes temporarily fall back to Classic without erasing the choice.</p>
+<p>Unless <code>PI_WEB_DEFAULT_THEME</code> enforces the theme, device choices take precedence over the configured default, then the built-in default (PI WEB Dark with Auto on). Enforcement locks theme controls and preserves the device choice for when policy is removed. Auto follows the device’s light/dark preference for paired themes; unpaired themes stay selected.</p>
+<p>The initial page includes the gateway default's details and CSS, including associated pair details and both variants' CSS for Auto. Accepting that theme needs no additional theme request. If the default requires legacy browser activation, the backend supplies Classic while preserving the intended preference. The app appears with the delivered palette; the browser then requests another theme if its saved choice needs one, or applies a legacy theme when its plugin activates. A failed or unavailable choice leaves the current palette usable without erasing the saved choice. General settings load the complete inventory once per dialog, with explicit retry on failure and normal HTTP caching. The browser-native loading screen covers initial application startup, not later browser overrides.</p>
+<p>Device choices keep the existing localStorage key <code>pi-web-app-theme</code> and <code>{ themeId, auto }</code> format. Theme packages use declarative metadata and revision-qualified assets, not cached arbitrary CSS in localStorage or new config files. See <a href="plugins.md#css-first-themes">theme packages</a> for authoring and migration.</p>
 <p>The default belongs to the gateway, not a project or remote machine. Changes apply after settings save or browser config refresh, with no service restart.</p>
 <pre><code>{ "defaultTheme": { "themeId": "themes:pi-web-dark", "auto": true } }</code></pre>
-<p>Use a theme contribution ID rather than a display name. Built-in IDs are <code>themes:pi-web-dark</code>, <code>themes:pi-web-light</code>, and <code>themes:classic</code>.</p>
+<p>Use a theme contribution ID rather than a display name. Built-in IDs remain <code>themes:pi-web-dark</code>, <code>themes:pi-web-light</code>, <code>themes:classic</code>, <code>themes:paper</code>, and <code>themes:graphite</code> after migration to declarative packages.</p>
 </details>
 <h3 id="prompt-completions">Composer shortcuts (not config keys)</h3>
 <div class="table-scroll" role="region" aria-label="Completion triggers" tabindex="0">
@@ -426,6 +428,13 @@
 <td>Sessiond restart</td>
 </tr>
 <tr>
+<th scope="row">Session messaging<br><code>sessionMessages</code></th>
+<td>Machine</td>
+<td><code>true</code></td>
+<td>Expose <code>send_session_message</code> and allow session-message delivery, independently of spawning flags.</td>
+<td>Sessiond restart</td>
+</tr>
+<tr>
 <th scope="row">Question forms<br><code>askUser</code></th>
 <td>Machine</td>
 <td><code>true</code></td>
@@ -463,7 +472,10 @@
 <p>Saved model, budget, thinking-level, and timeout changes apply to the next naming request without a restart or reload. Existing names and in-progress naming requests are unchanged. Agent permission changes in the same panel still require a session-daemon restart. Naming failures use the first-message fallback and are recorded in daemon logs.</p>
 </details>
 <details class="config-details"><summary>Independent sessions vs. tracked subsessions</summary>
-<p>Independent sessions run in a workspace of the same project without returning output to their parent. Tracked subsessions run in the parent’s working directory and return results automatically; the parent can keep working or wait for them. Delivered results are not automatically repeated, but remain available for review.</p>
+<p>Independent sessions run in a workspace of the same project without granting management rights or sending automatic lifecycle notices to the initiating session. Tracked subsessions run in the parent’s working directory and give the parent inspection and lifecycle controls. When a tracked child’s run ends, the parent receives an idle or error notice—not the child’s final answer or a claim that its task is complete. The parent can keep working or use <code>yield_to_subsessions</code> to wait for lifecycle notices. Received notices are not automatically repeated; explicit inspection remains available through <code>check_subsession</code> and <code>read_subsession</code>.</p>
+<p>Both kinds of session use the same <code>send_session_message</code> tool for communication when messaging is enabled. What to communicate, when to reply, and whether a task is finished are decisions for the agents and their instructions, skills, or workflows.</p>
+<p>Parents use <code>manage_subsession</code> with a direct child’s <code>sessionId</code> and an <code>action</code>: <code>stop</code> interrupts its current run, <code>resume</code> continues its conversation, and <code>archive</code> archives it. The optional <code>prompt</code> supplies new instructions for <code>resume</code> only; other actions reject it. Stop interrupts work rather than freezing a process or undoing changes; a later resume or message can start another run. Resume rejects a child that is already working. Archive requires the child to be idle; stop it first if needed. These controls do not extend to unrelated sessions or grandchildren.</p>
+<p><code>sessionMessages</code> controls whether sessions, including tracked children, receive <code>send_session_message</code>. It defaults to <code>true</code>, independently of the spawning flags. Set it to <code>false</code> or set <code>PI_WEB_SESSION_MESSAGES=0</code> to remove the tool and block session-message delivery after restarting the session daemon. It sends a message to a known session ID in any workspace of the same registered project on the same machine. An idle recipient starts a turn; a busy recipient receives a queued follow-up. Sending creates no parent/child relationship, grants no inspection or control rights, and subscribes to no results. Messages include the runtime-provided sender session ID so recipients can reply. Children also receive their parent’s session ID in runtime context; neither identity implies additional permissions or a required collaboration workflow. The tool returns acceptance, not an answer or confirmation that the message was read. Queued messages use the runtime’s normal queue and are not a durable mailbox; stopping or closing the recipient can discard pending work. Archived sessions cannot receive messages.</p>
 <p>Agent-created tracked subsessions are collapsed under their parent. Use <strong>Agent subsessions</strong> to expand them. User-created forks and clones, unknown-origin sessions, children without an available parent, and independent sessions remain visible.</p>
 <p>New sessions inherit the parent’s model and thinking level unless another model is requested, for example with a <code>#provider/model-id</code> prompt reference. Thinking levels are limited to what the chosen model supports.</p>
 </details>
@@ -895,6 +907,11 @@ PI_WEB_PLUGINS='{"git":{"settings":{"workspaceDiscoveryHooks":false}}}'</code></
 <tr>
 <th scope="row"><code>subsessions</code></th>
 <td><code>PI_WEB_SUBSESSIONS</code></td>
+<td><code>0 | 1 | true | false</code></td>
+</tr>
+<tr>
+<th scope="row"><code>sessionMessages</code></th>
+<td><code>PI_WEB_SESSION_MESSAGES</code></td>
 <td><code>0 | 1 | true | false</code></td>
 </tr>
 <tr>

@@ -3,13 +3,24 @@ import { effectivePiWebCapabilities, isPiWebCapability, PI_WEB_CAPABILITIES, SES
 
 describe("PI WEB capabilities", () => {
   it("advertises plugin lifecycle as a web-only capability that does not require session daemon support", () => {
-    expect(WEB_RUNTIME_CAPABILITIES).toEqual([PI_WEB_CAPABILITIES.pluginLifecycle]);
+    expect(WEB_RUNTIME_CAPABILITIES).toContain(PI_WEB_CAPABILITIES.pluginLifecycle);
     expect(SESSIOND_RUNTIME_CAPABILITIES).not.toContain(PI_WEB_CAPABILITIES.pluginLifecycle);
 
     expect(effectivePiWebCapabilities({
       web: { available: true, capabilities: [PI_WEB_CAPABILITIES.pluginLifecycle] },
       sessiond: { available: false, capabilities: [] },
     })).toEqual([PI_WEB_CAPABILITIES.pluginLifecycle]);
+  });
+
+  it("requires both web and daemon support for pinned cleanup exclusions", () => {
+    const capability = PI_WEB_CAPABILITIES.sessionCleanupPinnedExclusions;
+    expect(WEB_RUNTIME_CAPABILITIES).toContain(capability);
+    expect(SESSIOND_RUNTIME_CAPABILITIES).toContain(capability);
+    const supported = { available: true, capabilities: [capability] };
+    expect(effectivePiWebCapabilities({ web: supported, sessiond: supported })).toEqual([capability]);
+    expect(effectivePiWebCapabilities({ web: supported })).toEqual([]);
+    expect(effectivePiWebCapabilities({ sessiond: supported })).toEqual([]);
+    expect(effectivePiWebCapabilities({ web: supported, sessiond: { ...supported, available: false } })).toEqual([]);
   });
 
   it("computes no effective capabilities when the registry entry is not advertised", () => {

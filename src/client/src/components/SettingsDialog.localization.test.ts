@@ -1,5 +1,7 @@
 // @vitest-environment happy-dom
 import { LitElement } from "lit";
+import * as themeCatalog from "../themeCatalog";
+import { builtInThemeCatalog } from "../themeCatalog.testSupport";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { configApi, piPackagesApi, pluginsApi, type Machine } from "../api";
 import { localization } from "../localization/browser";
@@ -16,6 +18,7 @@ const raw = "Raw <img> العربية";
 const remote: Machine = { ...remoteMachine, name: raw };
 const releases: (() => void)[] = [];
 beforeEach(() => {
+  vi.spyOn(themeCatalog, "loadThemeCatalog").mockResolvedValue(builtInThemeCatalog());
   vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => undefined);
   vi.spyOn(configApi, "config").mockResolvedValue(configResponse({ uploads: { defaultFolder: "original" } }));
   vi.spyOn(configApi, "namingModels").mockResolvedValue({ models: [] });

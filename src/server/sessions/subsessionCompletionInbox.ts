@@ -125,20 +125,21 @@ export function persistedSubsessionCompletions(entries: readonly unknown[]): Sub
   });
 }
 
-/** Keep oversized answers available for deliberate inspection, rather than repeating partial output. */
-export function renderSubsessionCompletion(completion: SubsessionCompletion): string {
-  const { sessionId, status, finalText, errorDetail } = completion;
-  const error = errorDetail === undefined ? "" : `Error: ${errorDetail}\n\n`;
-  const output = finalText.length > 2000
-    ? `Output from subsession ${sessionId} was too long for this completion notice and was omitted. Call check_subsession with sessionId "${sessionId}" to retrieve the final output.`
-    : `--- SUBSESSION OUTPUT: ${sessionId} ---\n${finalText === "" ? "(no output)" : finalText}`;
-  return `Subsession ${sessionId} stopped working (${status}).\n\n${error}${output}`;
+/** Delivery reports runtime facts, not whether the child's task succeeded. */
+export type SubsessionLifecycleNotice = Pick<SubsessionCompletion, "completionId" | "sessionId" | "status">;
+
+export function subsessionLifecycleNotice({ completionId, sessionId, status }: SubsessionCompletion): SubsessionLifecycleNotice {
+  return { completionId, sessionId, status };
 }
 
-export function renderSubsessionCompletions(completions: readonly SubsessionCompletion[], workingIds: readonly string[]): string {
+export function renderSubsessionCompletion({ sessionId, status }: SubsessionLifecycleNotice): string {
+  return status === "idle" ? `Subsession ${sessionId} is now idle.` : `Subsession ${sessionId} stopped with error.`;
+}
+
+export function renderSubsessionCompletions(completions: readonly SubsessionLifecycleNotice[], workingIds: readonly string[]): string {
   const next = workingIds.length === 0
     ? "No other tracked subsessions are working."
-    : `Still working: ${workingIds.join(", ")}. Continue working, or call yield_to_subsessions alone and last at the next join point. Further unread results arrive automatically; do not poll.`;
+    : `Still working: ${workingIds.join(", ")}. Continue working, or call yield_to_subsessions alone and last at the next join point. Further lifecycle notices arrive automatically; do not poll.`;
   return `${completions.map(renderSubsessionCompletion).join("\n\n")}\n\n${next}`;
 }
 

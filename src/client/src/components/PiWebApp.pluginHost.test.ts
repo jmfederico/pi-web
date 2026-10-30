@@ -980,17 +980,13 @@ describe("PiWebApp plugin host", () => {
     expect(focusNavigationTarget).not.toHaveBeenCalled();
   });
 
-  it.each([
-    { mobile: true, count: 1, selected: true, target: "sessions" },
-    { mobile: true, count: 2, selected: true, target: "workspaces" },
-    { mobile: false, count: 1, selected: true, target: "workspaces" },
-    { mobile: true, count: 0, selected: false, target: "workspaces" },
-    { mobile: true, count: 1, selected: false, target: "workspaces" },
-  ])("advances after project loading without an unnecessary mobile workspace choice: %j", async ({ mobile, count, selected, target }) => {
+  // Mobile topology and loading transitions are covered through the real
+  // WorkspaceController in PiWebApp.mobileNavigation.test.ts.
+  it("keeps the desktop workspace step after selecting a single-workspace project", async () => {
     const app = createApp();
     const shell: unknown = Reflect.get(app, "appShell");
     if (!(shell instanceof AppShellController)) throw new Error("App shell unavailable");
-    shell.isMobileNavigationLayout = mobile;
+    shell.isMobileNavigationLayout = false;
     const focusNavigationTarget = vi.fn();
     if (!Reflect.set(app, "focusNavigationTarget", focusNavigationTarget)) throw new Error("Could not stub navigation focus");
     if (!Reflect.set(app, "withChatScrollTransition", async (action: () => Promise<void>) => { await action(); })) throw new Error("Could not stub navigation transition");
@@ -998,10 +994,10 @@ describe("PiWebApp plugin host", () => {
     setAppState(app, { ...initialAppState(), selectedProject: project, selectedWorkspace: workspace, workspaces: [workspace, { ...workspace, id: "previous-other" }] });
     await callAsyncAppMethod(app, "selectNavigationItem", "projects", "workspaces", async () => {
       await Promise.resolve();
-      const workspaces = Array.from({ length: count }, (_, index) => ({ ...workspace, id: `loaded-${String(index)}` }));
-      setAppState(app, { ...appState(app), workspaces, selectedWorkspace: selected ? workspaces[0] : undefined });
+      const loadedWorkspace = { ...workspace, id: "loaded-workspace" };
+      setAppState(app, { ...appState(app), workspaces: [loadedWorkspace], selectedWorkspace: loadedWorkspace });
     });
-    expect(focusNavigationTarget).toHaveBeenCalledWith(target, expect.any(Function));
+    expect(focusNavigationTarget).toHaveBeenCalledWith("workspaces", expect.any(Function));
   });
 
   it.each(["success", "unavailable"] as const)("opens the restored session before advancing to Chat (%s)", async (outcome) => {

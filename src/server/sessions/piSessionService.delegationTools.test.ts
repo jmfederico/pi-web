@@ -19,6 +19,9 @@ function delegationDeps() {
   const subsessionSpawn = vi.fn(() => Promise.resolve({ sessionId: "child-1", cwd: "/workspace" }));
   const subsessions: SubsessionToolDeps = {
     spawn: subsessionSpawn,
+    stop: vi.fn(() => Promise.resolve({ sessionId: "child-1", cwd: "/workspace", status: "idle" as const })),
+    resume: vi.fn(() => Promise.resolve({ sessionId: "child-1", cwd: "/workspace", status: "working" as const })),
+    archive: vi.fn(() => Promise.resolve()),
     list: vi.fn(() => Promise.resolve([])),
     join: vi.fn(() => Promise.resolve({ subsessions: [], completions: [] })),
     check: vi.fn(() => Promise.resolve({ sessionId: "child-1", cwd: "/workspace", status: "idle" as const, finalText: "", messageCount: 0 })),
@@ -69,6 +72,7 @@ describe("delegation tool capability boundary", () => {
       "list_subsessions",
       "check_subsession",
       "read_subsession",
+      "manage_subsession",
       "yield_to_subsessions",
     ]);
   });
@@ -84,6 +88,15 @@ describe("delegation tool capability boundary", () => {
     const { spawn, subsessions } = delegationDeps();
 
     expect(toolNames(createPiWebCustomToolDefinitions("/workspace", false, spawn, subsessions))).toEqual(["edit"]);
+  });
+
+  it.each([true, false])("keeps messaging independent of delegation capability (%s)", (delegationEnabled) => {
+    const { spawn, subsessions } = delegationDeps();
+    const messaging = { send: vi.fn(() => Promise.resolve({ sessionId: "other", delivery: "started" as const })) };
+    const names = toolNames(createPiWebCustomToolDefinitions("/workspace", delegationEnabled, spawn, subsessions, false, messaging));
+    expect(names).toContain("send_session_message");
+    if (!delegationEnabled) expect(names).toEqual(["edit", "send_session_message"]);
+    expect(toolNames(createPiWebCustomToolDefinitions("/workspace", false, undefined, undefined, false, messaging))).toEqual(["edit", "send_session_message"]);
   });
 
   it("wires the dispatching session identity, inherited model, and model spec into spawn_session", async () => {

@@ -2,7 +2,7 @@ import { Type } from "pi-web-typebox";
 import { KNOWN_THINKING_LEVELS } from "../../shared/thinkingLevels.js";
 import { defineTool, type ExtensionContext } from "../../piSdk.js";
 import type { TranscriptContentKind, TranscriptEntry, TranscriptRole, TranscriptView } from "./subsessionTranscript.js";
-import { renderSubsessionCompletions, type SubsessionCompletion } from "./subsessionCompletionInbox.js";
+import { renderSubsessionCompletions, subsessionLifecycleNotice, type SubsessionCompletion, type SubsessionLifecycleNotice } from "./subsessionCompletionInbox.js";
 
 /** Lifecycle phase of a tracked subsession as seen by its parent. */
 export type SubsessionStatus = "working" | "idle" | "error" | "unknown";
@@ -57,9 +57,15 @@ export interface SubsessionCheckResult {
   errorDetail?: string;
 }
 
+/** Internal join snapshot; model-facing yield details project lifecycle facts only. */
 export interface SubsessionJoinResult {
   subsessions: SubsessionSummary[];
   completions: SubsessionCompletion[];
+}
+
+interface SubsessionYieldResult {
+  subsessions: Pick<SubsessionSummary, "sessionId" | "status">[];
+  completions: SubsessionLifecycleNotice[];
 }
 
 /** Exploratory transcript read: a filtered, paginated slice of the subsession's history. */
@@ -82,7 +88,10 @@ export interface SubsessionReadQuery {
 }
 
 export interface SubsessionToolDeps {
+  archive(parentSessionId: string, sessionId: string, parentSessionFile?: string): Promise<void>;
   spawn(input: SpawnSubsessionInvocation): Promise<SpawnSubsessionResult>;
+  stop(parentSessionId: string, sessionId: string, parentSessionFile?: string): Promise<SubsessionSummary>;
+  resume(parentSessionId: string, sessionId: string, prompt?: string, parentSessionFile?: string): Promise<SubsessionSummary>;
   list(parentSessionId: string, parentSessionFile?: string): Promise<SubsessionSummary[]>;
   join(parentSessionId: string, parentSessionFile?: string, toolCallId?: string): Promise<SubsessionJoinResult>;
   check(parentSessionId: string, sessionId: string, parentSessionFile?: string, toolCallId?: string): Promise<SubsessionCheckResult>;
@@ -109,6 +118,19 @@ const CheckSubsessionParams = Type.Object({
   sessionId: Type.String({
     description: "Tracked child id from spawn_subsession or list_subsessions.",
   }),
+});
+
+const ManageSubsessionParams = Type.Object({
+  action: Type.Enum(["stop", "resume", "archive"] as const, {
+    type: "string",
+    description: "stop interrupts the current run; resume continues the conversation; archive archives an idle child.",
+  }),
+  sessionId: Type.String({
+    description: "Direct child id from spawn_subsession or list_subsessions.",
+  }),
+  prompt: Type.Optional(Type.String({
+    description: "For resume only: new instructions for the child's existing conversation. Omit to continue its previous task. Rejected with stop or archive.",
+  })),
 });
 
 const ReadSubsessionParams = Type.Object({
@@ -148,7 +170,7 @@ function statusLine(summary: SubsessionSummary): string {
 }
 
 function workingInspectionGuidance(sessionId: string): string {
-  return `Subsession ${sessionId} is working; partial output is withheld. Continue other work, or call yield_to_subsessions alone and last at the join point. Completion notices wake you; do not poll.`;
+  return `Subsession ${sessionId} is working; partial output is withheld. Continue other work, or call yield_to_subsessions alone and last at the join point. Lifecycle notices wake you; do not poll.`;
 }
 
 function renderEntry(entry: TranscriptEntry): string {
@@ -200,8 +222,8 @@ function renderTranscript(result: SubsessionReadResult): string {
 }
 
 /**
- * Tools that let an agent spawn *tracked* child sessions, inspect them, and
- * explicitly yield at a join point.
+ * Tools that let an agent spawn *tracked* child sessions, inspect and control
+ * their runs, and explicitly yield at a join point.
  *
  * A subsession records its parent in its session header, the parent is notified
  * when it stops working, and the parent may read its transcript/result. The
@@ -213,8 +235,8 @@ export function createSubsessionToolDefinitions(spawningCwd: string, deps: Subse
   const spawnTool = defineTool<typeof SpawnSubsessionParams, SpawnSubsessionResult>({
     name: "spawn_subsession",
     label: "Spawn subsession",
-    description: "Start a tracked child session in this session's working directory to carry out part of the current task and return immediately. Its transcript and result are available here after it finishes.",
-    promptSnippet: "spawn_subsession: tracked child work in this workspace; result available after completion",
+    description: "Start a tracked child session in this session's working directory to carry out part of the current task and return immediately. Automatic notices report only that it became idle or errored, not task completion or output. Inspect output with check_subsession or read_subsession; use send_session_message for communication with children or independent sessions.",
+    promptSnippet: "spawn_subsession: tracked child work in this workspace; automatic lifecycle notices, explicit output inspection",
     parameters: SpawnSubsessionParams,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const parentSessionId = ctx.sessionManager.getSessionId();
@@ -257,7 +279,7 @@ export function createSubsessionToolDefinitions(spawningCwd: string, deps: Subse
   const checkTool = defineTool<typeof CheckSubsessionParams, SubsessionCheckResult>({
     name: "check_subsession",
     label: "Check subsession",
-    description: "Get a tracked child's status and latest output. Receiving a completed result marks it read, so it will not arrive again automatically. Working output is withheld. Never yields; do not poll.",
+    description: "Get a tracked child's status and latest output. Inspecting idle/error output acknowledges its lifecycle notice, so that notice will not arrive again automatically. Working output is withheld. Never yields; do not poll.",
     promptSnippet: "check_subsession: inspect child status and available output; never yields",
     parameters: CheckSubsessionParams,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -278,7 +300,7 @@ export function createSubsessionToolDefinitions(spawningCwd: string, deps: Subse
   const readTool = defineTool<typeof ReadSubsessionParams, SubsessionReadResult>({
     name: "read_subsession",
     label: "Read subsession",
-    description: "Read a tracked child's filtered transcript. Returning its complete latest final output marks that completion read; filtered or historical-only reads do not. Working transcripts are withheld. Never yields; do not poll.",
+    description: "Read a tracked child's filtered transcript. Returning its complete latest final output acknowledges its lifecycle notice; filtered or historical-only reads do not. Working transcripts are withheld. Never yields; do not poll.",
     promptSnippet: "read_subsession: inspect an available child transcript; never yields",
     parameters: ReadSubsessionParams,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -296,21 +318,60 @@ export function createSubsessionToolDefinitions(spawningCwd: string, deps: Subse
     },
   });
 
-  const yieldTool = defineTool<typeof YieldToSubsessionsParams, SubsessionJoinResult>({
+  const manageTool = defineTool<typeof ManageSubsessionParams, SubsessionSummary | { sessionId: string; archived: true }>({
+    name: "manage_subsession",
+    label: "Manage subsession",
+    description: "Manage a direct child created by this session; not unrelated sessions or grandchildren. All actions preserve the parent-child relationship. stop interrupts the current run without persistently pausing it; a later resume or message can start it again. resume continues the same conversation, optionally with a prompt, and rejects a working child. archive preserves history and requires an idle child; stop it first if needed. prompt is allowed only with resume.",
+    promptSnippet: "manage_subsession: stop, resume, or archive a direct child; prompt is resume-only",
+    parameters: ManageSubsessionParams,
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      if (params.action !== "resume" && params.prompt !== undefined) throw new Error("prompt is only supported with the resume action");
+      const parentSessionId = ctx.sessionManager.getSessionId();
+      const parentSessionFile = ctx.sessionManager.getSessionFile() ?? undefined;
+      switch (params.action) {
+        case "stop": {
+          const result = await deps.stop(parentSessionId, params.sessionId, parentSessionFile);
+          return {
+            content: [{ type: "text", text: `Subsession ${result.sessionId} [${result.status}] in ${result.cwd}. No persistent pause was set.` }],
+            details: result,
+          };
+        }
+        case "resume": {
+          const result = await deps.resume(parentSessionId, params.sessionId, params.prompt, parentSessionFile);
+          return {
+            content: [{ type: "text", text: `Resumed subsession ${result.sessionId} [${result.status}] in ${result.cwd}.` }],
+            details: result,
+          };
+        }
+        case "archive":
+          await deps.archive(parentSessionId, params.sessionId, parentSessionFile);
+          return {
+            content: [{ type: "text", text: `Archived subsession ${params.sessionId}.` }],
+            details: { sessionId: params.sessionId, archived: true },
+          };
+      }
+    },
+  });
+
+  const yieldTool = defineTool<typeof YieldToSubsessionsParams, SubsessionYieldResult>({
     name: "yield_to_subsessions",
     // Nested tools cannot terminate the outer agent run.
     exposure: "model-only",
     label: "Yield to subsessions",
-    description: "Collect unread child results at a join point. Ready results are returned and marked read. If none are ready but children are working, end this run; a new result wakes you. If nothing is outstanding, continue. Call alone and last; do not poll.",
-    promptSnippet: "yield_to_subsessions: collect unread results or end the run until a result arrives; call alone and last",
+    description: "Collect unread child lifecycle notices (idle/error), without output or task-completion claims, and mark them read. If none are ready but children are working, end this run; a new lifecycle notice wakes you. If nothing is outstanding, continue. Call alone and last; do not poll.",
+    promptSnippet: "yield_to_subsessions: collect lifecycle notices or end the run until a notice arrives; call alone and last",
     promptGuidelines: [
-      "After calling spawn_subsession, continue independent work, then call yield_to_subsessions alone and last at the join point. It returns unread results now or ends the run until a result arrives; do not poll. Receiving a completed result marks it read, so it will not arrive again automatically.",
+      "After calling spawn_subsession, continue independent work, then call yield_to_subsessions alone and last at the join point. It returns unread lifecycle notices now or ends the run until a notice arrives; do not poll. Notices report idle/error, not task completion or output. Use check_subsession or read_subsession for output, and send_session_message for communication with children or independent sessions.",
     ],
     parameters: YieldToSubsessionsParams,
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
       const parentSessionId = ctx.sessionManager.getSessionId();
       const parentSessionFile = ctx.sessionManager.getSessionFile() ?? undefined;
-      const result = await deps.join(parentSessionId, parentSessionFile, _toolCallId);
+      const snapshot = await deps.join(parentSessionId, parentSessionFile, _toolCallId);
+      const result: SubsessionYieldResult = {
+        subsessions: snapshot.subsessions.map(({ sessionId, status }) => ({ sessionId, status })),
+        completions: snapshot.completions.map(subsessionLifecycleNotice),
+      };
       const workingIds = result.subsessions.filter(({ status }) => status === "working").map(({ sessionId }) => sessionId);
       if (result.completions.length > 0) {
         return {
@@ -320,17 +381,17 @@ export function createSubsessionToolDefinitions(spawningCwd: string, deps: Subse
       }
       if (workingIds.length === 0) {
         return {
-          content: [{ type: "text", text: "No unread child results; no tracked subsessions are working. Continuing." }],
+          content: [{ type: "text", text: "No unread child lifecycle notices; no tracked subsessions are working. Continuing." }],
           details: result,
         };
       }
       return {
-        content: [{ type: "text", text: `Working: ${workingIds.join(", ")}. Ending this run; a new unread result will wake you.` }],
+        content: [{ type: "text", text: `Working: ${workingIds.join(", ")}. Ending this run; a new lifecycle notice will wake you.` }],
         details: result,
         terminate: true,
       };
     },
   });
 
-  return [spawnTool, listTool, checkTool, readTool, yieldTool];
+  return [spawnTool, listTool, checkTool, readTool, manageTool, yieldTool];
 }

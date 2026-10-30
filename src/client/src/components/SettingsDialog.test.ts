@@ -6,12 +6,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configApi, piPackagesApi, pluginsApi } from "../api";
 import { deepActiveElement, dialogSection, dialogSurface, pressKey, requiredElement, settleRenderedDialog, surfaceBackdrop } from "./modalSurfaceTestSupport";
 import { SettingsDialog } from "./SettingsDialog";
+import * as themeCatalog from "../themeCatalog";
+import { builtInThemeCatalog } from "../themeCatalog.testSupport";
 import type { SettingsSessiondPanel } from "./settings/SettingsSessiondPanel";
 import type { SettingsPluginsPanel } from "./settings/SettingsPluginsPanel";
 import type { SettingsGeneralPanel } from "./settings/SettingsGeneralPanel";
 import { configResponse, pluginsResponse } from "./SettingsDialog.testSupport";
 
 beforeEach(() => {
+  vi.spyOn(themeCatalog, "loadThemeCatalog").mockResolvedValue(builtInThemeCatalog());
   // The dialog loads gateway and selected-machine settings data when it
   // connects; stub those boundary calls so the shell tests stay deterministic.
   vi.spyOn(configApi, "config").mockResolvedValue(configResponse({}));

@@ -534,6 +534,22 @@ describe("PiSessionService archive and cleanup", () => {
     expect(deletedSessionIds).toEqual(["archived-old"]);
     expect(notificationStore.catalogSnapshot().sessions).toEqual([]);
 
+    const protectedRequest = {
+      thresholds: { archiveIdleDays: 30, deleteArchivedDays: 30 },
+      projectCwds: ["/old-project"],
+      excludedPinnedSessionIds: ["execute-only", "archived-old"],
+    };
+    const protectedPreview = await service.cleanupPreview(protectedRequest);
+    const protectedExecution = await service.cleanup(protectedRequest);
+    for (const response of [protectedPreview, protectedExecution]) {
+      expect(response.totals).toEqual({ archiveCount: 0, deleteCount: 0 });
+      expect(response.skippedPinnedSessionIds).toEqual(["archived-old", "execute-only"]);
+    }
+    expect(protectedExecution.archivedSessionIds).toEqual([]);
+    expect(protectedExecution.deletedSessionIds).toEqual([]);
+    expect(archivedInputs).toEqual(["execute-only"]);
+    expect(deletedSessionIds).toEqual(["archived-old"]);
+
     await service.dispose();
   });
 

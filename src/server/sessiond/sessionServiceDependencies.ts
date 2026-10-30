@@ -27,6 +27,10 @@ export interface SessionServiceDependencyInput {
   config: NonNullable<PiSessionServiceDependencies["config"]>;
   /** Omitted when the operator has not enabled session spawning. */
   spawnTargets?: NonNullable<PiSessionServiceDependencies["spawnTargets"]>;
+  /** Project boundary shared by messaging and spawning, independent of their enablement. */
+  messageTargets: NonNullable<PiSessionServiceDependencies["messageTargets"]>;
+  /** Whether agents may send messages, independently of spawning and subsessions. */
+  sessionMessagesEnabled: boolean;
   /** The operator's subsessions preference, which also requires spawning. */
   subsessionsEnabled: boolean;
   /** Whether agents may post structured question sets to the browser. */
@@ -56,6 +60,8 @@ export function sessionServiceDependencies(input: SessionServiceDependencyInput)
     workspaceActivity: input.workspaceActivity,
     logger: input.logger,
     ...(input.spawnTargets === undefined ? {} : { spawnTargets: input.spawnTargets }),
+    messageTargets: input.messageTargets,
+    sessionMessagesEnabled: input.sessionMessagesEnabled,
     // Tracked subsessions share the spawn capability's project-scope resolver,
     // so they stay off unless spawning is configured too.
     subsessionsEnabled: input.spawnTargets !== undefined && input.subsessionsEnabled,

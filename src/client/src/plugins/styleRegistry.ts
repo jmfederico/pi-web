@@ -20,14 +20,20 @@ interface LoadedFile {
 /**
  * Owns shared sheets, not component styles. The loader owns file fetching, compilation,
  * asset URL resolution and import policy; this registry owns adoption and lifetime.
+ * Ordinary files publish independently. A theme is prepared separately, then committed
+ * as a unit. Both channels share one cache and one globally ordered publication.
  */
 export class PluginStyleRegistry {
   private readonly roots = new Map<StyleRoot, { references: number; sharedUiReferences: number }>();
   private sharedUiSheet: CSSStyleSheet | undefined;
   private readonly files = new Map<string, LoadedFile>();
   private readonly listeners = new Set<() => void>();
+  private contributions: readonly ActivePluginStylesheet[] = [];
+  private committedTheme: readonly ActivePluginStylesheet[] = [];
+  private pendingTheme: readonly ActivePluginStylesheet[] = [];
   private sheets: readonly CSSStyleSheet[] = [];
   private revision = 0;
+  private themeRevision = 0;
 
   constructor(private readonly load: PluginStylesheetLoader, private readonly createSharedUiSheet?: () => CSSStyleSheet) {}
 
@@ -64,93 +70,109 @@ export class PluginStyleRegistry {
   /**
    * Input URLs must be absolute browser URLs. Ordering is independent of load timing.
    * Rejections are attributed to the contribution; callers must report them at the UI
-   * or plugin lifecycle boundary. Successful files are adopted even if others fail.
+   * or plugin lifecycle boundary. Successful ordinary files publish independently.
    */
   async setContributions(contributions: readonly ActivePluginStylesheet[]): Promise<void> {
-    const ordered = [...contributions].sort((a, b) => (a.order ?? 1000) - (b.order ?? 1000) || compareIds(a.id, b.id));
-    const ids = new Set<string>();
-    for (const contribution of ordered) {
-      if (ids.has(contribution.id)) throw new Error(`Duplicate stylesheet contribution: ${contribution.id}`);
-      ids.add(contribution.id);
-      const url = new URL(contribution.url);
-      if (url.protocol !== "http:" && url.protocol !== "https:") {
-        throw new Error(`Stylesheet ${contribution.id} must use an HTTP(S) file URL`);
-      }
-    }
-
+    const ordered = orderContributions(contributions);
     const revision = ++this.revision;
-    const urls = new Set(ordered.map(({ url }) => url));
-    // Remove inactive rules immediately, including while replacement files are loading.
-    // Also release pending work and cached files when their last contribution unloads.
-    const retainedSheets = new Set<CSSStyleSheet>();
-    for (const [url, file] of this.files) {
-      if (!urls.has(url)) {
-        file.controller.abort();
-        this.files.delete(url);
-      } else {
-        if (file.sheet !== undefined) retainedSheets.add(file.sheet);
-      }
-    }
-    this.replaceSheets(this.sheets.filter((sheet) => retainedSheets.has(sheet)));
-
-    const publishLoadedSheets = () => {
-      if (revision !== this.revision) return;
-      // Publish every completed file in contribution order, without waiting for peers.
-      const sheets = ordered.flatMap(({ url }) => {
-        const sheet = this.files.get(url)?.sheet;
-        return sheet === undefined ? [] : [sheet];
-      });
-      // Multiple contributions can intentionally reference the same file.
-      this.replaceSheets([...new Set(sheets)]);
-    };
-    publishLoadedSheets();
-
+    this.contributions = ordered;
+    this.pruneFiles();
+    this.publishSheets();
     const loaded = await Promise.allSettled(ordered.map(async (contribution) => {
-      let file = this.files.get(contribution.url);
-      if (file === undefined) {
-        const controller = new AbortController();
-        // Defer to a promise so a synchronous loader failure has the same cleanup path.
-        const loaded = Promise.resolve().then(() => this.load(contribution.url, controller.signal));
-        file = { controller, loaded };
-        this.files.set(contribution.url, file);
-      }
-      const requestedFile = file;
-      try {
-        const sheet = await requestedFile.loaded;
-        requestedFile.sheet = sheet;
-        publishLoadedSheets();
-        return sheet;
-      } catch (cause) {
-        if (this.files.get(contribution.url) === requestedFile) this.files.delete(contribution.url);
-        throw new Error(`Failed to load stylesheet ${contribution.id} (${contribution.url})`, { cause });
-      }
+      await this.loadFile(contribution);
+      if (revision === this.revision) this.publishSheets();
     }));
     if (revision !== this.revision) return;
     const errors: unknown[] = [];
-    for (const result of loaded) {
-      if (result.status === "rejected") errors.push(result.reason);
-    }
+    for (const result of loaded) if (result.status === "rejected") errors.push(result.reason);
     if (errors.length === 1) throw errors[0];
     if (errors.length > 1) throw new AggregateError(errors, "Failed to load plugin stylesheets");
   }
 
-  /** Release all roots and pending file loads. The registry can subsequently be reused. */
-  clear(): void {
-    this.revision++;
-    // Remove both shared defaults and contributions, even when no files are active.
-    for (const root of this.roots.keys()) this.apply(root, this.sheets, [], false);
-    this.roots.clear();
-    this.replaceSheets([]);
-    for (const file of this.files.values()) file.controller.abort();
-    this.files.clear();
+  /** Keep the committed palette until every replacement file is ready. */
+  async setTheme(contributions: readonly ActivePluginStylesheet[], commit: () => void): Promise<void> {
+    const ordered = orderContributions(contributions);
+    const revision = ++this.themeRevision;
+    this.pendingTheme = ordered;
+    this.pruneFiles();
+    await Promise.all(ordered.map((contribution) => this.loadFile(contribution)));
+    if (revision !== this.themeRevision) return;
+    this.committedTheme = ordered;
+    this.pendingTheme = [];
+    this.pruneFiles();
+    this.publishSheets(commit);
   }
 
-  private replaceSheets(next: readonly CSSStyleSheet[]): void {
+  /** Cancel preparation without removing or evicting the committed palette. */
+  cancelTheme(): void {
+    this.themeRevision++;
+    this.pendingTheme = [];
+    this.pruneFiles();
+  }
+
+  /** Remove an unavailable owner's palette and metadata before notifying consumers. */
+  clearTheme(commit?: () => void): void {
+    this.themeRevision++;
+    this.pendingTheme = [];
+    this.committedTheme = [];
+    this.pruneFiles();
+    this.publishSheets(commit);
+  }
+
+  /** Release all roots and pending file loads. The registry can subsequently be reused. */
+  clear(commit?: () => void): void {
+    this.revision++;
+    this.themeRevision++;
+    this.contributions = [];
+    this.committedTheme = [];
+    this.pendingTheme = [];
+    for (const root of this.roots.keys()) this.apply(root, this.sheets, [], false);
+    this.roots.clear();
+    this.pruneFiles();
+    this.publishSheets(commit);
+  }
+
+  private async loadFile(contribution: ActivePluginStylesheet): Promise<void> {
+    let file = this.files.get(contribution.url);
+    if (file === undefined) {
+      const controller = new AbortController();
+      // Synchronous loader failures follow the same cleanup path as fetch failures.
+      file = { controller, loaded: Promise.resolve().then(() => this.load(contribution.url, controller.signal)) };
+      this.files.set(contribution.url, file);
+    }
+    const requested = file;
+    try {
+      requested.sheet = await requested.loaded;
+    } catch (cause) {
+      if (this.files.get(contribution.url) === requested) this.files.delete(contribution.url);
+      throw new Error(`Failed to load stylesheet ${contribution.id} (${contribution.url})`, { cause });
+    }
+  }
+
+  private pruneFiles(): void {
+    const urls = new Set([...this.contributions, ...this.committedTheme, ...this.pendingTheme].map(({ url }) => url));
+    for (const [url, file] of this.files) {
+      if (!urls.has(url)) {
+        file.controller.abort();
+        this.files.delete(url);
+      }
+    }
+  }
+
+  private publishSheets(commit?: () => void): void {
+    // Sort descriptors before deduplication: one URL can have multiple owners/orders.
+    // Preparation is deliberately absent; new roots receive only committed themes.
+    const ordered = [...this.contributions, ...this.committedTheme].sort(compareContributions);
+    const next = [...new Set(ordered.flatMap(({ url }) => {
+      const sheet = this.files.get(url)?.sheet;
+      return sheet === undefined ? [] : [sheet];
+    }))];
     const previous = this.sheets;
-    if (previous.length === next.length && previous.every((sheet, index) => sheet === next[index])) return;
+    const changed = previous.length !== next.length || previous.some((sheet, index) => sheet !== next[index]);
     this.sheets = next;
-    for (const root of this.roots.keys()) this.apply(root, previous, next);
-    for (const listener of [...this.listeners]) {
+    if (changed) for (const root of this.roots.keys()) this.apply(root, previous, next);
+    commit?.();
+    if (changed) for (const listener of [...this.listeners]) {
       try {
         listener();
       } catch (error) {
@@ -167,8 +189,19 @@ export class PluginStyleRegistry {
   }
 }
 
-function compareIds(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
+function orderContributions(contributions: readonly ActivePluginStylesheet[]): ActivePluginStylesheet[] {
+  const ids = new Set<string>();
+  for (const contribution of contributions) {
+    if (ids.has(contribution.id)) throw new Error(`Duplicate stylesheet contribution: ${contribution.id}`);
+    ids.add(contribution.id);
+    const url = new URL(contribution.url);
+    if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error(`Stylesheet ${contribution.id} must use an HTTP(S) file URL`);
+  }
+  return [...contributions].sort(compareContributions);
+}
+
+function compareContributions(a: ActivePluginStylesheet, b: ActivePluginStylesheet): number {
+  return (a.order ?? 1000) - (b.order ?? 1000) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 }
 
 type StyleControllerHost = ReactiveControllerHost & { readonly renderRoot?: HTMLElement | DocumentFragment };

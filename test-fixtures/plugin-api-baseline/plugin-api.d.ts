@@ -58,6 +58,7 @@ export interface PluginContributionsV5 extends Omit<PluginContributions, "action
     syntaxHighlighters?: SyntaxHighlighterContribution[];
     filePreviewers?: FilePreviewerContribution[];
     contentRenderers?: ContentRendererContributionV5[];
+    /** @deprecated Declare static themes in package.json piWeb.plugins[].themes with browserRoot and stylesheet paths. */
     themes?: ThemeContributionV5[];
     fileIconThemes?: FileIconThemeContribution[];
     actions?: PluginActionV5[];
@@ -340,7 +341,9 @@ export interface PluginContributions {
     workspacePanels?: WorkspacePanelContribution[];
     workspaceLabels?: WorkspaceLabelContribution[];
     sessionLabels?: SessionLabelContribution[];
+    /** @deprecated Declare static themes in package.json piWeb.plugins[].themes instead. */
     themes?: ThemeContribution[];
+    /** @deprecated Declare static pairs in package.json piWeb.plugins[].themePairs instead. */
     themePairs?: ThemePairContribution[];
 }
 export interface PluginMachine {
@@ -855,7 +858,10 @@ export interface FileIconsCapability {
 }
 export type ThemeColorScheme = "dark" | "light";
 export type ThemeTokens = Record<string, string>;
-/** Legacy v4 palette contract. V5 themes contribute CSS files instead. */
+/**
+ * Legacy v4 palette contract.
+ * Deprecated runtime contribution; declare static themes in package.json piWeb.plugins[].themes instead.
+ */
 export interface ThemeContribution {
     id: LocalContributionId;
     name: string;
@@ -864,9 +870,11 @@ export interface ThemeContribution {
     colorScheme: ThemeColorScheme;
     tokens: ThemeTokens;
 }
+/** Deprecated runtime contribution; declare static themes in package.json piWeb.plugins[].themes with stylesheet paths instead. */
 export interface ThemeContributionV5 extends Omit<ThemeContribution, "tokens"> {
     stylesheets?: StylesheetContribution[];
 }
+/** Deprecated runtime contribution; declare static pairs in package.json piWeb.plugins[].themePairs instead. */
 export interface ThemePairContribution {
     id: LocalContributionId;
     name: string;

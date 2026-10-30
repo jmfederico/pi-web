@@ -28,7 +28,7 @@ function response(): PiWebPluginsResponse {
   };
 }
 function config(): PiWebConfigResponse {
-  return { path: "/raw/config", exists: true, config: { plugins: { "raw-<img>-العربية": { enabled: false } } }, effectiveConfig: {}, envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false } };
+  return { path: "/raw/config", exists: true, config: { plugins: { "raw-<img>-العربية": { enabled: false } } }, effectiveConfig: {}, envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false } };
 }
 function frame(panel: SettingsPluginsPanel): SettingsPanelFrame {
   return required(panel.renderRoot.querySelector("settings-panel-frame"));

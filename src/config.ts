@@ -27,10 +27,11 @@ export interface LoadedPiWebConfig {
   deprecatedAgentInputs: readonly DeprecatedAgentInput[];
 }
 
-export interface EffectivePiWebConfig extends Omit<PiWebConfig, "uploads" | "attachments" | "spawnSessions" | "subsessions" | "askUser" | "dockerEnvironmentFacts" | "agent" | "extensionDialogsTimeoutMs"> {
+export interface EffectivePiWebConfig extends Omit<PiWebConfig, "uploads" | "attachments" | "spawnSessions" | "sessionMessages" | "subsessions" | "askUser" | "dockerEnvironmentFacts" | "agent" | "extensionDialogsTimeoutMs"> {
   uploads: NonNullable<PiWebConfig["uploads"]>;
   attachments: NonNullable<PiWebConfig["attachments"]>;
   spawnSessions: boolean;
+  sessionMessages: boolean;
   subsessions: boolean;
   askUser: boolean;
   environmentFacts: boolean;
@@ -215,6 +216,7 @@ export function resolveEffectivePiWebConfig(loaded: LoadedPiWebConfig, options: 
       // Always resolved (on by default) so the effective config is the single
       // source of truth for the runtime state and the settings UI toggle.
       spawnSessions: spawnSessionsEnabled({}, config),
+      sessionMessages: sessionMessagesEnabled({}, config),
       // Resolved on by default like the other capabilities,
       // so the effective config is the single source of truth for the runtime
       // state and the settings UI toggle.
@@ -374,6 +376,7 @@ export function parsePiWebConfig(value: Record<string, unknown>, path = "request
     ...(value["sessionNaming"] !== undefined ? { sessionNaming: parseSessionNamingConfig(value["sessionNaming"], path) } : {}),
     ...(value["sessionArchive"] !== undefined ? { sessionArchive: parseSessionArchiveConfig(value["sessionArchive"], path) } : {}),
     ...(value["spawnSessions"] !== undefined ? { spawnSessions: parseSpawnSessions(value["spawnSessions"], path) } : {}),
+    ...(value["sessionMessages"] !== undefined ? { sessionMessages: parseBooleanKey(value["sessionMessages"], "sessionMessages", path) } : {}),
     ...(value["subsessions"] !== undefined ? { subsessions: parseSubsessions(value["subsessions"], path) } : {}),
     ...(value["askUser"] !== undefined ? { askUser: parseAskUser(value["askUser"], path) } : {}),
     ...(value["environmentFacts"] !== undefined ? { environmentFacts: parseBooleanKey(value["environmentFacts"], "environmentFacts", path) } : {}),
@@ -441,6 +444,13 @@ export function spawnSessionsEnabled(env: NodeJS.ProcessEnv = process.env, confi
   const fromEnv = env["PI_WEB_SPAWN_SESSIONS"];
   if (fromEnv !== undefined) return parsePiWebEnvBoolean(fromEnv, "PI_WEB_SPAWN_SESSIONS");
   return config.spawnSessions ?? true;
+}
+
+/** Whether LLMs may send messages to other sessions, independently of spawning. */
+export function sessionMessagesEnabled(env: NodeJS.ProcessEnv = process.env, config: PiWebConfig = {}): boolean {
+  const fromEnv = env["PI_WEB_SESSION_MESSAGES"];
+  if (fromEnv !== undefined) return parsePiWebEnvBoolean(fromEnv, "PI_WEB_SESSION_MESSAGES");
+  return config.sessionMessages ?? true;
 }
 
 function parseSubsessions(value: unknown, path: string): boolean {

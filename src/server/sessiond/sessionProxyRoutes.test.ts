@@ -4,6 +4,7 @@ import fastifyWebsocket from "@fastify/websocket";
 import { WebSocket, WebSocketServer } from "ws";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { registerSessionProxyRoutes } from "./sessionProxyRoutes";
+import { PI_WEB_CAPABILITIES } from "../../shared/capabilities.js";
 
 let app: FastifyInstance;
 let daemon: FakeSessionDaemon;
@@ -12,8 +13,9 @@ beforeEach(async () => {
   app = Fastify({ logger: false });
   await app.register(fastifyWebsocket);
   daemon = await FakeSessionDaemon.create();
-  registerSessionProxyRoutes(app, daemon, "/api/machines/local");
-  registerSessionProxyRoutes(app, daemon, "/api");
+  const cleanupPreferences = { pinnedSessionIds: () => Promise.resolve(["pinned"]) };
+  registerSessionProxyRoutes(app, daemon, "/api/machines/local", cleanupPreferences);
+  registerSessionProxyRoutes(app, daemon, "/api", cleanupPreferences);
 });
 
 afterEach(async () => {
@@ -49,6 +51,59 @@ describe.each(["/api", "/api/machines/local"])("project mutation proxy at %s", (
     daemon.failWith(new Error("connection refused"));
     const response = await app.inject({ method: "POST", url: `${prefix}/projects`, payload: { path: "/repo" } });
     expect(response.statusCode).toBe(502);
+  });
+});
+
+describe("cleanup capability guard", () => {
+  const supportedRuntime = {
+    component: "sessiond", label: "Session daemon", available: true,
+    capabilities: [PI_WEB_CAPABILITIES.sessionCleanupPinnedExclusions],
+  };
+
+  it.each(["/api/sessions/cleanup/preview", "/api/machines/local/sessions/cleanup"])("blocks an older daemon for %s", async (url) => {
+    daemon.respondWith({ statusCode: 200, headers: {}, body: JSON.stringify({ ...supportedRuntime, capabilities: [] }) });
+    const response = await app.inject({ method: "POST", url, payload: { skipPinned: true } });
+    expect(response.statusCode).toBe(503);
+    expect(daemon.requests).toEqual([{ method: "GET", path: "/runtime", body: undefined }]);
+  });
+
+  it.each([
+    { statusCode: 200, body: "not-json" },
+    { statusCode: 500, body: JSON.stringify(supportedRuntime) },
+    { statusCode: 200, body: JSON.stringify({ ...supportedRuntime, available: false }) },
+  ])("blocks cleanup when capability verification fails (%j)", async (runtime) => {
+    daemon.respondWith({ ...runtime, headers: {} });
+    expect((await app.inject({ method: "POST", url: "/api/sessions/cleanup", payload: { skipPinned: true } })).statusCode).toBe(503);
+    expect(daemon.requests.map((request) => request.path)).toEqual(["/runtime"]);
+  });
+
+  it("blocks cleanup on runtime transport failure", async () => {
+    daemon.failWith(new Error("connection refused"));
+    expect((await app.inject({ method: "POST", url: "/api/sessions/cleanup", payload: { skipPinned: true } })).statusCode).toBe(503);
+    expect(daemon.requests.map((request) => request.path)).toEqual(["/runtime"]);
+  });
+
+  it("checks support afresh for execution after preview and preserves cleanup errors", async () => {
+    daemon.respondWith({ statusCode: 200, headers: {}, body: JSON.stringify(supportedRuntime) });
+    daemon.respondWith({ statusCode: 409, headers: { "content-type": "application/json" }, body: JSON.stringify({ error: "cleanup failed" }) });
+    const preview = await app.inject({ method: "POST", url: "/api/sessions/cleanup/preview", payload: { skipPinned: true } });
+    expect(preview.statusCode).toBe(409);
+    expect(preview.json()).toEqual({ error: "cleanup failed" });
+    expect(daemon.requests).toEqual([
+      { method: "GET", path: "/runtime", body: undefined },
+      { method: "POST", path: "/sessions/cleanup/preview", body: { skipPinned: true, excludedPinnedSessionIds: ["pinned"] } },
+    ]);
+    daemon.respondWith({ statusCode: 200, headers: {}, body: JSON.stringify({ ...supportedRuntime, capabilities: [] }) });
+    expect((await app.inject({ method: "POST", url: "/api/sessions/cleanup", payload: { skipPinned: true } })).statusCode).toBe(503);
+    expect(daemon.requests.at(-1)?.path).toBe("/runtime");
+    expect(daemon.requests).toHaveLength(3);
+  });
+
+  it("does not require support for legacy cleanup requests", async () => {
+    for (const payload of [{}, { skipPinned: false }]) {
+      expect((await app.inject({ method: "POST", url: "/api/sessions/cleanup", payload })).statusCode).toBe(200);
+    }
+    expect(daemon.requests.map((request) => request.path)).toEqual(["/sessions/cleanup", "/sessions/cleanup"]);
   });
 });
 

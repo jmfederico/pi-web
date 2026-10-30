@@ -21,6 +21,9 @@ function tools(deps: Partial<SubsessionToolDeps>) {
   const list = deps.list ?? vi.fn(() => Promise.resolve([]));
   const full: SubsessionToolDeps = {
     spawn: deps.spawn ?? vi.fn(() => Promise.resolve({ sessionId: "x", cwd: "/repos/a" })),
+    archive: deps.archive ?? vi.fn(() => Promise.resolve()),
+    stop: deps.stop ?? vi.fn(() => Promise.resolve({ sessionId: "x", cwd: "/repos/a", status: "idle" as const })),
+    resume: deps.resume ?? vi.fn(() => Promise.resolve({ sessionId: "x", cwd: "/repos/a", status: "working" as const })),
     list,
     join: deps.join ?? (async (parentId, parentFile) => ({ subsessions: await list(parentId, parentFile), completions: [] })),
     check: deps.check ?? vi.fn(() => Promise.resolve({ sessionId: "x", cwd: "/repos/a", status: "idle" as const, finalText: "", messageCount: 0 })),
@@ -37,12 +40,13 @@ function tools(deps: Partial<SubsessionToolDeps>) {
     list: find("list_subsessions"),
     check: find("check_subsession"),
     read: find("read_subsession"),
+    manage: find("manage_subsession"),
     yield: find("yield_to_subsessions"),
   };
 }
 
 function workingGuidance(sessionId: string): string {
-  return `Subsession ${sessionId} is working; partial output is withheld. Continue other work, or call yield_to_subsessions alone and last at the join point. Completion notices wake you; do not poll.`;
+  return `Subsession ${sessionId} is working; partial output is withheld. Continue other work, or call yield_to_subsessions alone and last at the join point. Lifecycle notices wake you; do not poll.`;
 }
 
 function firstText(content: readonly (TextContent | ImageContent)[]): string {
@@ -51,10 +55,21 @@ function firstText(content: readonly (TextContent | ImageContent)[]): string {
 }
 
 describe("createSubsessionToolDefinitions", () => {
+  it("archives using the live parent identity without accepting a caller-supplied parent", async () => {
+    const archive = vi.fn(() => Promise.resolve());
+    const result = await tools({ archive }).manage.execute("archive-1", { action: "archive", sessionId: "child-1" }, undefined, undefined, ctxFor("parent-1", "/sessions/parent-1.jsonl"));
+    expect(archive).toHaveBeenCalledWith("parent-1", "child-1", "/sessions/parent-1.jsonl");
+    expect(result.details).toEqual({ sessionId: "child-1", archived: true });
+  });
+
+  it("reports archive failure rather than claiming success", async () => {
+    const archive = vi.fn(() => Promise.reject(new Error("Stop current session activity before archiving")));
+    await expect(tools({ archive }).manage.execute("archive-1", { action: "archive", sessionId: "child-1" }, undefined, undefined, ctxFor("parent-1", undefined))).rejects.toThrow("Stop current session activity before archiving");
+  });
   it("keeps run-ending yield model-only while other subsession tools remain callable", () => {
     const definitions = tools({});
     expect(definitions.yield.exposure).toBe("model-only");
-    for (const name of ["spawn", "list", "check", "read"] as const) {
+    for (const name of ["spawn", "list", "check", "read", "manage"] as const) {
       expect(definitions[name].exposure ?? "direct").toBe("direct");
     }
   });
@@ -89,8 +104,9 @@ describe("createSubsessionToolDefinitions", () => {
       spawn: vi.fn(() => Promise.resolve({ sessionId: "child-1", cwd: "/repos/a" })),
     });
 
-    expect(spawnTool.description).toBe("Start a tracked child session in this session's working directory to carry out part of the current task and return immediately. Its transcript and result are available here after it finishes.");
-    expect(spawnTool.promptSnippet).toBe("spawn_subsession: tracked child work in this workspace; result available after completion");
+    expect(spawnTool.description).toContain("Automatic notices report only that it became idle or errored");
+    expect(spawnTool.description).toContain("check_subsession or read_subsession");
+    expect(spawnTool.description).toContain("send_session_message");
     expect(spawnTool.description).not.toMatch(/spawn_session|fully independent/i);
 
     const result = await spawnTool.execute("call-contract", { prompt: "do it" }, undefined, undefined, ctxFor("parent-1", undefined));
@@ -102,9 +118,9 @@ describe("createSubsessionToolDefinitions", () => {
 
     expect(definitions.list.description).toBe("List tracked child statuses. Never yields or changes control flow; do not poll.");
     expect(definitions.list.promptSnippet).toBe("list_subsessions: inspect child statuses; never yields");
-    expect(definitions.check.description).toContain("Receiving a completed result marks it read, so it will not arrive again automatically.");
+    expect(definitions.check.description).toContain("Inspecting idle/error output acknowledges its lifecycle notice");
     expect(definitions.check.promptSnippet).toBe("check_subsession: inspect child status and available output; never yields");
-    expect(definitions.read.description).toContain("Returning its complete latest final output marks that completion read; filtered or historical-only reads do not.");
+    expect(definitions.read.description).toContain("Returning its complete latest final output acknowledges its lifecycle notice; filtered or historical-only reads do not.");
     expect(definitions.read.promptSnippet).toBe("read_subsession: inspect an available child transcript; never yields");
   });
 
@@ -112,12 +128,10 @@ describe("createSubsessionToolDefinitions", () => {
     const { yield: yieldTool } = tools({});
 
     expect(yieldTool.parameters).toMatchObject({ type: "object", properties: {} });
-    expect(yieldTool.description).toContain("Ready results are returned and marked read.");
+    expect(yieldTool.description).toContain("without output or task-completion claims");
     expect(yieldTool.description).toContain("If none are ready but children are working, end this run");
-    expect(yieldTool.promptSnippet).toBe("yield_to_subsessions: collect unread results or end the run until a result arrives; call alone and last");
-    expect(yieldTool.promptGuidelines).toEqual([
-      "After calling spawn_subsession, continue independent work, then call yield_to_subsessions alone and last at the join point. It returns unread results now or ends the run until a result arrives; do not poll. Receiving a completed result marks it read, so it will not arrive again automatically.",
-    ]);
+    expect(yieldTool.promptSnippet).toContain("collect lifecycle notices");
+    expect(yieldTool.promptGuidelines?.join(" ")).toContain("call yield_to_subsessions alone and last");
   });
 
   it("spawn_subsession omits the inherited model when the dispatching session has no current model", async () => {
@@ -200,6 +214,84 @@ describe("createSubsessionToolDefinitions", () => {
     }
   });
 
+  it("requires a closed action and child target without exposing parent identity", () => {
+    const { manage } = tools({});
+    expect(manage.parameters).not.toHaveProperty(["properties", "parentSessionId"]);
+    expect(manage.parameters).not.toHaveProperty(["properties", "parentSessionFile"]);
+    for (const action of ["stop", "resume", "archive"]) {
+      expect(Check(manage.parameters, { action, sessionId: "child-1" })).toBe(true);
+    }
+    for (const params of [{}, { sessionId: "child-1" }, { action: "stop" }, { action: "delete", sessionId: "child-1" }, { action: "resume", sessionId: "child-1", prompt: 1 }]) {
+      expect(Check(manage.parameters, params)).toBe(false);
+    }
+    expect(Check(manage.parameters, { action: "resume", sessionId: "child-1", prompt: "continue" })).toBe(true);
+  });
+
+  it.each(["stop", "archive"] as const)("rejects prompt with %s before dispatching any action", async (action) => {
+    const stop = vi.fn<SubsessionToolDeps["stop"]>();
+    const resume = vi.fn<SubsessionToolDeps["resume"]>();
+    const archive = vi.fn<SubsessionToolDeps["archive"]>();
+    await expect(tools({ stop, resume, archive }).manage.execute("invalid", { action, sessionId: "child-1", prompt: "must not apply" }, undefined, undefined, ctxFor("parent-1", undefined))).rejects.toThrow("prompt is only supported with the resume action");
+    expect(stop).not.toHaveBeenCalled();
+    expect(resume).not.toHaveBeenCalled();
+    expect(archive).not.toHaveBeenCalled();
+  });
+
+  it("manage_subsession stop takes parent identity from each live context and returns the summary without yielding", async () => {
+    const summary = { sessionId: "child-1", cwd: "/repos/a", status: "idle" as const };
+    const stop = vi.fn<SubsessionToolDeps["stop"]>(() => Promise.resolve(summary));
+    const { manage: tool } = tools({ stop });
+    const params = { action: "stop" as const, sessionId: "child-1", parentSessionId: "forged", parentSessionFile: "/forged.jsonl" };
+
+    const result = await tool.execute("stop-1", params, undefined, undefined, ctxFor("parent-1", "/sessions/parent-1.jsonl"));
+    await tool.execute("stop-2", params, undefined, undefined, ctxFor("parent-2", undefined));
+
+    expect(stop).toHaveBeenNthCalledWith(1, "parent-1", "child-1", "/sessions/parent-1.jsonl");
+    expect(stop).toHaveBeenNthCalledWith(2, "parent-2", "child-1", undefined);
+    expect(result.details).toEqual(summary);
+    expect(firstText(result.content)).toContain("child-1 [idle]");
+    expect(result.terminate).toBeUndefined();
+  });
+
+  it.each([undefined, "Continue with the review"])("manage_subsession resume forwards prompt %s in the existing child scope", async (prompt) => {
+    const summary = { sessionId: "child-1", cwd: "/repos/a", status: "working" as const };
+    const resume = vi.fn<SubsessionToolDeps["resume"]>(() => Promise.resolve(summary));
+    const { manage: tool } = tools({ resume });
+    const params = {
+      action: "resume" as const,
+      sessionId: "child-1",
+      ...(prompt === undefined ? {} : { prompt }),
+      parentSessionId: "forged",
+      parentSessionFile: "/forged.jsonl",
+    };
+
+    const result = await tool.execute("resume-1", params, undefined, undefined, ctxFor("parent-1", "/sessions/parent-1.jsonl"));
+    await tool.execute("resume-2", params, undefined, undefined, ctxFor("parent-2", undefined));
+
+    expect(resume).toHaveBeenNthCalledWith(1, "parent-1", "child-1", prompt, "/sessions/parent-1.jsonl");
+    expect(resume).toHaveBeenNthCalledWith(2, "parent-2", "child-1", prompt, undefined);
+    expect(result.details).toEqual(summary);
+    expect(firstText(result.content)).toContain("child-1 [working]");
+    expect(result.terminate).toBeUndefined();
+  });
+
+  it.each(["stop", "resume", "archive"] as const)("manage_subsession %s propagates direct-child authorization errors", async (action) => {
+    const error = new Error("Session child-9 is not one of your direct subsessions");
+    const reject = vi.fn(() => Promise.reject(error));
+    const tool = tools({ [action]: reject }).manage;
+
+    await expect(tool.execute("control", { action, sessionId: "child-9" }, undefined, undefined, ctxFor("parent-1", undefined)))
+      .rejects.toBe(error);
+  });
+
+  it("manage_subsession resume propagates an already-running rejection without reporting success", async () => {
+    const error = new Error("Subsession child-1 is already running");
+    const { manage: tool } = tools({ resume: vi.fn(() => Promise.reject(error)) });
+
+    await expect(tool.execute("resume", { action: "resume", sessionId: "child-1", prompt: "continue" }, undefined, undefined, ctxFor("parent-1", undefined)))
+      .rejects.toBe(error);
+  });
+
   it("list_subsessions reports the caller's subsessions and their status", async () => {
     const list = vi.fn(() => Promise.resolve([
       { sessionId: "child-1", cwd: "/repos/a", status: "working" as const },
@@ -237,23 +329,28 @@ describe("createSubsessionToolDefinitions", () => {
     const result = await yieldTool.execute("call-yield", {}, undefined, undefined, ctxFor("parent-1", "/sessions/parent-1.jsonl"));
 
     expect(list).toHaveBeenCalledWith("parent-1", "/sessions/parent-1.jsonl");
-    expect(result.details).toEqual({ subsessions, completions: [] });
-    expect(firstText(result.content)).toBe("Working: child-1, child-3. Ending this run; a new unread result will wake you.");
+    expect(result.details).toEqual({ subsessions: subsessions.map(({ sessionId, status }) => ({ sessionId, status })), completions: [] });
+    expect(firstText(result.content)).toBe("Working: child-1, child-3. Ending this run; a new lifecycle notice will wake you.");
     expect(result.terminate).toBe(true);
   });
 
-  it("yield_to_subsessions returns ready results instead of terminating while another child works", async () => {
-    const completion = { completionId: "run-1", sessionId: "child-1", cwd: "/repos/a", status: "idle" as const, finalText: "Ready answer", messageCount: 3 };
+  it.each(["idle", "error"] as const)("yield_to_subsessions reports only %s lifecycle facts while another child works", async (status) => {
+    const completion = { completionId: "run-1", sessionId: "child-1", cwd: "/repos/a", status, finalText: "Ready answer", messageCount: 3, errorDetail: "Private provider detail" };
     const join = vi.fn(() => Promise.resolve({
-      subsessions: [{ sessionId: "child-1", cwd: "/repos/a", status: "idle" as const }, { sessionId: "child-2", cwd: "/repos/a", status: "working" as const }],
+      subsessions: [{ sessionId: "child-1", cwd: "/repos/a", status }, { sessionId: "child-2", cwd: "/repos/a", status: "working" as const }],
       completions: [completion],
     }));
     const { yield: yieldTool } = tools({ join });
     const result = await yieldTool.execute("ready", {}, undefined, undefined, ctxFor("parent-1", "/sessions/parent-1.jsonl"));
     expect(join).toHaveBeenCalledWith("parent-1", "/sessions/parent-1.jsonl", "ready");
-    expect(firstText(result.content)).toContain("Ready answer");
+    expect(firstText(result.content)).toContain(status === "idle" ? "Subsession child-1 is now idle." : "Subsession child-1 stopped with error.");
+    expect(JSON.stringify(result)).not.toContain("Ready answer");
+    expect(JSON.stringify(result)).not.toContain("Private provider detail");
     expect(firstText(result.content)).toContain("Still working: child-2");
-    expect(result.details).toMatchObject({ completions: [completion] });
+    expect(result.details).toEqual({
+      subsessions: [{ sessionId: "child-1", status }, { sessionId: "child-2", status: "working" }],
+      completions: [{ completionId: "run-1", sessionId: "child-1", status }],
+    });
     expect(result.terminate).toBeUndefined();
   });
 
@@ -272,8 +369,8 @@ describe("createSubsessionToolDefinitions", () => {
 
     const result = await yieldTool.execute("call-no-yield", {}, undefined, undefined, ctxFor("parent-1", undefined));
 
-    expect(result.details).toEqual({ subsessions, completions: [] });
-    expect(firstText(result.content)).toBe("No unread child results; no tracked subsessions are working. Continuing.");
+    expect(result.details).toEqual({ subsessions: subsessions.map(({ sessionId, status }) => ({ sessionId, status })), completions: [] });
+    expect(firstText(result.content)).toBe("No unread child lifecycle notices; no tracked subsessions are working. Continuing.");
     expect(result.terminate).toBeUndefined();
   });
 

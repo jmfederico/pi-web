@@ -104,6 +104,15 @@ describe("resolveThemePreference", () => {
     expect(preference).toEqual({ themeId: "plugin:missing", auto });
   });
 
+  it("waits for discovery before classifying a missing theme as unavailable", () => {
+    const preference = { themeId: "themes:custom", auto: false };
+    const options = { themes, themePairs, preference, prefersLight: true };
+    expect(resolveThemePreference({ ...options, pending: true }).activeTheme).toBeUndefined();
+    expect(resolveThemePreference({ ...options, pending: false }).activeTheme?.id).toBe(CLASSIC_THEME_ID);
+    expect(resolveThemePreference({ ...options, themes: [...themes, theme("custom", "Custom", "light")], pending: true }).activeTheme?.id).toBe("themes:custom");
+    expect(preference).toEqual({ themeId: "themes:custom", auto: false });
+  });
+
   it("re-resolves a plugin default after its theme becomes available without changing the preference", () => {
     const preference = { themeId: "themes:custom", auto: false };
     expect(resolveThemePreference({ themes, themePairs, preference, prefersLight: true }).activeTheme?.id).toBe(CLASSIC_THEME_ID);

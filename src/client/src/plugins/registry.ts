@@ -266,10 +266,14 @@ export class PluginRegistry {
   private readonly sessionLabels: QualifiedSessionLabelContribution[] = [];
   private readonly stylesheets: QualifiedStylesheetContribution[] = [];
   private readonly themes: QualifiedThemeContribution[] = [];
+  private declarativeThemes: readonly QualifiedThemeContribution[] = [];
+  private declarativeThemePairs: readonly QualifiedThemePairContribution[] = [];
   private readonly fileIconThemes: QualifiedFileIconThemeContribution[] = [];
   private readonly themePairs: QualifiedThemePairContribution[] = [];
   private readonly pluginIds = new Set<string>();
   private readonly warnedLegacyPluginIds = new Set<string>();
+
+  private readonly warnedRuntimeThemeContributions = new Set<string>();
   private readonly gatewayPluginIds = new Set<string>();
   private readonly gatewayMachineSpecificPluginIds = new Set<string>();
   private readonly remoteMachineSpecificPluginIds = new Map<string, Set<string>>();
@@ -761,6 +765,14 @@ export class PluginRegistry {
     this.themes.push(...staged.contributions.themes);
     this.fileIconThemes.push(...staged.contributions.fileIconThemes);
     this.themePairs.push(...staged.contributions.themePairs);
+    for (const kind of ["themes", "themePairs"] as const) {
+      for (const contribution of staged.contributions[kind]) {
+        const key = `${kind}:${contribution.id}`;
+        if (this.warnedRuntimeThemeContributions.has(key)) continue;
+        this.warnedRuntimeThemeContributions.add(key);
+        console.warn(`Browser plugin ${staged.registration.id} registers deprecated runtime ${kind} contribution ${contribution.id}; move it to piWeb.plugins[].${kind} in package.json (use browserRoot and stylesheet paths for static themes). Runtime contributions remain supported for compatibility.`);
+      }
+    }
     this.activeCapabilitiesByRegistration.set(staged.registration.id, new Map(staged.provisions.map((provision) => [provision.key, provision])));
     if (hostSnapshots.length > 0) {
       this.hostCapabilitySnapshotsByRegistration.set(staged.registration.id, new Map(hostSnapshots.map((snapshot) => [snapshot.key, snapshot])));
@@ -984,15 +996,23 @@ export class PluginRegistry {
       .sort((left, right) => (left.order ?? 1000) - (right.order ?? 1000) || left.name.localeCompare(right.name));
   }
 
+  /** Backend-validated, enabled declarations do not depend on browser activation. */
+  setDeclarativeThemes(themes: readonly QualifiedThemeContribution[], pairs: readonly QualifiedThemePairContribution[]): void {
+    const runtimeIds = new Set([...this.themes, ...this.themePairs].map(({ id }) => id));
+    for (const contribution of [...themes, ...pairs]) {
+      if (runtimeIds.has(contribution.id)) throw new Error(`Theme contribution ${contribution.id} is declared both statically and at runtime`);
+    }
+    this.declarativeThemes = [...themes];
+    this.declarativeThemePairs = [...pairs];
+  }
+
   getThemes(): QualifiedThemeContribution[] {
-    return this.themes
-      .filter((theme) => this.isContributionEnabled(theme.pluginId, undefined))
+    return [...this.declarativeThemes, ...this.themes.filter((theme) => this.isContributionEnabled(theme.pluginId, undefined))]
       .sort((left, right) => (left.order ?? 1000) - (right.order ?? 1000) || left.name.localeCompare(right.name));
   }
 
   getThemePairs(): QualifiedThemePairContribution[] {
-    return this.themePairs
-      .filter((pair) => this.isContributionEnabled(pair.pluginId, undefined))
+    return [...this.declarativeThemePairs, ...this.themePairs.filter((pair) => this.isContributionEnabled(pair.pluginId, undefined))]
       .sort((left, right) => (left.order ?? 1000) - (right.order ?? 1000) || left.name.localeCompare(right.name));
   }
 
@@ -1192,6 +1212,7 @@ export class PluginRegistry {
 
   private qualifyTheme(pluginId: string, theme: ThemeContribution, contributionIds: Set<QualifiedContributionId>): QualifiedThemeContribution {
     const id = this.qualify(pluginId, theme.id, contributionIds);
+    if ([...this.declarativeThemes, ...this.declarativeThemePairs].some((declared) => declared.id === id)) throw new Error(`Theme ${id} is declared both statically and at runtime`);
     const stylesheetIds = new Set<QualifiedContributionId>();
     const stylesheets = theme.stylesheets?.map((style) => this.qualifyStylesheet(`${pluginId}:${theme.id}`, style, stylesheetIds));
     return snapshotDisplayMetadata<QualifiedThemeContribution>(theme, { ...theme, id, pluginId, localId: theme.id,
@@ -1201,6 +1222,7 @@ export class PluginRegistry {
 
   private qualifyThemePair(pluginId: string, pair: ThemePairContribution, contributionIds: Set<QualifiedContributionId>): QualifiedThemePairContribution {
     const id = this.qualify(pluginId, pair.id, contributionIds);
+    if ([...this.declarativeThemes, ...this.declarativeThemePairs].some((declared) => declared.id === id)) throw new Error(`Theme pair ${id} is declared both statically and at runtime`);
     return snapshotDisplayMetadata<QualifiedThemePairContribution>(pair, {
       ...pair,
       id,

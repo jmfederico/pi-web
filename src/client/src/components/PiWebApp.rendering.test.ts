@@ -22,6 +22,7 @@ import { corePlugin } from "../plugins/core";
 import type { WorkspacePanelContext } from "../plugins/types";
 import { PiWebApp } from "./PiWebApp";
 import { themeStylesheetFetch } from "./themeStylesheetFetch.testSupport";
+import * as themeCatalogApi from "../themeCatalog";
 import { ChatView } from "./ChatView";
 import { ConversationLayout } from "./ConversationLayout";
 import type { ActionPalette } from "./ActionPalette";
@@ -58,6 +59,9 @@ beforeEach(() => {
   unexpectedRequest.mockClear();
   window.history.replaceState(null, "", "/");
   vi.stubGlobal("fetch", themeStylesheetFetch(unexpectedRequest));
+  // Theme discovery is outside this render-only fixture's orchestration boundary.
+  vi.spyOn(themeCatalogApi, "loadThemeBootstrap").mockResolvedValue({ catalog: { themes: [], themePairs: [] }, stylesheets: [] });
+  vi.spyOn(themeCatalogApi, "loadThemeCatalog").mockResolvedValue({ themes: [], themePairs: [] });
   // Scroll scheduling is not under test; happy-dom supplies no layout metrics.
   vi.stubGlobal("requestAnimationFrame", () => 1);
   vi.stubGlobal("cancelAnimationFrame", () => undefined);
@@ -781,7 +785,6 @@ describe("application rendering boundaries", () => {
     expect(chat?.hasAttribute("inert")).toBe(false);
     expect(chat?.shadowRoot?.textContent).not.toContain("Recently active in another PI-WEB instance");
     expect(chat?.shadowRoot?.textContent).not.toContain("Ordinary runtime warning");
-    expect(notice?.querySelector("session-warning-toggle")).toBeNull();
     expect(app.shadowRoot?.querySelector(".composer-activity-notice")).toBe(notice);
     expect(editor.disabled).toBe(true);
 
@@ -806,7 +809,6 @@ describe("application rendering boundaries", () => {
     dismissActivityNotice(app);
     await settle(app);
     expect(promptEditor(app).disabled).toBe(false);
-    expect(promptEditor(app).shadowRoot?.querySelector("session-warning-toggle")).toBeNull();
     // Missing activity information, a stale session status, or unrelated warnings must not erase acknowledgement.
     patchState(app, { status: undefined });
     await settle(app);

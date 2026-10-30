@@ -6,6 +6,7 @@ import { AutocompleteMenu } from "./AutocompleteMenu";
 
 afterEach(() => {
   document.body.replaceChildren();
+  localStorage.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -22,6 +23,8 @@ describe("AutocompleteMenu", () => {
     menu.items = [{ kind: "command", replaceFrom: 0, replaceTo: 1, insertText: "/tree", detail: "command" }];
     await menu.updateComplete;
     const panel = menu.shadowRoot?.querySelector<HTMLElement>("[popover]");
+    expect(panel?.classList.contains("ui-popup-panel")).toBe(true);
+    expect(panel?.classList.contains("ui-menu")).toBe(false);
     expect(document.activeElement).toBe(input);
     const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
     menu.shadowRoot?.querySelector("button")?.dispatchEvent(event);
@@ -61,6 +64,27 @@ describe("AutocompleteMenu", () => {
     menu.onPick = pick;
     selected?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
     expect(pick).toHaveBeenCalledWith(menu.items[39]);
+  });
+
+  it("scopes choice hooks to the completion panel and tracks keyboard selection", async () => {
+    const menu = new AutocompleteMenu();
+    menu.items = ["/first", "/second"].map((insertText) => ({
+      kind: "command", replaceFrom: 0, replaceTo: 1, insertText, detail: "command",
+    }));
+    document.body.append(menu);
+    await menu.updateComplete;
+
+    const panel = menu.shadowRoot?.querySelector('[data-ui-context="completions"]');
+    expect(panel?.matches(".ui-popup-panel[popover]")).toBe(true);
+    const choices = [...(panel?.querySelectorAll("button") ?? [])];
+    expect(choices).toHaveLength(2);
+    expect(choices.every((choice) => choice.classList.contains("ui-choice"))).toBe(true);
+    expect(choices.map((choice) => choice.getAttribute("data-selected"))).toEqual(["true", "false"]);
+
+    menu.selectedIndex = 1;
+    await menu.updateComplete;
+    expect(choices.map((choice) => choice.getAttribute("data-selected"))).toEqual(["false", "true"]);
+    expect(panel?.querySelector("[aria-selected], [aria-pressed], [role]")).toBeNull();
   });
 
   it("renders the argument hint next to the command name, before the description", async () => {

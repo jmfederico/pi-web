@@ -1,0 +1,93 @@
+/* Opt-in experiments only. Keep base defaults and established themes unchanged. */
+:host(chat-view) .chat-message[data-speaker="user"] {
+  --playground-speaker-shape: polygon(0% 0%, 25% 0%, 100% 50%, 25% 100%, 0% 100%, 75% 50%);
+}
+
+:host(chat-view) .chat-message[data-speaker="assistant"] {
+  --playground-speaker-shape: polygon(100% 0%, 75% 0%, 0% 50%, 75% 100%, 100% 100%, 25% 50%);
+}
+
+/* Sent (>) and received (<), without generated text, icon assets, or a text column.
+   Keep the shape inside the existing body inset, just after the coloured border. */
+:host(chat-view) .chat-message-content::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 0;
+  inset-block-start: 17px;
+  inline-size: 6px;
+  block-size: 10px;
+  background-color: var(--pi-muted);
+  clip-path: var(--playground-speaker-shape);
+  pointer-events: none;
+}
+
+@media (forced-colors: active) {
+  :host(chat-view) .chat-message-content::before {
+    background-color: CanvasText;
+    forced-color-adjust: none;
+  }
+}
+
+/* Keep menu geometry intact; the current destination gets a small inset edge. */
+:host(machine-switcher) [data-ui-context="machine-picker"] .ui-menu-item[data-current] {
+  position: relative;
+}
+
+:host(machine-switcher) [data-ui-context="machine-picker"] .ui-menu-item[data-current="true"]::after {
+  content: "";
+  position: absolute;
+  inset-inline-start: 2px;
+  inset-block-start: calc(50% - 5px);
+  block-size: 10px;
+  inline-size: 0;
+  border-inline-start: 2px solid currentColor;
+  pointer-events: none;
+}
+
+/* Destructive labels retain their words and gain a quiet, non-hue distinction. */
+.ui-popup-panel.ui-menu .ui-menu-item.danger {
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+}
+
+/* A short underline identifies the configured submit default without relying on hue. */
+:host(prompt-editor) .ui-composer-actions > [data-default] {
+  position: relative;
+}
+
+:host(prompt-editor) .ui-composer-actions > [data-default="true"]::after {
+  content: "";
+  position: absolute;
+  inset-inline-start: calc(50% - 5px);
+  inset-block-end: 4px;
+  inline-size: 10px;
+  block-size: 0;
+  border-block-end: 2px solid currentColor;
+  pointer-events: none;
+}
+
+:host(pi-web-content-renderer) [data-ui-context="content-views"] > .ui-choice,
+:host(autocomplete-menu) [data-ui-context="completions"] > .ui-choice {
+  position: relative;
+}
+
+:host(pi-web-content-renderer) [data-ui-context="content-views"] > .ui-choice[data-selected="true"]::after {
+  content: "";
+  position: absolute;
+  inset-inline: 8px;
+  inset-block-end: 2px;
+  block-size: 0;
+  border-block-end: 2px solid currentColor;
+  pointer-events: none;
+}
+
+:host(autocomplete-menu) [data-ui-context="completions"] > .ui-choice[data-selected="true"]::after {
+  content: "";
+  position: absolute;
+  inset-inline-start: 2px;
+  inset-block: 6px;
+  inline-size: 0;
+  border-inline-start: 2px solid currentColor;
+  pointer-events: none;
+}

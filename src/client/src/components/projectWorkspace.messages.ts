@@ -19,6 +19,7 @@ export default {
   createFolder: message("Create the folder if it does not exist", "Project folder creation checkbox"),
   cancel: message("Cancel", "Cancel project dialog"),
   projects: message("Projects", "Project navigation heading"),
+  openingProject: message("Opening project…", "Mobile navigation while resolving a selected project's worktrees"),
   noProject: message("No project selected", "Collapsed project navigation empty selection"),
   projectActions: message("Project actions", "Project action menu tooltip"),
   actionsFor: message<{ name: string }>("Actions for {name}", "Project actions accessible name"),

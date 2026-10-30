@@ -5,6 +5,7 @@ installNativeDialogFake();
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { deepActiveElement, dialogSection, dialogSurface, pressKey, requiredElement, settleRenderedDialog, surfaceBackdrop } from "./modalSurfaceTestSupport";
 import { SessionCleanupDialog } from "./SessionCleanupDialog";
+import type { SessionCleanupRequest } from "../api";
 
 afterEach(() => {
   document.body.replaceChildren();
@@ -39,6 +40,48 @@ describe("session-cleanup-dialog modal surface", () => {
     expect(status.closest(".body")).toBeNull();
     expect(status.nextElementSibling?.tagName).toBe("FOOTER");
     expect(status.getAttribute("aria-atomic")).toBe("true");
+    expect(dialog.shadowRoot?.querySelectorAll("footer button")).toHaveLength(1);
+    expect(dialog.shadowRoot?.querySelector("fieldset, .preview, footer .danger")).toBeNull();
+  });
+
+  it("separates rules from review, preserves edits on Back, and reviews only successful previews", async () => {
+    const dialog = await mountDialog();
+    const onPreview = vi.fn<(request: SessionCleanupRequest) => void>();
+    dialog.onPreview = onPreview;
+    expect(dialog.shadowRoot?.querySelector("footer .danger")).toBeNull();
+    requiredElement(dialog.shadowRoot?.querySelector<HTMLButtonElement>("footer button:nth-child(2)"), "preview button").click();
+    expect(onPreview).toHaveBeenCalledWith({ archiveIdleDays: 30, deleteArchivedDays: null, skipPinned: true });
+    dialog.loading = true;
+    await dialog.updateComplete;
+    expect(dialog.shadowRoot?.querySelector("fieldset")).not.toBeNull();
+    dialog.previewRequest = { archiveIdleDays: 30, skipPinned: true };
+    dialog.preview = { generatedAt: "2026-10-21T12:00:00Z", thresholds: { archiveIdleDays: 30 }, projects: [{ cwd: "/repo", archiveCount: 2, deleteCount: 0 }], totals: { archiveCount: 2, deleteCount: 0 } };
+    dialog.loading = false;
+    await dialog.updateComplete;
+    expect(dialog.shadowRoot?.querySelector("fieldset")).toBeNull();
+    expect(requiredElement(dialog.shadowRoot?.querySelector<HTMLButtonElement>("footer .danger"), "run button").disabled).toBe(false);
+    expect(deepActiveElement()).toBe(dialog.shadowRoot?.querySelector("#step-heading"));
+    requiredElement(dialog.shadowRoot?.querySelector<HTMLButtonElement>("footer button:first-child"), "back button").click();
+    await dialog.updateComplete;
+    expect(dialog.shadowRoot?.querySelector(".preview, footer .danger")).toBeNull();
+    const days = requiredElement(dialog.shadowRoot?.querySelector<HTMLInputElement>(".days"), "archive days");
+    expect(days.value).toBe("30");
+    days.value = "14";
+    days.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    requiredElement(dialog.shadowRoot?.querySelector<HTMLInputElement>("#skip-pinned"), "skip pinned checkbox").click();
+    await dialog.updateComplete;
+    requiredElement(dialog.shadowRoot?.querySelector<HTMLButtonElement>("footer button:nth-child(2)"), "preview button").click();
+    expect(onPreview).toHaveBeenLastCalledWith({ archiveIdleDays: 14, deleteArchivedDays: null, skipPinned: false });
+    dialog.error = "Preview failed";
+    await dialog.updateComplete;
+    expect(dialog.shadowRoot?.querySelector(".preview, footer .danger")).toBeNull();
+    expect(requiredElement(dialog.shadowRoot?.querySelector<HTMLInputElement>(".days"), "archive days").value).toBe("14");
+    dialog.preview = { ...dialog.preview, totals: { archiveCount: 0, deleteCount: 0 }, projects: [] };
+    await dialog.updateComplete;
+    expect(requiredElement(dialog.shadowRoot?.querySelector<HTMLButtonElement>("footer .danger"), "run button").disabled).toBe(true);
+    dialog.running = true;
+    await dialog.updateComplete;
+    expect(requiredElement(dialog.shadowRoot?.querySelector<HTMLButtonElement>("footer button:first-child"), "back button").disabled).toBe(true);
   });
 
   it("closes on Escape", async () => {

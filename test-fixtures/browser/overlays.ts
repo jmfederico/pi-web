@@ -1,11 +1,20 @@
 import { html, render } from "lit";
-import { api, type Machine } from "../../src/client/src/api";
+import { api, type Machine, type SessionStatus } from "../../src/client/src/api";
 import { ConversationLayout } from "../../src/client/src/components/ConversationLayout";
 import { ChatView } from "../../src/client/src/components/ChatView";
+import { ContentRendererHost } from "../../src/client/src/components/ContentRendererHost";
 import { PromptEditor } from "../../src/client/src/components/PromptEditor";
 import { MachineSwitcher } from "../../src/client/src/components/MachineSwitcher";
 import { ModalSurface } from "../../src/client/src/components/ModalSurface";
 import { MessageActionsMenu } from "../../src/client/src/components/chat/MessageActionsMenu";
+import { StatusBar } from "../../src/client/src/components/StatusBar";
+import { SessionNoticesPanel } from "../../src/client/src/components/SessionNoticesPanel";
+import { appStyles } from "../../src/client/src/components/shared";
+import themeDefinitions from "../../pi-web-plugins/themes/package.json";
+import playgroundDefinitions from "../../plugins/playground/package.json";
+import { pluginStyles } from "../../src/client/src/plugins/styles";
+import { applyPiWebTheme } from "../../src/client/src/theme";
+import type { QualifiedThemeContribution } from "../../src/client/src/plugins/types";
 
 api.commands = () => Promise.resolve([{ name: "tree", source: "builtin" }]);
 api.files = () => Promise.resolve([{ path: "README.md", kind: "tracked" }]);
@@ -21,6 +30,23 @@ style.textContent = `
   .modal-content { display: flex; flex-direction: column; gap: 12px; padding: 20px; }
 `;
 document.head.append(style);
+
+// Browser contracts explicitly opt into the checkout-only experimental plugin.
+const fixtureThemes: QualifiedThemeContribution[] = [...themeDefinitions.piWeb.plugins, ...playgroundDefinitions.piWeb.plugins].flatMap((themePlugin) => themePlugin.themes.map((theme) => ({
+  ...theme,
+  id: `${themePlugin.id}:${theme.id}`,
+  pluginId: themePlugin.id,
+  localId: theme.id,
+  colorScheme: theme.colorScheme === "light" ? "light" : "dark",
+  stylesheets: theme.stylesheets.map((sheet) => ({
+    ...sheet,
+    id: `${themePlugin.id}:${theme.id}:${sheet.id}`,
+    url: themePlugin.id === "playground"
+      ? new URL(`../../plugins/playground/assets/${sheet.path}`, import.meta.url).href
+      : new URL(`../../pi-web-plugins/themes/assets/${sheet.path}`, import.meta.url).href,
+  })),
+})));
+pluginStyles.registerRoot(document);
 
 const machine = (id: string, kind: Machine["kind"]): Machine => ({ id, name: id, kind, createdAt: "2026-10-21T00:00:00Z", updatedAt: "2026-10-21T00:00:00Z" });
 function switcher(): MachineSwitcher {
@@ -100,7 +126,7 @@ await Promise.all([layout.updateComplete, editor.updateComplete, clippedSwitcher
 
 declare global {
   interface Window {
-    overlayFixture: { complete: () => Promise<void>; openModal: () => void; openPluginModal: () => void; hideConversation: () => void };
+    overlayFixture: { complete: () => Promise<void>; openModal: () => void; openPluginModal: () => void; hideConversation: () => void; mountRenderer: () => Promise<void>; applyTheme: (id: string) => Promise<void>; mountStatistics: (safeArea: number) => Promise<void>; mountNotices: () => Promise<void> };
   }
 }
 window.overlayFixture = {
@@ -113,6 +139,60 @@ window.overlayFixture = {
     await Promise.resolve();
     await editor.updateComplete;
     await editor.updateComplete;
+  },
+  applyTheme: async (id) => {
+    const theme = fixtureThemes.find((theme) => theme.id === id);
+    if (!theme) throw new Error(`Missing fixture theme: ${id}`);
+    await pluginStyles.setTheme(theme.stylesheets ?? [], () => { applyPiWebTheme(theme); });
+  },
+  mountRenderer: async () => {
+    const renderer = new ContentRendererHost();
+    renderer.id = "theme-renderer";
+    renderer.text = "const retries = 3;";
+    renderer.choices = [{ id: "highlighted", label: "Highlighted", renderer: {
+      id: "highlighted", renderMode: "automatic", render: () => html`<code>Highlighted configuration</code>`,
+    } }];
+    application.prepend(renderer);
+    await renderer.updateComplete;
+  },
+  mountStatistics: async (safeArea) => {
+    const footer = new StatusBar();
+    footer.slot = "status";
+    layout.append(footer);
+    layout.sending = false;
+    layout.classList.remove("conversation");
+    // Use the production shell's safe-area reservation and flex composition,
+    // not a second implementation of its layout arithmetic.
+    const shellStyles = document.createElement("style");
+    shellStyles.textContent = appStyles.cssText;
+    const shell = document.createElement("div");
+    shell.className = "shell two-column-layout navigation-panel-collapsed";
+    const main = document.createElement("main");
+    main.append(layout);
+    shell.append(main);
+    application.replaceChildren(shellStyles, shell);
+    root.style.setProperty("--pi-app-safe-area-bottom", `${String(safeArea)}px`);
+    await Promise.all([layout.updateComplete, editor.updateComplete, footer.updateComplete]);
+  },
+  mountNotices: async () => {
+    const panel = new SessionNoticesPanel();
+    const status: SessionStatus = {
+      sessionId: "notices-fixture", isStreaming: false, isCompacting: false, isBashRunning: false,
+      pendingMessageCount: 0, queuedMessages: [], cost: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      warnings: Array.from({ length: 20 }, (_, index) => ({
+        severity: "warning" as const, message: `Condition ${String(index)}: ${"long-resource-name/".repeat(20)}`,
+        dismiss: { id: `notice-${String(index)}` },
+      })),
+    };
+    panel.status = status;
+    const container = document.createElement("section");
+    container.id = "notices-boundary";
+    container.style.cssText = "height: 160px; overflow: hidden;";
+    container.append(panel);
+    container.addEventListener("session-notice-dismiss", () => { container.dataset["dismissed"] = "true"; });
+    application.prepend(container);
+    await panel.updateComplete;
   },
   openModal,
   openPluginModal,

@@ -1,0 +1,18 @@
+{
+  "name": "@pi-web/playground-themes-plugin",
+  "private": true,
+  "piWeb": {
+    "plugins": [{
+      "id": "playground",
+      "defaultEnabled": false,
+      "browserRoot": "assets",
+      "themes": [
+        { "id": "playground-dark", "name": "Playground Dark", "description": "Experimental dark styling with geometric role and selection cues.", "order": 60, "colorScheme": "dark", "stylesheets": [{ "id": "palette", "path": "playground-dark.css" }, { "id": "appearance", "path": "playground.css", "order": 1100 }] },
+        { "id": "playground-light", "name": "Playground Light", "description": "Experimental light styling with geometric role and selection cues.", "order": 70, "colorScheme": "light", "stylesheets": [{ "id": "palette", "path": "playground-light.css" }, { "id": "appearance", "path": "playground.css", "order": 1100 }] }
+      ],
+      "themePairs": [
+        { "id": "playground", "name": "Playground", "order": 30, "light": "playground-light", "dark": "playground-dark" }
+      ]
+    }]
+  }
+}

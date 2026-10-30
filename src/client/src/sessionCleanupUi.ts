@@ -1,6 +1,7 @@
 import type { SessionCleanupPreviewResponse, SessionCleanupRequest } from "./api";
 
 export interface SessionCleanupDraft {
+  skipPinned: boolean;
   archiveIdleEnabled: boolean;
   archiveIdleDays: string;
   deleteArchivedEnabled: boolean;
@@ -12,6 +13,7 @@ export type SessionCleanupDraftValidation =
   | { ok: false; code: "disabled" | "archiveRequired" | "archiveInvalid" | "deleteRequired" | "deleteInvalid"; error: string };
 
 export const DEFAULT_SESSION_CLEANUP_DRAFT: SessionCleanupDraft = {
+  skipPinned: true,
   archiveIdleEnabled: true,
   archiveIdleDays: "30",
   deleteArchivedEnabled: false,
@@ -22,6 +24,7 @@ export function validateSessionCleanupDraft(draft: SessionCleanupDraft): Session
   if (!draft.archiveIdleEnabled && !draft.deleteArchivedEnabled) return { ok: false, code: "disabled", error: "Enable at least one cleanup action." };
 
   const request: SessionCleanupRequest = {
+    skipPinned: draft.skipPinned,
     archiveIdleDays: null,
     deleteArchivedDays: null,
   };
@@ -42,9 +45,9 @@ export function validateSessionCleanupDraft(draft: SessionCleanupDraft): Session
 }
 
 export function sessionCleanupRequestKey(request: SessionCleanupRequest | undefined): string {
-  // The preview freshness key is threshold-only: project selection is applied
-  // to the already-previewed project list and sent separately when running.
+  // Project selection filters the existing preview; eligibility changes need a new one.
   return JSON.stringify({
+    skipPinned: request?.skipPinned ?? false,
     archiveIdleDays: request?.archiveIdleDays ?? null,
     deleteArchivedDays: request?.deleteArchivedDays ?? null,
   });

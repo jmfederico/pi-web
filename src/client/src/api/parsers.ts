@@ -1127,12 +1127,14 @@ function highestNotificationSeverity(notifications: readonly SessionNotification
 export function parseSessionCleanupPreviewResponse(value: unknown): SessionCleanupPreviewResponse {
   const record = requireRecord(value);
   const skippedBusySessionIds = record["skippedBusySessionIds"] === undefined ? undefined : arrayOfString(record["skippedBusySessionIds"], "skippedBusySessionIds");
+  const skippedPinnedSessionIds = record["skippedPinnedSessionIds"] === undefined ? undefined : arrayOfString(record["skippedPinnedSessionIds"], "skippedPinnedSessionIds");
   return {
     generatedAt: requireString(record, "generatedAt"),
     thresholds: parseSessionCleanupThresholds(record["thresholds"]),
     projects: arrayOf(parseSessionCleanupProjectSummary)(record["projects"]),
     totals: parseSessionCleanupTotals(record["totals"]),
     ...(skippedBusySessionIds === undefined ? {} : { skippedBusySessionIds }),
+    ...(skippedPinnedSessionIds === undefined ? {} : { skippedPinnedSessionIds }),
   };
 }
 
@@ -1539,6 +1541,7 @@ function parsePiWebConfigValues(value: unknown): PiWebConfigValues {
     ...optionalField("agent", optionalAgent(record["agent"])),
     ...optionalField("spawnSessions", optionalBoolean(record, "spawnSessions")),
     ...optionalField("subsessions", optionalBoolean(record, "subsessions")),
+    ...optionalField("sessionMessages", optionalBoolean(record, "sessionMessages")),
     ...optionalField("askUser", optionalBoolean(record, "askUser")),
     ...optionalField("environmentFacts", optionalBoolean(record, "environmentFacts")),
     ...optionalField("extensionDialogsTimeoutMs", optionalNumber(record, "extensionDialogsTimeoutMs")),
@@ -1657,6 +1660,7 @@ function parsePiWebConfigEnvOverrides(value: unknown): PiWebConfigEnvOverrides {
     allowedHosts: requireBoolean(record, "allowedHosts"),
     spawnSessions: requireBoolean(record, "spawnSessions"),
     subsessions: requireBoolean(record, "subsessions"),
+    sessionMessages: optionalBoolean(record, "sessionMessages") ?? false,
     askUser: requireBoolean(record, "askUser"),
   };
 }

@@ -3,11 +3,14 @@ import { createPluginStylesheetLoader } from "./styleLoader";
 import { PluginStyleRegistry, PluginStylesController, type ActivePluginStylesheet } from "./styleRegistry";
 import type { PluginCapability } from "../../../shared/pluginApiTypes";
 import { sharedUiStyles } from "./sharedUiStyles";
+import type { QualifiedThemeContribution } from "./types";
+
+import { providedStylesheetSource } from "./styleSources";
 
 // Shared by the application owner, host components and the public capability. No
 // network, DOM registration or stylesheet compilation occurs until explicitly used.
 export const pluginStyles = new PluginStyleRegistry(
-  (url, signal) => createPluginStylesheetLoader()(url, signal),
+  (url, signal) => createPluginStylesheetLoader({ source: providedStylesheetSource })(url, signal),
   () => {
     const sheet = new CSSStyleSheet();
     sheet.replaceSync(sharedUiStyles.cssText);
@@ -44,9 +47,15 @@ function isStylesheetIntegration(value: unknown): value is StylesheetIntegration
 export class PluginStyleRuntime {
   private signature: string | undefined;
   private revision = 0;
+  private themeSignature: string | undefined;
+  private themeRevision = 0;
   private releaseDocument: (() => void) | undefined;
 
-  constructor(private readonly registry: PluginStyleRegistry, private readonly reportError: (error: unknown) => void) {}
+  constructor(
+    private readonly registry: PluginStyleRegistry,
+    private readonly reportError: (error: unknown) => void,
+    private readonly reportThemeError: (error: unknown) => void = reportError,
+  ) {}
 
   connect(document: Document): void {
     this.releaseDocument?.();
@@ -69,11 +78,40 @@ export class PluginStyleRuntime {
     });
   }
 
-  disconnect(): void {
+  /** Palette readiness is independent of unrelated plugin stylesheet loading. */
+  updateTheme(theme: QualifiedThemeContribution, commit: () => void): void {
+    const contributions = theme.stylesheets ?? [];
+    const signature = JSON.stringify([theme.id, theme.colorScheme, theme.tokens, contributions]);
+    if (signature === this.themeSignature) return;
+    this.themeSignature = signature;
+    const revision = ++this.themeRevision;
+    void this.registry.setTheme(contributions, commit).catch((error: unknown) => {
+      if (revision === this.themeRevision) {
+        this.themeSignature = undefined;
+        this.reportThemeError(error);
+      }
+    });
+  }
+
+  suspendTheme(): void {
+    this.themeRevision++;
+    this.themeSignature = undefined;
+    this.registry.cancelTheme();
+  }
+
+  clearTheme(commit?: () => void): void {
+    this.themeRevision++;
+    this.themeSignature = undefined;
+    this.registry.clearTheme(commit);
+  }
+
+  disconnect(commit?: () => void): void {
     this.revision++;
+    this.themeRevision++;
+    this.themeSignature = undefined;
     this.signature = undefined;
     this.releaseDocument?.();
     this.releaseDocument = undefined;
-    this.registry.clear();
+    this.registry.clear(commit);
   }
 }

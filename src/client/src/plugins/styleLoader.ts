@@ -6,6 +6,8 @@ export interface PluginStylesheetLoaderOptions {
   readonly createSheet?: () => CSSStyleSheet;
   readonly timeoutMs?: number;
   readonly maxBytes?: number;
+  /** Bytes delivered with the document; use the same validation/compilation as fetched CSS. */
+  readonly source?: (url: string) => string | undefined;
 }
 
 /** One bounded fetch/compile per registry file, never one per component. */
@@ -26,7 +28,10 @@ export function createPluginStylesheetLoader(options: PluginStylesheetLoaderOpti
     try {
       controller.signal.throwIfAborted();
       // Content negotiation also keeps dev servers from returning a CSS-as-JS module.
-      const response = await fetchFile(url, { signal: controller.signal, headers: { Accept: "text/css" } });
+      const sourceText = options.source?.(url);
+      const response = sourceText === undefined
+        ? await fetchFile(url, { signal: controller.signal, headers: { Accept: "text/css" } })
+        : new Response(sourceText, { headers: { "Content-Type": "text/css" } });
       if (!response.ok) throw new Error(`Stylesheet request failed: HTTP ${String(response.status)}`);
       const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
       if (contentType !== "text/css") throw new Error("Stylesheet response must have Content-Type text/css");

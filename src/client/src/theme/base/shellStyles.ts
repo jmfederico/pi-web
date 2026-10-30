@@ -154,6 +154,7 @@ export const listStyles = css`
   h2 { flex: 0 0 auto; margin: 0; color: var(--pi-muted); font-size: 12px; text-transform: uppercase; }
   section > h2 { position: relative; z-index: 3; background: var(--pi-bg); box-shadow: ${scrollBoundaryShadow}; }
   .list-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
+  .list-status { padding: 10px; color: var(--pi-muted); }
   .subheading { margin-top: 14px; }
   .section-toggle { width: 100%; gap: 8px; }
   .section-toggle span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -45,14 +45,15 @@ export class MessageActionsMenu extends LitElement {
 
   override render() {
     return html`
-      <button type="button" class="ui-button ui-button--small ui-button--icon"
+      <button type="button" class="ui-button ui-button--small ui-button--icon ui-popup-trigger"
         aria-label=${messages.t("actions")} aria-expanded=${String(this.expanded)} aria-controls="actions"
         @click=${() => { this.toggle(); }}><span aria-hidden="true">⋯</span></button>
-      <div id="actions" popover="auto"><slot></slot></div>
+      <div id="actions" class="ui-popup-panel" data-ui-context="message-actions" popover="auto"><slot></slot></div>
     `;
   }
 
   static override styles = [uiButtonStyles, css`
+    @layer pi-web-base {
     :host { display: inline-flex; }
     .ui-button:hover:not(:disabled) { background: color-mix(in srgb, var(--pi-text) 8%, transparent); }
     [popover] {
@@ -73,6 +74,7 @@ export class MessageActionsMenu extends LitElement {
     }
     @media (prefers-reduced-motion: reduce) {
       [popover] { transition: none; }
+    }
     }
   `];
 }

@@ -1,5 +1,7 @@
 import type { PiWebThemePreference } from "./apiTypes.js";
 
+export const DEFAULT_THEME_PREFERENCE: PiWebThemePreference = { themeId: "themes:pi-web-dark", auto: true };
+
 const qualifiedThemeIdPattern = /^[a-z][a-z0-9.-]*:[a-z][a-z0-9.-]*$/u;
 
 /** Parse data only: theme availability is resolved after browser plugins load. */

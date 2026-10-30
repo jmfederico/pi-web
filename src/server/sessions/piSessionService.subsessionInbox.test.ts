@@ -246,7 +246,8 @@ describe("PiSessionService shared subsession completion inbox", () => {
     finishChildRun(second, "second child answer");
     await vi.advanceTimersByTimeAsync(HEARTBEAT_MS * 3);
     expect(parent.calls.sendCustomMessage).toHaveLength(1);
-    expect(parent.calls.sendCustomMessage[0]?.message.content).toContain("second child answer");
+    expect(parent.calls.sendCustomMessage[0]?.message.content).toContain("Subsession child-2 is now idle.");
+    expect(JSON.stringify(parent.calls.sendCustomMessage[0]?.message)).not.toContain("second child answer");
     expect(parent.calls.sendCustomMessage[0]?.message.content).not.toContain("first child answer");
     expect(parent.calls.sendCustomMessage[0]?.options).toEqual({ triggerTurn: true });
     await settleParent(parent);
@@ -328,7 +329,9 @@ describe("PiSessionService shared subsession completion inbox", () => {
     const draft = await service.prepareSubsessionDelivery(PARENT_ID, PARENT_FILE);
     if (draft === undefined) throw new Error("Expected a delivery draft");
     expect(draft).toMatchObject({ type: "custom_message", customType: SUBSESSION_NOTIFICATION_CUSTOM_TYPE, display: true });
-    expect(draft.content).toContain("final answer");
+    expect(draft.content).toContain("Subsession child-1 is now idle.");
+    expect(JSON.stringify(draft)).not.toContain("final answer");
+    expect(draft.details).toEqual({ sessionId: "child-1", completionIds: completionReceiptIds(draft.details) });
     expect(completionReceiptIds(draft.details)).toEqual(persistedSubsessionCompletions(child.journal.entries).map(({ completionId }) => completionId));
     await expect(service.prepareSubsessionDelivery(PARENT_ID, PARENT_FILE)).resolves.toBeUndefined();
     await expect(service.joinSubsessions(PARENT_ID, PARENT_FILE)).resolves.toMatchObject({ completions: [] });
@@ -364,7 +367,8 @@ describe("PiSessionService shared subsession completion inbox", () => {
     parent.journal.entries.push({ type: "message", message: { role: "toolResult", toolCallId: "failed-check", isError: true } });
     parent.emit({ type: "turn_end" });
     const draft = await service.prepareSubsessionDelivery(PARENT_ID, PARENT_FILE);
-    expect(draft?.content).toContain("final answer");
+    expect(draft?.content).toContain("Subsession child-1 is now idle.");
+    expect(JSON.stringify(draft)).not.toContain("final answer");
   });
 
   it("releases an uncommitted boundary claim on settlement so the unread answer can wake the parent", async () => {
@@ -376,7 +380,12 @@ describe("PiSessionService shared subsession completion inbox", () => {
     // No entry was appended and no receipt was emitted for this abandoned draft.
     await settleParent(parent);
     expect(parent.calls.sendCustomMessage).toHaveLength(1);
-    expect(completionReceiptIds(parent.calls.sendCustomMessage[0]?.message.details)).toEqual(completionReceiptIds(draft.details));
+    const notice = parent.calls.sendCustomMessage[0]?.message;
+    expect(completionReceiptIds(notice?.details)).toEqual(completionReceiptIds(draft.details));
+    expect(notice?.content).toContain("Subsession child-1 is now idle.");
+    expect(JSON.stringify(notice)).not.toContain("final answer");
+    expect(notice?.details).toEqual(draft.details);
+    await expect(service.checkSubsession(PARENT_ID, "child-1", PARENT_FILE)).resolves.toMatchObject({ finalText: "final answer" });
     await settleParent(parent);
     expect(parent.calls.sendCustomMessage).toHaveLength(1);
   });
@@ -397,7 +406,8 @@ describe("PiSessionService shared subsession completion inbox", () => {
     await service.prompt(sessionRef(PARENT_ID), "continue");
     await vi.advanceTimersByTimeAsync(0);
     expect(parent.calls.sendCustomMessage).toHaveLength(1);
-    expect(parent.calls.sendCustomMessage[0]?.message.content).toContain("final answer");
+    expect(parent.calls.sendCustomMessage[0]?.message.content).toContain("Subsession child-1 is now idle.");
+    expect(JSON.stringify(parent.calls.sendCustomMessage[0]?.message)).not.toContain("final answer");
     await settleParent(parent);
     expect(parent.calls.sendCustomMessage).toHaveLength(1);
   });

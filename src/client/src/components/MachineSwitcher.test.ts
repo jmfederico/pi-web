@@ -129,7 +129,7 @@ describe("machine-switcher status indicator", () => {
   });
 
   it("keeps the unread dot on the single-machine info bubble", async () => {
-    const switcher = await mountSwitcher([machine("local", "local")], { local: machineStatusSnapshot({ machine: { "core:unread": true } }) }, {}, true);
+    const switcher = await mountSwitcher([machine("local", "local")], { local: machineStatusSnapshot({ machine: { "core:unread": true } }) });
 
     const dot = switcher.shadowRoot?.querySelector(".machine-info .activity-indicator.unread");
     expect(dot).not.toBeNull();
@@ -170,7 +170,7 @@ describe("machine icons", () => {
   });
 
   it("dims the icon of an offline machine", async () => {
-    const switcher = await mountSwitcher([machine("local", "local")], {}, { local: health("offline") }, true);
+    const switcher = await mountSwitcher([machine("local", "local")], {}, { local: health("offline") });
 
     const icon = switcher.shadowRoot?.querySelector<HTMLImageElement>(".machine-info .machine-icon");
     expect(icon?.classList.contains("dimmed")).toBe(true);
@@ -216,8 +216,8 @@ describe("machine icons", () => {
 });
 
 describe("single-machine info bubble", () => {
-  it("renders a static bubble instead of a dropdown when only the local machine exists in PWA mode", async () => {
-    const switcher = await mountSwitcher([machine("local", "local")], {}, {}, true);
+  it("renders a static bubble instead of a dropdown when only the local machine exists", async () => {
+    const switcher = await mountSwitcher([machine("local", "local")], {});
 
     expect(switcher.shadowRoot?.querySelector(".machine-switcher-button")).toBeNull();
     const info = switcher.shadowRoot?.querySelector<HTMLElement>(".machine-info");
@@ -225,7 +225,7 @@ describe("single-machine info bubble", () => {
     expect(info?.querySelector(".machine-chevron")).toBeNull();
   });
 
-  it("renders the static machine name in browser mode", async () => {
+  it("renders the static machine name without the URL", async () => {
     const switcher = await mountSwitcher([machine("local", "local")], {});
 
     expect(switcher.shadowRoot?.querySelector(".machine-info")?.textContent).toContain("local");
@@ -233,18 +233,19 @@ describe("single-machine info bubble", () => {
     expect(switcher.shadowRoot?.querySelector(".machine-switcher-button")).toBeNull();
   });
 
-  it("carries the machine name, icon and URL", async () => {
-    const switcher = await mountSwitcher([machine("local", "local")], {}, {}, true);
+  it("keeps the URL in the tooltip alongside the machine name and icon", async () => {
+    const switcher = await mountSwitcher([machine("local", "local")], {});
 
     const info = switcher.shadowRoot?.querySelector<HTMLElement>(".machine-info");
-    expect(info?.querySelector(".machine-info-url")?.textContent).toBe(document.location.host);
+    expect(info?.textContent).not.toContain(document.location.host);
+    expect(info?.title).toContain(document.location.host);
     expect(info?.querySelector(".machine-icon")).not.toBeNull();
     expect(info?.querySelector(".machine-status")).toBeNull();
     expect(info?.querySelector(".machine-switcher-label")?.textContent).toBe("local");
   });
 
   it("does not open a menu when clicked", async () => {
-    const switcher = await mountSwitcher([machine("local", "local")], {}, {}, true);
+    const switcher = await mountSwitcher([machine("local", "local")], {});
 
     switcher.shadowRoot?.querySelector<HTMLElement>(".machine-info")?.click();
     await switcher.updateComplete;
@@ -253,7 +254,7 @@ describe("single-machine info bubble", () => {
   });
 
   it("is not keyboard-focusable", async () => {
-    const switcher = await mountSwitcher([machine("local", "local")], {}, {}, true);
+    const switcher = await mountSwitcher([machine("local", "local")], {});
 
     expect(await switcher.focusSelectedOrFirst()).toBe(false);
   });
@@ -261,7 +262,6 @@ describe("single-machine info bubble", () => {
   it("renders PI-WEB while no machines are loaded", async () => {
     const switcher = new MachineSwitcher();
     switcher.machines = [];
-    switcher.locationIndicator = true;
     document.body.append(switcher);
     await switcher.updateComplete;
 
@@ -270,7 +270,7 @@ describe("single-machine info bubble", () => {
   });
 });
 
-async function mountSwitcher(machines: Machine[], statusSnapshots: Record<string, MachineStatusSnapshot>, statuses: Record<string, MachineHealth> = {}, locationIndicator = false): Promise<MachineSwitcher> {
+async function mountSwitcher(machines: Machine[], statusSnapshots: Record<string, MachineStatusSnapshot>, statuses: Record<string, MachineHealth> = {}): Promise<MachineSwitcher> {
   const switcher = new MachineSwitcher();
   switcher.machines = machines;
   const selected = machines[0];
@@ -278,7 +278,6 @@ async function mountSwitcher(machines: Machine[], statusSnapshots: Record<string
   switcher.selected = selected;
   switcher.statusSnapshots = statusSnapshots;
   switcher.statuses = statuses;
-  switcher.locationIndicator = locationIndicator;
   document.body.append(switcher);
   await switcher.updateComplete;
   return switcher;

@@ -100,7 +100,7 @@ export class MachineList extends LitElement implements KeyboardNavigableSection 
     return html`
       <div class="action-menu">
         <button
-          class="ui-button ui-button--icon action-menu-toggle"
+          class="ui-button ui-button--icon action-menu-toggle ui-popup-trigger"
           title=${messages.t("actions")}
           aria-label=${messages.t("actionsFor", { name: machine.name })}
           aria-expanded=${String(open)}
@@ -108,7 +108,7 @@ export class MachineList extends LitElement implements KeyboardNavigableSection 
           @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleMenu(machine.id); }}
         >⋯</button>
         ${open ? html`
-          <div popover="auto" class="action-menu-panel machine-menu-panel ui-menu" id=${menuId} @click=${(event: MouseEvent) => { event.stopPropagation(); }}>
+          <div popover="auto" class="action-menu-panel machine-menu-panel ui-menu ui-popup-panel" data-ui-context="machine-actions" id=${menuId} @click=${(event: MouseEvent) => { event.stopPropagation(); }}>
             ${this.onEdit === undefined ? null : html`<button class="ui-button ui-menu-item" @click=${() => { this.openMenuMachineId = undefined; this.onEdit?.(machine); }}>${messages.t("edit")}</button>`}
             ${this.onRemove === undefined ? null : html`<button class="danger ui-button ui-menu-item" title=${messages.t("removeNamed", { name: machine.name })} @click=${() => { this.removeMachine(machine); }}>${messages.t("remove")}</button>`}
           </div>
@@ -166,5 +166,5 @@ export function canRemoveMachine(machine: Machine): boolean {
 }
 
 function machineMenuId(machineId: string): string {
-  return `machine-menu-${machineId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+  return `machine-menu-${encodeURIComponent(machineId)}`;
 }

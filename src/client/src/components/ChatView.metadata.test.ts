@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, expect, it } from "vitest";
-import { ChatView, chatMessageMetadataLabel } from "./ChatView";
+import { ChatView } from "./ChatView";
 
 const message = {
   role: "assistant" as const,
@@ -32,7 +32,7 @@ it("keeps the same Info button and focus while showing and hiding a separate met
   expect(button.getAttribute("aria-expanded")).toBe("true");
   expect(button.querySelector("svg")).not.toBeNull();
   expect(region.hidden).toBe(false);
-  expect(region.textContent).toBe(chatMessageMetadataLabel(message));
+  expect(region.textContent).toContain("example/model");
   const content = view.shadowRoot?.querySelector(".conversation-content");
   if (!content) throw new Error("Expected conversation content");
   expect(content.nextElementSibling).toBe(region);
@@ -58,6 +58,22 @@ it("keeps conversational roles available to assistive technology without repeate
   expect(headers[1]?.querySelector(".label")).toBeNull();
   expect(headers[2]?.querySelector(".label")?.textContent).toBe("system");
   expect(view.shadowRoot?.querySelectorAll('button[aria-label="Message information"]')).toHaveLength(3);
+
+  // These hooks, unlike the remaining transcript DOM, are the supported theme contract.
+  const bubbles = [...view.renderRoot.querySelectorAll<HTMLElement>(".chat-message")];
+  expect(bubbles.map((bubble) => bubble.dataset["speaker"])).toEqual(["user", "assistant"]);
+  for (const bubble of bubbles) {
+    const content = bubble.querySelector(":scope > .chat-message-content");
+    expect(content).not.toBeNull();
+    expect(content?.querySelector(":scope > .chat-message-header")).not.toBeNull();
+    expect(content?.querySelector(":scope > .chat-message-body")).not.toBeNull();
+    expect(content?.nextElementSibling).toBe(bubble.querySelector(":scope > .chat-message-meta"));
+  }
+
+  view.messages = [{ ...message, role: "user" }];
+  await view.updateComplete;
+  expect(view.renderRoot.querySelectorAll(".chat-message")).toHaveLength(1);
+  expect(view.renderRoot.querySelector(".chat-message")?.getAttribute("data-speaker")).toBe("user");
 });
 
 it("shows only the metadata region controlled by the selected message's Info button", async () => {

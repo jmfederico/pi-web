@@ -85,6 +85,9 @@ async function runYieldBatch(subsessions: SubsessionSummary[], includeSentinel =
   const list = vi.fn<SubsessionToolDeps["list"]>(() => Promise.resolve(subsessions));
   const deps: SubsessionToolDeps = {
     spawn: vi.fn(() => Promise.resolve({ sessionId: "child-1", cwd: "/workspace" })),
+    stop: vi.fn(() => Promise.reject(new Error("unused"))),
+    resume: vi.fn(() => Promise.reject(new Error("unused"))),
+    archive: vi.fn(() => Promise.reject(new Error("unused"))),
     list,
     join: async (parentId, parentFile) => ({ subsessions: await list(parentId, parentFile), completions: [] }),
     check: vi.fn(() => Promise.resolve({ sessionId: "child-1", cwd: "/workspace", status: "idle" as const, finalText: "", messageCount: 0 })),
