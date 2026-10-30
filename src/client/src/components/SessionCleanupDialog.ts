@@ -8,6 +8,14 @@ import { canRunSessionCleanup, DEFAULT_SESSION_CLEANUP_DRAFT, selectedSessionCle
 import { uiDialogStyles, uiFormStyles } from "./ui/dialogStyles";
 import "./ModalSurface";
 
+const summaryIconPaths = {
+  info: "M12 8h.01M11 12h1v5M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0",
+  archive: "M3 3h18v4H3zM5 7v14h14V7M10 11h4",
+  delete: "M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7",
+  check: "M5 12l4 4L19 6",
+  warning: "M12 3 2 21h20L12 3zM12 9v5M12 18h.01",
+} as const;
+
 @customElement("session-cleanup-dialog")
 export class SessionCleanupDialog extends LitElement {
   constructor() {
@@ -131,10 +139,15 @@ export class SessionCleanupDialog extends LitElement {
     const selectedPreview = sessionCleanupPreviewForSelectedProjects(preview, selectedCwds);
     return html`
       <section class="preview" aria-label=${messages.t("previewLabel")}>
-        ${preview.thresholds.archiveIdleDays === undefined ? null : html`<p>${messages.t("archiveSummary", { days: preview.thresholds.archiveIdleDays })}</p>`}
-        ${preview.thresholds.deleteArchivedDays === undefined ? null : html`<p>${messages.t("deleteSummary", { days: preview.thresholds.deleteArchivedDays })}</p>`}
-        <p class="hint">${messages.t(this.draft.skipPinned ? "pinnedHint" : "busyHint")}</p>
-        ${!this.draft.deleteArchivedEnabled ? null : html`<p class="warning">${messages.rich("warning", { strong: (chunks) => html`<strong>${chunks}</strong>` })}</p>`}
+        <ul class="review-summary" role="list">
+          ${this.renderSummaryItem("info", messages.t("summaryEstimates"))}
+          ${preview.thresholds.archiveIdleDays === undefined ? null : this.renderSummaryItem("archive", messages.t("archiveSummary", { days: preview.thresholds.archiveIdleDays }))}
+          ${preview.thresholds.deleteArchivedDays === undefined ? null : this.renderSummaryItem("delete", messages.t("deleteSummary", { days: preview.thresholds.deleteArchivedDays }), "danger")}
+          ${this.draft.skipPinned
+            ? this.renderSummaryItem("check", messages.t("summaryPinsProtected"))
+            : this.renderSummaryItem("warning", messages.t("summaryPinsIncluded"), "warning")}
+          ${this.renderSummaryItem("check", messages.t("summaryBusy"))}
+        </ul>
         ${preview.projects.length === 0 ? html`<p class="empty">${messages.t("empty")}</p>` : html`
           ${this.renderSelectionControls(preview, selectedCwds)}
           <div class="table-scroll" tabindex="0" aria-label=${messages.t("tableLabel")}>
@@ -154,6 +167,13 @@ export class SessionCleanupDialog extends LitElement {
         ${this.renderSkipped(preview)}
       </section>
     `;
+  }
+
+  private renderSummaryItem(icon: keyof typeof summaryIconPaths, text: string, tone: "default" | "warning" | "danger" = "default"): TemplateResult {
+    return html`<li class=${`summary-${tone}`}>
+      <svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d=${summaryIconPaths[icon]} /></svg>
+      <span>${text}</span>
+    </li>`;
   }
 
   private renderSkipped(response: SessionCleanupPreviewResponse): TemplateResult {
@@ -278,6 +298,12 @@ export class SessionCleanupDialog extends LitElement {
     .running-hint { margin: 12px 16px; color: var(--pi-muted); }
     .result { margin: 12px 16px; border-color: var(--pi-success-border); background: var(--pi-success-bg); }
     .preview { display: grid; gap: 10px; min-width: 0; }
+    .review-summary { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+    .review-summary li { display: flex; align-items: flex-start; gap: 8px; line-height: 1.5; }
+    .review-summary svg { flex: 0 0 auto; margin-block-start: 1px; color: var(--pi-muted); }
+    .review-summary .summary-warning { color: var(--pi-warning, var(--pi-text)); }
+    .review-summary .summary-danger { color: var(--pi-danger); }
+    .review-summary .summary-warning svg, .review-summary .summary-danger svg { color: inherit; }
     .selection-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
     .selection-controls span { flex: 1 1 200px; color: var(--pi-muted); }
     .table-scroll { max-width: 100%; overflow: auto; }

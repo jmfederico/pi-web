@@ -53,6 +53,10 @@ it("updates review selection, counts and diagnostics live without resetting cont
     await localization.setPreferences({ language, formatLocale: "ar-EG" });
     await view.updateComplete; await view.updateComplete;
     expect(view.shadowRoot?.querySelector("fieldset")).toBeNull();
+    const summary = required(view, ".review-summary", HTMLElement);
+    expect(summary.textContent).toContain(messages.t("summaryPinsProtected"));
+    expect(summary.textContent).not.toContain(messages.t("summaryPinsIncluded"));
+    expect(summary.textContent).toContain(messages.t("summaryEstimates"));
     expect(view.shadowRoot?.activeElement).toBe(firstProject);
     expect(firstProject.checked).toBe(false);
     expect(required(view, "tfoot td", HTMLElement).textContent).toBe(localization.number(4));
@@ -61,6 +65,27 @@ it("updates review selection, counts and diagnostics live without resetting cont
     expect(view.shadowRoot?.textContent).toContain(messages.t("previewFailed", { error: "Raw <img> backend diagnostic" }));
     expect(view.shadowRoot?.querySelector("b, img")).toBeNull();
     expect(view.onPreview).not.toHaveBeenCalled(); expect(view.onRun).not.toHaveBeenCalled(); expect(view.onClose).not.toHaveBeenCalled();
+  }
+});
+
+it("shows the pinned-session risk and permanent-deletion rule when protection is off", async () => {
+  const view = await mount();
+  required(view, "footer button:first-child", HTMLButtonElement).click();
+  await view.updateComplete;
+  required(view, "#skip-pinned", HTMLInputElement).click();
+  required(view, '.cleanup-rule:nth-child(2) input[type="checkbox"]', HTMLInputElement).click();
+  view.previewRequest = { archiveIdleDays: 30, deleteArchivedDays: 90, skipPinned: false };
+  view.preview = { ...preview, thresholds: { archiveIdleDays: 30, deleteArchivedDays: 90 } };
+  await view.updateComplete;
+  for (const language of ["en", "en-XA", "ar-XB"]) {
+    await localization.setPreferences({ language, formatLocale: "en" });
+    await view.updateComplete;
+    const summary = required(view, ".review-summary", HTMLElement);
+    expect(summary.textContent).toContain(messages.t("summaryPinsIncluded"));
+    expect(summary.textContent).not.toContain(messages.t("summaryPinsProtected"));
+    expect(summary.textContent).toContain(messages.t("deleteSummary", { days: 90 }));
+    expect(summary.textContent).toContain(messages.t("summaryBusy"));
+    for (const icon of summary.querySelectorAll("svg")) expect(icon.getAttribute("aria-hidden")).toBe("true");
   }
 });
 
@@ -110,5 +135,5 @@ it.each([
   [1, 1, "Run cleanup and archive 1 idle session and permanently delete 1 archived session?"],
   [2, 2, "Run cleanup and archive 2 idle sessions and permanently delete 2 archived sessions?"],
 ])("uses a complete destructive confirmation for archive=%s delete=%s", (archive, deletion, expected) => {
-  expect(messages.t("confirm", { archive, delete: deletion })).toBe(`${expected}\n\nPermanent deletion only applies to archived sessions and cannot be undone.`);
+  expect(messages.t("confirm", { archive, delete: deletion })).toBe(`${expected}\n\nThese counts are estimates. Eligible sessions and counts may change before cleanup runs.\n\nPermanent deletion only applies to archived sessions and cannot be undone.`);
 });
