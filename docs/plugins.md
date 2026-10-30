@@ -267,6 +267,8 @@ After upgrading PI WEB for this API, restart the affected session daemon when sa
 
 A server plugin can create a normal, visible Pi conversation, with or without an initial prompt. A companion Pi extension can exchange messages with the backend and use Pi's own APIs to do agent work.
 
+The host PI sessions capability's `run()` accepts optional `model` (an exact `provider/model-id`) and `thinkingLevel` overrides. Omit either to use normal session defaults. Returned handles include effective startup settings when available. The host does not substitute defaults for unavailable overrides: errors with `code: "PI_SESSION_MODEL_UNAVAILABLE"` or `code: "PI_SESSION_THINKING_UNAVAILABLE"` guarantee that no initial prompt was submitted. A caller may explicitly remove the rejected override and try again; other startup errors and completion failures do not provide that guarantee. Scheduled agent tasks uses this contract for its [recorded settings fallback](scheduled-tasks.md#model-and-thinking-overrides).
+
 **The conversation belongs to the user once it is published.** Finishing the initial task, closing the browser, or disposing the initiating plugin does not discard it or stop later user work. Users can continue it like any other conversation.
 
 A messaging connection targets a session already hosted on that machine; it does not open saved sessions automatically. Sending a message is not proof that a companion is installed or that its work succeeded. Integrations must report their own progress and results. Connections have no startup-message replay, and closing a connection does not stop agent work.
@@ -398,6 +400,7 @@ Keep gateways and targets compatible. During this plugin API transition, upgrade
 - **Info** displays machine and PI WEB status without requiring a workspace, adds workspace details when selected, and provides copyable diagnostics.
 - **Updates** shows update/restart guidance when relevant and offers a manual update check. Run uses the selected machine's maintenance terminal in `$PI_WEB_DATA_DIR/maintenance` (default `~/.pi-web/maintenance`), whether or not a workspace is selected. It requires an available Terminal provider on that machine; guidance and Copy remain available without one.
 - **Workspace Tasks** turns project commands into runnable buttons.
+- **Scheduled agent tasks (beta)** is an optional, disabled-by-default package for agent-managed schedules and a read-only **Scheduled tasks** dashboard. See [installation, timezone settings, and execution behavior](scheduled-tasks.md).
 - **Spanish / Español** and **Swedish / Svenska** are optional interface language packs, included but disabled by default. See [Language packs](#language-packs) to enable them.
 
 ### Language packs
@@ -432,7 +435,7 @@ Create `.pi-web/tasks.json` in a project:
 }
 ```
 
-Open the **Tasks** tab to run a command in a workspace terminal. Tasks can also have a `description`. Review commands before running them, especially in shared repositories. Disabling the plugin hides the tab without changing the project file.
+Open the **Tasks** tab to run a command in a workspace terminal. These command buttons are separate from [scheduled agent tasks](scheduled-tasks.md), which dispatch conversations. Tasks can also have a `description`. Review commands before running them, especially in shared repositories. Disabling the plugin hides the tab without changing the project file.
 
 ### Workflows
 

@@ -1662,31 +1662,67 @@ export class PiSessionService implements SessionRouteService {
     cwd: string,
     text: unknown,
     signal: AbortSignal,
-  ): Promise<{ readonly id: string; readonly completion: Promise<void> }> {
+    options: { model?: string; thinkingLevel?: ClientThinkingLevel } = {},
+  ): Promise<{ readonly id: string; readonly completion: Promise<void>; readonly model?: string; readonly thinkingLevel?: ClientThinkingLevel }> {
     const promptText = requirePromptText(text);
-    return this.startManagedSession(cwd, signal, promptText);
+    return this.startManagedSession(cwd, signal, promptText, options);
   }
 
   private async startManagedSession(
     cwd: string,
     signal: AbortSignal,
     promptText?: string,
-  ): Promise<{ readonly id: string; readonly completion: Promise<void> }> {
+    options: { model?: string; thinkingLevel?: ClientThinkingLevel } = {},
+  ): Promise<{ readonly id: string; readonly completion: Promise<void>; readonly model?: string; readonly thinkingLevel?: ClientThinkingLevel }> {
     signal.throwIfAborted();
+    let initialModel: AgentModel | undefined;
+    if (options.model !== undefined) {
+      await this.modelRuntime.refresh({ allowNetwork: false });
+      signal.throwIfAborted();
+      // Catalog membership alone does not mean the provider still has credentials
+      // or is configured. Host overrides must be available after the refresh.
+      initialModel = this.modelRuntime.getAvailableSnapshot().find((model) => modelScopeId(model) === options.model);
+      if (initialModel === undefined) {
+        throw Object.assign(new Error(`Model unavailable: ${options.model}`), { code: "PI_SESSION_MODEL_UNAVAILABLE" });
+      }
+    }
     const active = await this.create(
       this.sessionManager.create(cwd),
       cwd,
-      { startupIntent: "create", creationProvenance: "host-one-shot", startupSignal: signal },
+      {
+        startupIntent: "create", creationProvenance: "host-one-shot", startupSignal: signal,
+        ...(initialModel === undefined ? {} : { initialModel }),
+      },
     );
     const { session } = active.runtime;
     try {
       signal.throwIfAborted();
+      // Startup extensions may change the model. Never submit with a fallback
+      // when the caller requested an exact model.
+      if (options.model !== undefined && (session.model === undefined || modelScopeId(session.model) !== options.model)) {
+        throw Object.assign(new Error(`Requested model is not active: ${options.model}`), { code: "PI_SESSION_MODEL_UNAVAILABLE" });
+      }
+      if (options.thinkingLevel !== undefined) {
+        // Do not pass requested thinking into startup: the SDK can silently
+        // clamp it before we have the actual model's supported levels.
+        if (!session.getAvailableThinkingLevels().includes(options.thinkingLevel)) {
+          throw Object.assign(new Error(`Thinking level unavailable: ${options.thinkingLevel}`), { code: "PI_SESSION_THINKING_UNAVAILABLE" });
+        }
+        session.setThinkingLevel(options.thinkingLevel);
+        if (session.thinkingLevel !== options.thinkingLevel) {
+          throw Object.assign(new Error(`Thinking level was not applied: ${options.thinkingLevel}`), { code: "PI_SESSION_THINKING_UNAVAILABLE" });
+        }
+      }
+      const settings = {
+        ...(session.model === undefined ? {} : { model: modelScopeId(session.model) }),
+        thinkingLevel: session.thinkingLevel,
+      };
       if (promptText !== undefined) this.maybeGenerateSessionName(session, promptText);
       const created = this.announceCreatedSession(active, cwd);
       // Publication transfers lifetime ownership to normal hosting. Plugin
       // cancellation after this point must not abort this or later user work.
       const completion = promptText === undefined ? Promise.resolve() : this.submitInitialRunPrompt(session, promptText);
-      return Object.freeze({ id: created.id, completion });
+      return Object.freeze({ id: created.id, completion, ...settings });
     } catch (error) {
       try {
         await this.closeActive(session.sessionId);

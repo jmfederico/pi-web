@@ -12,6 +12,7 @@ const publicApiDeclarationPaths = [
   "shared/localization.d.ts",
   "shared/serverNoticePresentation.d.ts",
   "shared/terminalTitlePresentation.d.ts",
+  "shared/thinkingLevels.d.ts",
   "shared/workspaceRemovalPresentation.d.ts",
 ];
 const expectedPackageDeclarationPaths = [
@@ -80,6 +81,7 @@ export async function smokeInstalledPluginApi({ packageRoot, fixtureRoot, repoRo
     ]);
     assertStrictPluginConsumer("server-only", [serverPath], mode, packageRoot, repoRoot, [
       "dist/server-plugin-api.d.ts",
+      "dist/shared/thinkingLevels.d.ts",
       "dist/shared/pluginApiTypes.d.ts",
       "dist/shared/pluginCatalogTypes.d.ts",
       "dist/shared/pluginSessionLifecycleTypes.d.ts",

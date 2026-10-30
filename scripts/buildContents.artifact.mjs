@@ -13,6 +13,7 @@ const publicApiDeclarationPaths = [
   "shared/localization.d.ts",
   "shared/serverNoticePresentation.d.ts",
   "shared/terminalTitlePresentation.d.ts",
+  "shared/thinkingLevels.d.ts",
   "shared/workspaceRemovalPresentation.d.ts",
 ];
 

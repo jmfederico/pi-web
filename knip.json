@@ -14,6 +14,7 @@
     "pi-web-plugins/**/pi-web-plugin.ts",
     "pi-web-plugins/**/server-plugin.ts",
     "pi-packages/**/pi-web-plugin.ts",
+    "pi-packages/**/server-plugin.ts",
     "pi-packages/relays/extensions/index.ts",
     "scripts/*.mjs"
   ],
