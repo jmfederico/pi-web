@@ -97,8 +97,11 @@ async function fixture() {
   const resume = (prompt: string) => service.resumeSubsession(parent.session.sessionId, session.sessionId, prompt, parent.session.sessionFile);
   const joinResults = () => service.joinSubsessions(parent.session.sessionId, parent.session.sessionFile);
   const sendTool = createSendSessionMessageToolDefinition(directory, { send: (input) => service.sendSessionMessage(input) });
-  const send = (message: string) => sendTool.execute("send-message", { sessionId: session.sessionId, message }, undefined, undefined,
-    stubExtensionToolContext({ sessionManager: { getSessionId: () => parent.session.sessionId } }));
+  const send = (message: string) => {
+    const params = { sessionId: session.sessionId, message, sendingSessionId: "forged-sender" };
+    return sendTool.execute("send-message", params, undefined, undefined,
+      stubExtensionToolContext({ sessionManager: { getSessionId: () => parent.session.sessionId } }));
+  };
 
   async function settled() {
     await bounded(session.waitForIdle(), "native child idle");
@@ -214,7 +217,9 @@ describe("agent control composed with native Pi sessions", () => {
     const messageEntered = gate();
     const finishInitial = gate();
     const finishMessage = gate();
-    const messageText = "Investigate this follow-up independently.";
+    const messageText = "  Investigate this follow-up independently.\n\nPreserve this body.  \n";
+    const deliveredContent = `Message from session parent-1:\n\n${messageText}`;
+    const details = { sendingSessionId: "parent-1" };
     const sendCustomMessage = vi.spyOn(f.session, "sendCustomMessage");
     let requests = 0;
     let messageInput: unknown;
@@ -263,6 +268,7 @@ describe("agent control composed with native Pi sessions", () => {
       // tool that awaits sendCustomMessage's full native run times out here.
       const result = await bounded(f.send(messageText), "sender tool acceptance before recipient completion");
       expect(result.details).toEqual({ sessionId: f.session.sessionId, delivery: state === "idle" ? "started" : "queued" });
+      expect(JSON.stringify(result)).not.toContain("parent-1");
       if (state === "working") {
         expect(requests).toBe(1);
         finishInitial.resolve();
@@ -270,15 +276,15 @@ describe("agent control composed with native Pi sessions", () => {
       await bounded(messageEntered.promise, "custom message provider request");
       expect(f.session.isStreaming).toBe(true);
       expect(sendCustomMessage).toHaveBeenCalledExactlyOnceWith(
-        { customType: "session.message", content: messageText, display: true },
+        { customType: "session.message", content: deliveredContent, display: true, details },
         { triggerTurn: true, deliverAs: "followUp" },
       );
-      // Model context gets a custom message, not a synthetic user prompt or
-      // sender/parent authority. Pi adds only its ordinary transcript fields.
+      // The visible transcript and model context both retain sender provenance;
+      // metadata alone would not reach the model. This grants no control authority.
       const custom = f.session.messages.filter((message) => message.role === "custom" && message.customType === "session.message");
       expect(custom).toHaveLength(1);
-      expect(custom[0]).toEqual({ role: "custom", customType: "session.message", content: messageText, display: true, details: undefined, timestamp: custom[0]?.timestamp });
-      expect(messageInput).toMatchObject({ role: "user", content: [{ type: "text", text: messageText }] });
+      expect(custom[0]).toEqual({ role: "custom", customType: "session.message", content: deliveredContent, display: true, details, timestamp: custom[0]?.timestamp });
+      expect(messageInput).toMatchObject({ role: "user", content: [{ type: "text", text: deliveredContent }] });
 
       finishMessage.resolve();
       await f.settled();

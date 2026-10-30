@@ -16,7 +16,7 @@ function namingConfigResponse(sessionNaming?: PiWebConfigValues["sessionNaming"]
   const config = sessionNaming === undefined ? {} : { sessionNaming };
   return {
     path: "/tmp/pi-web/config.json", exists: true, config, effectiveConfig: config,
-    envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false },
+    envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, sessionMessages: false, subsessions: false, askUser: false },
   };
 }
 

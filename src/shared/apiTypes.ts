@@ -218,6 +218,8 @@ export interface PiWebConfigValues {
   };
   /** When true, LLMs can start new sessions via the spawn_session tool. */
   spawnSessions?: boolean;
+  /** When true, LLMs can send messages to other sessions. On by default; independent of spawning. */
+  sessionMessages?: boolean;
   /**
    * When true, LLMs can start, inspect, stop, resume, and archive tracked
    * child sessions through the subsession tools.
@@ -386,6 +388,7 @@ export interface PiWebConfigEnvOverrides {
   port: boolean;
   allowedHosts: boolean;
   spawnSessions: boolean;
+  sessionMessages: boolean;
   subsessions: boolean;
   askUser: boolean;
 }

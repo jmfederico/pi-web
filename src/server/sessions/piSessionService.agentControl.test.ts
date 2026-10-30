@@ -258,10 +258,25 @@ describe("PiSessionService direct-child lifecycle control", () => {
 });
 
 describe("PiSessionService same-project session messaging", () => {
-  const message = "Please investigate this independently.";
+  const message = "  Please investigate this independently.\n\nKeep this body unchanged.  \n";
   const send = (service: PiSessionService, target = CHILD, sender = PARENT) => service.sendSessionMessage({ sendingCwd: CWD, sendingSessionId: sender, sessionId: target, message });
 
-  it("delivers content-only custom follow-ups to children, parents, and unrelated sessions without granting authority", async () => {
+  it.each([false, true])("blocks messaging when disabled, with explicit resolver=%s", async (explicitResolver) => {
+    const target = journalRuntime(CHILD);
+    const resolveMessageTarget = vi.fn(() => Promise.resolve({ allowed: true as const, cwd: CWD }));
+    const { service, createAgentRuntime, listAll, resolveSpawnTarget } = fixture([target], {
+      sessionMessagesEnabled: false,
+      ...(explicitResolver ? { messageTargets: { resolveSpawnTarget: resolveMessageTarget } } : {}),
+    });
+    await expect(send(service)).rejects.toThrow("Session messaging is unavailable");
+    expect(createAgentRuntime).not.toHaveBeenCalled();
+    expect(listAll).not.toHaveBeenCalled();
+    expect(resolveMessageTarget).not.toHaveBeenCalled();
+    expect(resolveSpawnTarget).not.toHaveBeenCalled();
+    expect(target.calls.sendCustomMessage).toEqual([]);
+  });
+
+  it("delivers attributed custom follow-ups to children, parents, and unrelated sessions without granting authority", async () => {
     const { service, parent, child, unrelated, listAll } = await trackedFixture();
     await service.start(CWD);
     await expect(send(service)).resolves.toEqual({ sessionId: CHILD, delivery: "started" });
@@ -269,8 +284,14 @@ describe("PiSessionService same-project session messaging", () => {
     await expect(send(service, unrelated.session.sessionId)).resolves.toEqual({ sessionId: unrelated.session.sessionId, delivery: "started" });
     await vi.advanceTimersByTimeAsync(0);
     for (const recipient of [parent, child, unrelated]) {
+      const sendingSessionId = recipient === parent ? CHILD : PARENT;
       expect(recipient.calls.sendCustomMessage).toEqual([{
-        message: { customType: "session.message", content: message, display: true },
+        message: {
+          customType: "session.message",
+          content: `Message from session ${sendingSessionId}:\n\n${message}`,
+          display: true,
+          details: { sendingSessionId },
+        },
         options: { triggerTurn: true, deliverAs: "followUp" },
       }]);
     }
@@ -329,7 +350,12 @@ describe("PiSessionService same-project session messaging", () => {
     }
     await expect(result).resolves.toEqual({ sessionId: CHILD, delivery: "queued" });
     expect(target.calls.sendCustomMessage).toEqual([{
-      message: { customType: "session.message", content: message, display: true },
+      message: {
+        customType: "session.message",
+        content: `Message from session ${PARENT}:\n\n${message}`,
+        display: true,
+        details: { sendingSessionId: PARENT },
+      },
       options: { triggerTurn: true, deliverAs: "followUp" },
     }]);
   });
@@ -370,7 +396,12 @@ describe("PiSessionService same-project session messaging", () => {
     expect(open).toHaveBeenCalledWith(record.path);
     expect(createAgentRuntime).toHaveBeenCalledOnce();
     expect(target.calls.prompt).toHaveLength(0);
-    expect(target.calls.sendCustomMessage[0]?.message).toEqual({ customType: "session.message", content: message, display: true });
+    expect(target.calls.sendCustomMessage[0]?.message).toEqual({
+      customType: "session.message",
+      content: `Message from session ${PARENT}:\n\n${message}`,
+      display: true,
+      details: { sendingSessionId: PARENT },
+    });
     await expect(service.listSubsessions(PARENT)).resolves.toEqual([]);
   });
 

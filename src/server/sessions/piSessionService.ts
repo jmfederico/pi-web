@@ -1011,8 +1011,13 @@ function createDefaultRuntimeFactory(
   appendSystemPromptSections: readonly string[] = [],
   messaging?: SendSessionMessageToolDeps,
 ): PiWebCreateAgentSessionRuntimeFactory {
-  const resourceLoaderOptions = piWebResourceLoaderOptions(appendSystemPromptSections);
   return async ({ cwd, agentDir, sessionManager, sessionStartEvent, initialModel, initialThinkingLevel, delegationToolsEnabled }) => {
+    const parentSessionFile = sessionManager.getHeader()?.parentSession;
+    const parentHeader = parentSessionFile === undefined ? undefined : await readSessionHeaderSummary(parentSessionFile);
+    const resourceLoaderOptions = piWebResourceLoaderOptions([
+      ...appendSystemPromptSections,
+      ...(parentHeader === undefined ? [] : [`<pi_web_session_context>\nParent session ID: ${parentHeader.id}\n</pi_web_session_context>`]),
+    ]);
     // PI WEB always honors pi's project-trust model. When the workspace ships
     // trust-requiring resources, trust is resolved exactly once, mirroring the
     // SDK's flow: the resource loader first loads the pre-trust extension set
@@ -1129,6 +1134,8 @@ export interface PiSessionServiceDependencies {
   spawnTargets?: SpawnTargetResolver;
   /** Project boundary for relationship-free messaging, independent of spawning flags. */
   messageTargets?: SpawnTargetResolver;
+  /** Disable session messaging even when a project-scope resolver is available. Defaults to true. */
+  sessionMessagesEnabled?: boolean;
   /**
    * When true (and `spawnTargets` is provided), the tracked-subsession
    * tools are available to sessions whose creation provenance permits
@@ -1299,7 +1306,7 @@ export class PiSessionService implements SessionRouteService {
     this.sessionManager = deps.sessionManager;
     this.modelRuntime = deps.modelRuntime;
     this.spawnTargets = deps.spawnTargets;
-    this.messageTargets = deps.messageTargets ?? deps.spawnTargets;
+    this.messageTargets = deps.sessionMessagesEnabled === false ? undefined : deps.messageTargets ?? deps.spawnTargets;
     this.logger = deps.logger ?? noopLogger;
     this.now = deps.now ?? (() => new Date());
     this.activityMarker = new SessionActivityMarker({
@@ -2180,7 +2187,10 @@ export class PiSessionService implements SessionRouteService {
       if (session.isCompacting || session.isBashRunning) await session.waitForIdle();
       if (!this.isCurrentActiveSession(session)) throw new Error("Session was closed before message delivery");
       await session.sendCustomMessage({
-        customType: "session.message", content: message, display: true,
+        customType: "session.message",
+        content: `Message from session ${input.sendingSessionId}:\n\n${message}`,
+        display: true,
+        details: { sendingSessionId: input.sendingSessionId },
       }, { triggerTurn: true, deliverAs: "followUp" });
     }).catch((error: unknown) => {
       const detail = error instanceof Error ? error.message : String(error);
@@ -2206,7 +2216,7 @@ export class PiSessionService implements SessionRouteService {
     return Promise.all(authorizedChildIds.map(async (childId) => ({ sessionId: childId, ...(await this.subsessionSummaryFields(childId)) })));
   }
 
-  /** Collect ready answers before deciding whether the parent needs to wait. */
+  /** Collect unread run snapshots; the yield tool exposes only their lifecycle facts. */
   async joinSubsessions(parentSessionId: string, parentSessionFile?: string, toolCallId?: string): Promise<SubsessionJoinResult> {
     const subsessions = await this.listSubsessions(parentSessionId, parentSessionFile);
     this.reconcileSubsessionCompletions(parentSessionId, parentSessionFile);

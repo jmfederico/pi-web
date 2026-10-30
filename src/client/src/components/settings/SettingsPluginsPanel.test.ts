@@ -51,7 +51,7 @@ it("uses conservative restart guidance when a saved plugin's active lifecycle is
 function configResponse(config: PiWebConfigValues): PiWebConfigResponse {
   return {
     path: "/tmp/pi-web/config.json", exists: true, config, effectiveConfig: config,
-    envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false },
+    envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false },
   };
 }
 

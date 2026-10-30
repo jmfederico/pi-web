@@ -334,6 +334,7 @@ async function createSessionDaemonRuntime() {
       logger: app.log,
       ...(spawnTargets === undefined ? {} : { spawnTargets }),
       messageTargets,
+      sessionMessagesEnabled: config.sessionMessages,
       subsessionsEnabled: config.subsessions,
       askUserEnabled: config.askUser,
       config: configService,

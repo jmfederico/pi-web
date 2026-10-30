@@ -76,7 +76,7 @@ describe("static gateway theme catalog", () => {
       themeCatalog: service, clientDist: root, logger: false,
       agentProfileProvider: { getActiveAgentProfile: () => { throw new Error("Static themes must not wait for sessiond"); } },
       config: {
-        read: () => ({ path: "config.json", exists: true, config: {}, effectiveConfig: { defaultTheme: { themeId: "palette:day", auto: true } }, envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false }, enforcedSettings: { "/defaultTheme": "PI_WEB_DEFAULT_THEME" } }),
+        read: () => ({ path: "config.json", exists: true, config: {}, effectiveConfig: { defaultTheme: { themeId: "palette:day", auto: true } }, envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, sessionMessages: false, subsessions: false, askUser: false }, enforcedSettings: { "/defaultTheme": "PI_WEB_DEFAULT_THEME" } }),
         write: () => { throw new Error("Unexpected config write"); },
       },
     });
@@ -148,7 +148,7 @@ describe("static gateway theme catalog", () => {
     const app = await buildApp({
       themeCatalog: service, clientDist: root, logger: false,
       config: {
-        read: () => ({ path: "config.json", exists: true, config: {}, effectiveConfig: { defaultTheme }, envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false }, enforcedSettings: { "/defaultTheme": "PI_WEB_DEFAULT_THEME" } }),
+        read: () => ({ path: "config.json", exists: true, config: {}, effectiveConfig: { defaultTheme }, envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, sessionMessages: false, subsessions: false, askUser: false }, enforcedSettings: { "/defaultTheme": "PI_WEB_DEFAULT_THEME" } }),
         write: () => { throw new Error("Unexpected config write"); },
       },
     });

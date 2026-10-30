@@ -128,7 +128,9 @@ describe("subsession completion delivery through native Pi", () => {
       expect(joined.completions).toHaveLength(failed ? 1 : 0);
       expect(requests).toBe(failed ? 1 : scenario === "check-rejected" ? 3 : 2);
       if (!failed) {
-        expect(modelInputs.at(-1)?.split("CHILD_FINAL_ANSWER")).toHaveLength(2);
+        const inspected = scenario === "check-ready" || scenario === "nested-check";
+        expect(modelInputs.at(-1)?.split("CHILD_FINAL_ANSWER")).toHaveLength(inspected ? 2 : 1);
+        if (!inspected) expect(modelInputs.at(-1)).toContain("is now idle.");
         expect(session.messages.at(-1)).toMatchObject({ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Integrated the child result" }] });
       } else {
         expect(session.messages.at(-1)).toMatchObject({ stopReason: scenario === "parent-error" ? "error" : "aborted" });
@@ -138,6 +140,11 @@ describe("subsession completion delivery through native Pi", () => {
       expect(sendMessage).not.toHaveBeenCalled(); // No rendered answer was enqueued separately.
       const notices = session.messages.filter((message) => message.role === "custom" && message.customType === "subsession.completion");
       expect(notices).toHaveLength(scenario === "yield-race" || scenario === "natural-stop" || scenario === "check-rejected" ? 1 : 0);
+      for (const notice of notices) {
+        expect(JSON.stringify(notice)).not.toContain("CHILD_FINAL_ANSWER");
+        if (notice.role !== "custom") throw new Error("Expected custom lifecycle notice");
+        expect(Object.keys(notice.details ?? {}).sort()).toEqual(["completionIds", "sessionId"]);
+      }
       expect(await hosted.prepareSubsessionDelivery(session.sessionId)).toBeUndefined();
       expect(errors).toEqual([]);
     } finally {

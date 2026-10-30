@@ -78,14 +78,14 @@ describe("API parsers", () => {
   });
 
   it("retains deployment defaults and setting source metadata, rejecting malformed metadata", () => {
-    const response = { path: "config.json", exists: true, config: {}, effectiveConfig: {}, envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false }, defaultsConfig: { basePaths: [], environmentFacts: false, extensionDialogsTimeoutMs: 0 }, defaultsPath: "defaults.json", enforcedSettings: { "/quietMode": "PI_WEB_QUIET_MODE" }, configSources: { "/basePaths": "defaults" } };
+    const response = { path: "config.json", exists: true, config: {}, effectiveConfig: {}, envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false }, defaultsConfig: { basePaths: [], environmentFacts: false, extensionDialogsTimeoutMs: 0 }, defaultsPath: "defaults.json", enforcedSettings: { "/quietMode": "PI_WEB_QUIET_MODE" }, configSources: { "/basePaths": "defaults" } };
     expect(parsePiWebConfigResponse(response)).toEqual(response);
     expect(() => parsePiWebConfigResponse({ ...response, enforcedSettings: { "/quietMode": true } })).toThrow("configuration source");
     expect(() => parsePiWebConfigResponse({ ...response, defaultsConfig: { basePaths: [42] } })).toThrow();
   });
 
   it("parses and validates installation identity in config responses", () => {
-    const response = { path: "config.json", exists: true, config: { installationName: " Build lab " }, effectiveConfig: {}, envOverrides: { host: false, port: false, allowedHosts: false, maxUploadBytes: false, spawnSessions: false, subsessions: false, askUser: false } };
+    const response = { path: "config.json", exists: true, config: { installationName: " Build lab " }, effectiveConfig: {}, envOverrides: { host: false, port: false, allowedHosts: false, maxUploadBytes: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false } };
     expect(parsePiWebConfigResponse(response).config.installationName).toBe("Build lab");
     expect(() => parsePiWebConfigResponse({ ...response, config: { installationName: 42 } })).toThrow("installationName");
   });
@@ -96,26 +96,26 @@ describe("API parsers", () => {
       exists: true,
       config: { host: "0.0.0.0", port: 8504, allowedHosts: ["example.local"], shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null }, plugins: { info: { enabled: false, settings: { compact: true } } }, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: "manual/uploads" }, attachments: { defaultFolder: "saved/attachments" }, maxUploadBytes: 1234, agent: { command: "agent-lab", dir: "~/agent-profiles/lab" } },
       effectiveConfig: { host: "127.0.0.1", port: 8504, allowedHosts: true, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: ".pi-web/uploads" }, attachments: { defaultFolder: ".pi-web/attachments" }, agent: { command: "agent-lab", dir: "/Users/dev/agent-profiles/lab" } },
-      envOverrides: { host: true, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false },
+      envOverrides: { host: true, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false },
     })).toEqual({
       path: "/tmp/config.json",
       exists: true,
       config: { host: "0.0.0.0", port: 8504, allowedHosts: ["example.local"], shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null }, plugins: { info: { enabled: false, settings: { compact: true } } }, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: "manual/uploads" }, attachments: { defaultFolder: "saved/attachments" }, maxUploadBytes: 1234, agent: { command: "agent-lab", dir: "~/agent-profiles/lab" } },
       effectiveConfig: { host: "127.0.0.1", port: 8504, allowedHosts: true, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: ".pi-web/uploads" }, attachments: { defaultFolder: ".pi-web/attachments" }, agent: { command: "agent-lab", dir: "/Users/dev/agent-profiles/lab" } },
-      envOverrides: { host: true, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false },
+      envOverrides: { host: true, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false },
     });
   });
 
   it("preserves archive destinations for config round-trips without a UI control", () => {
     const sessionArchive = { directory: "/external/archives" };
-    const response = { path: "/tmp/config.json", exists: true, config: { sessionArchive }, effectiveConfig: { sessionArchive }, envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false } };
+    const response = { path: "/tmp/config.json", exists: true, config: { sessionArchive }, effectiveConfig: { sessionArchive }, envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false } };
     expect(parsePiWebConfigResponse(response)).toMatchObject({ config: { sessionArchive }, effectiveConfig: { sessionArchive } });
   });
 
   it("preserves and validates gateway localization defaults in both response fields", () => {
     const defaultLocalization = { language: "fr", formatLocale: "de-DE", timeZone: "UTC", hourCycle: "h23" };
     const response = { path: "/tmp/config.json", exists: true, config: {}, effectiveConfig: {},
-      envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false } };
+      envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false } };
     for (const field of ["config", "effectiveConfig"] as const) {
       expect(parsePiWebConfigResponse({ ...response, [field]: { defaultLocalization } })[field]).toEqual({ defaultLocalization });
       expect(() => parsePiWebConfigResponse({ ...response, [field]: { defaultLocalization: { timeZone: "Invalid/Zone" } } })).toThrow("PI WEB config defaultLocalization");
@@ -127,7 +127,7 @@ describe("API parsers", () => {
     const response = {
       path: "/tmp/config.json", exists: true,
       config: { defaultTheme }, effectiveConfig: { defaultTheme },
-      envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false },
+      envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false },
     };
     expect(parsePiWebConfigResponse(response)).toMatchObject({ config: { defaultTheme }, effectiveConfig: { defaultTheme } });
     expect(() => parsePiWebConfigResponse({ ...response, config: { defaultTheme: "dark" } })).toThrow("PI WEB config defaultTheme");
@@ -136,7 +136,7 @@ describe("API parsers", () => {
   it("preserves optional streaming defaults and rejects invalid values in both config fields", () => {
     const response = {
       path: "/tmp/config.json", exists: true, config: {}, effectiveConfig: {},
-      envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false },
+      envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false },
     };
     expect(parsePiWebConfigResponse(response)).toMatchObject({ config: {}, effectiveConfig: {} });
     for (const field of ["config", "effectiveConfig"] as const) {
@@ -153,7 +153,7 @@ describe("API parsers", () => {
   it("preserves quiet mode and rejects invalid values in both config fields", () => {
     const response = {
       path: "/tmp/config.json", exists: true, config: {}, effectiveConfig: {},
-      envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false },
+      envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false },
     };
     for (const field of ["config", "effectiveConfig"] as const) {
       expect(parsePiWebConfigResponse(response)[field]).not.toHaveProperty("quietMode");
@@ -169,7 +169,7 @@ describe("API parsers", () => {
   it("preserves naming configuration and rejects malformed naming fields", () => {
     const response = {
       path: "/tmp/config.json", exists: true, config: {}, effectiveConfig: {},
-      envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false },
+      envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false },
     };
     for (const field of ["config", "effectiveConfig"] as const) {
       for (const sessionNaming of [{}, { model: "openai/gpt-5" }, { maxTokens: 48 }, { timeoutMs: 1 }, { timeoutMs: 10000 }, { timeoutMs: 2147483647 }, { model: "openai/gpt-5", maxTokens: 32, thinkingLevel: "off", timeoutMs: 15000 }, ...KNOWN_THINKING_LEVELS.map((thinkingLevel) => ({ thinkingLevel }))]) {
@@ -194,7 +194,7 @@ describe("API parsers", () => {
       exists: true,
       config: {},
       effectiveConfig: {},
-      envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false },
+      envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false },
     };
 
     expect(() => parsePiWebConfigResponse({ ...response, config: { attachments: "saved/attachments" } })).toThrow("Invalid PI WEB attachments field");
@@ -291,8 +291,24 @@ describe("API parsers", () => {
       .toThrow("Invalid PI WEB deprecated agent inputs");
   });
 
+  it("parses messaging settings in every configuration layer and rejects non-booleans", () => {
+    const response = { path: "config.json", exists: true, config: { sessionMessages: false }, effectiveConfig: { sessionMessages: true }, defaultsConfig: { sessionMessages: true }, envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: true, askUser: false } };
+    expect(parsePiWebConfigResponse(response)).toEqual(response);
+    for (const layer of ["config", "effectiveConfig", "defaultsConfig"] as const) {
+      expect(() => parsePiWebConfigResponse({ ...response, [layer]: { sessionMessages: "false" } })).toThrow();
+    }
+  });
+
+  it("accepts legacy config responses without the messaging override flag but rejects malformed supplied values", () => {
+    const response = { path: "config.json", exists: true, config: {}, effectiveConfig: {}, envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false } };
+    expect(parsePiWebConfigResponse(response)).toEqual({ ...response, envOverrides: { ...response.envOverrides, sessionMessages: false } });
+    for (const sessionMessages of ["false", 0, null]) {
+      expect(() => parsePiWebConfigResponse({ ...response, envOverrides: { ...response.envOverrides, sessionMessages } })).toThrow();
+    }
+  });
+
   it("rejects config responses missing a required override flag", () => {
-    const envOverrides = { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false };
+    const envOverrides = { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false };
     for (const flag of ["host", "port", "allowedHosts", "spawnSessions", "subsessions", "askUser"] as const) {
       const incomplete = Object.fromEntries(Object.entries(envOverrides).filter(([key]) => key !== flag));
       expect(() => parsePiWebConfigResponse({
