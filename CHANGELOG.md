@@ -1,5 +1,40 @@
 # @jmfederico/pi-web
 
+## 1.202610.9
+
+### Patch Changes
+
+- a2d4c60: Move Dismiss into closed extension-dialog headers and hide text-input answers by default, with an eye icon to reveal or hide them.
+- 33f6a57: Show machine names without URLs consistently in PWA and browser headers, and keep the machine logo visible in the mobile machine picker. URLs remain available in tooltips and machine details.
+- 0dc78b3: Require confirmation of scheduled task definitions before creation or updates, and keep task prompts faithful to the user's request without adding execution plans or unrequested files.
+- 447d64b: Add an agent action to permanently delete archived scheduled tasks and all their definition and execution history, while preserving existing conversations.
+- 7fb972c: Add an optional, disabled-by-default scheduled agent tasks package (beta) with conversation-based task management, a persistent execution ledger, background conversation dispatch, and a read-only dashboard with execution history, conversation links, and collapsed disclosures for current task prompts and saved run instructions.
+- 63a7360: Redesign the scheduled tasks dashboard around problems needing attention, reported results, and upcoming work. Keep list rows focused on linked titles, status, and time. Open task history and technical details only when needed, with full reports collapsed by default and warnings and text links to conversations inside task details.
+- 4473955: Summarize cleanup rules and protections in a compact icon-led list, with a warning when pinned sessions are included. Clarify that preview counts are estimates and eligible sessions are rechecked when cleanup runs.
+- 14c0848: Keep autocomplete suggestions anchored above the editor when the iOS keyboard is open.
+- 68b1c83: Open the native attachment chooser directly on non-Android and unknown devices, including iPhone, iPad, and touch-enabled Windows machines. Keep Photos, Camera, and Files shortcuts on Android so its photo gallery remains accessible.
+- 2f3f7fa: Add locally bundled Material file-type shapes to Files and Git in a single muted tone that follows the active colour theme. Select file icon themes independently of colour themes in Settings, and let plugins contribute additional icon sets. Git preserves status labels and uses filename colours to distinguish changes without tinting the icons.
+- ec64552: Expose session pin, unpin, archive, restore, and archived-session deletion to browser and server plugins using explicit session identities. Pins protect cleanup without blocking deliberate plugin commands. Expose creation, modification, archive timestamps, and pin state through session discovery so plugins can implement their own age filters and cleanup policies without a cleanup-specific API. These metadata fields are always present; unknown dates are explicitly `null`.
+
+  Use the same native lifecycle guards for core cleanup and explicit plugin archive/delete commands.
+
+  Move session pins to daemon-owned storage, preserving existing pins. Upgrade/restart the web/API process before restarting the session daemon; do not leave an older web/API process writing pins after the migration. Session-daemon restarts interrupt active sessions and terminals.
+- 931253d: Avoid flashing the worktree list on mobile for single-worktree projects, and open Sessions without waiting for its contents to finish loading.
+- bc290f2: Open the restored session's chat instead of the previously selected chat when restoring from the session list. Keep the list open if restoration fails or becomes stale.
+- 7a6cb1d: Use the bottom safe area for vertically centred session statistics while keeping model and send controls above it.
+- 05eb410: Allow scheduled agent tasks to select an optional model and thinking level. Use current session defaults when omitted, and record a visible notice when unavailable settings require a fallback before execution starts.
+- Keep server plugin thinking-level declarations self-contained so plugin consumers do not need to resolve an internal Pi SDK dependency.
+- 7a20ba5: Let agents stop, resume, and archive their tracked children through a single `manage_subsession` tool, and send messages to other sessions in the same project without creating a parent/child relationship. Session messaging is enabled by default and can be disabled independently with `sessionMessages` or `PI_WEB_SESSION_MESSAGES`. Children receive their parent’s session ID, and messages identify the sending session so recipients can reply without guessing identities. Automatic child notifications report idle or error state without forwarding final output or claiming the task is complete; agents can coordinate through messages or explicitly inspect a child’s output. Stop interrupts the current run without preventing later messages from starting another turn. Restart the session daemon after updating to enable the new tools.
+- 9592313: Deliver session messages as steering and child lifecycle notices at safe turn boundaries so active agents can coordinate without waiting for their runs to finish.
+- 95d67d5: Move persistent session warnings out of Chat into a Notices panel with a count and normal pin/hide preferences. The panel is available while warnings exist; immediate event notifications remain in Chat.
+- 762bbfd: Update `pi-web install --dev` to use a supervised UI service group so a failed web or client process stops its sibling instead of leaving a partially running installation. Existing native development installations can adopt this by running `pi-web install --dev` from the updated checkout, retaining their existing `--config` option when applicable. Reinstalling services interrupts active sessions and terminals.
+- 49459c0: Add a default-on option to skip pinned sessions during cleanup. Separate cleanup into rules and review steps with a single primary action on each, placing the run action after the proposal and selected totals in the scrolling review. Improve project selection, mobile layout, and preview safety, including preventing repeat execution of completed previews.
+- 95d67d5: Prevent browser-driven chat scroll jumps by disabling native scroll anchoring while retaining the app's anchoring when older messages load.
+- 0b39515: Deliver the default theme with the initial page so the app opens with its palette ready. Load other themes on demand, cache their assets, and retain a usable palette if loading fails. General settings load the full theme inventory with a retry option. Show a pulsing startup logo, static for reduced motion, with teal branding for stable instances and purple for development instances.
+
+  Support declarative CSS-only theme packages without browser JavaScript or a server module. Existing theme IDs, saved preferences, and configuration precedence are preserved; legacy runtime themes remain supported but are deprecated.
+- 95d67d5: Add supported styling hooks for conversation messages, renderer and completion choices, composer controls, navigation rows, and popup menus. Themes can distinguish current, unread, activity, selection, and submission states without changing layout or control behavior. Highlight the composer's default action only when its shortcut is valid and submission is available.
+
 ## 1.202610.8
 
 ### Patch Changes

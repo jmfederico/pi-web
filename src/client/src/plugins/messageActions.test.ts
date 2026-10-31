@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PluginCatalog, DisplayedMessageActionAvailabilityContext, DisplayedMessageActionContext, DisplayedMessageActionContribution, EntryMessageActionContribution, MessageActionAvailabilityContext, MessageActionContext, MessageActionContribution } from "../../../plugin-api";
 import type { ChatLine } from "../components/shared";
+import type { ChatFallbackPart } from "../chatTypes";
 import { availableDisplayedMessageActions, availableMessageActions, displayedMessageActionMessage, MessageActionAvailabilityCache, messageActionMessage, type RegisteredMessageAction } from "./messageActions";
 import { PluginRegistry } from "./registry";
 
@@ -71,6 +72,27 @@ it("injects v5 machine services only into entry/display invocation contexts, not
 });
 
 describe("message action snapshots", () => {
+  it("copies original custom fallback text, never rendered substitutions or details", () => {
+    const parts: ChatFallbackPart[] = [
+      { type: "text", text: " Original ", displayText: "Rendered card" },
+      { type: "image", mimeType: "image/png", data: "image" },
+      { type: "text", text: "  " },
+      { type: "text", text: " Tail " },
+    ];
+    const plain: ChatLine = { role: "system", entryId: "entry", parts };
+    const custom: ChatLine = { ...plain, parts: [{
+      type: "customMessage", customType: "extension.card",
+      content: "Raw payload is not the copy presentation", details: { text: "Private details" },
+      parts,
+    }] };
+    expect(messageActionMessage(custom)).toEqual(messageActionMessage(plain));
+    expect(displayedMessageActionMessage(custom)).toEqual(displayedMessageActionMessage(plain));
+    expect(displayedMessageActionMessage(custom).text).toBe("Original\n\nTail");
+    expect(displayedMessageActionMessage({ ...custom, parts: [{
+      type: "customMessage", customType: "extension.card", content: "", details: { text: "Card data" }, parts: [],
+    }] }).text).toBe("");
+  });
+
   it("trims each original ordinary text part, skips blanks and excludes rendered/tool/thinking payloads", () => {
     const original = { type: "text" as const, text: "  **Original**\n  indented  \n", displayText: "Rendered substitute" };
     const message: ChatLine = {

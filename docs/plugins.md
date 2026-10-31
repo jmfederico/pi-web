@@ -17,6 +17,7 @@ This is the documentation entry point for agents and developers building PI WEB 
 - [Remote machines](#remote-machines)
 - [Contracts, examples, and design boundaries](#agent-development)
 - [Shared UI styles](#host-provided-ui-styles), [CSS integration](#css-files-and-shadow-roots), and [themes](#css-first-themes)
+- [Transcript renderers](#transcript-renderers)
 - [Read-only catalogs and scoped backends](#read-only-catalogs-and-scoped-backends-v5)
 - [Binary resources and media delivery](#binary-resources-and-media-delivery)
 - [Trust and recovery](#trust-and-recovery)
@@ -33,6 +34,7 @@ This is the documentation entry point for agents and developers building PI WEB 
 | Run builds, tests, or development servers | Workspace terminal commands |
 | Customize the appearance | Themes and light/dark theme pairs |
 | Preview diagrams or other text formats in chat and Files | Browser content renderers |
+| Customize tool results and displayed custom messages in chat | Browser v5 transcript renderers, including built-in tool overrides |
 | Add file-type previews to Files, including binary files | Browser v5 file previewers |
 | Highlight additional programming languages in Files and chat | Syntax highlighters |
 | Read or change workspace files | File listing, reading, writing, moving, deleting, and uploads |
@@ -62,7 +64,7 @@ Use a Pi extension for agent behavior and a PI WEB plugin for web UI. When a fea
 
 A plugin package declares a browser entry, a server entry, or both:
 
-- **Browser entries** add palette and message actions, panels, labels, themes, and content renderers. They use host helpers for workspace files, terminals, and prompt editing.
+- **Browser entries** add palette and message actions, panels, labels, themes, content renderers, and transcript renderers. They use host helpers for workspace files, terminals, and prompt editing.
 - **Server entries** run in the session daemon. They can serve their browser entry, store plugin data, use host capabilities, or provide workspaces.
 - **Package peers** connect a plugin's browser and server entries. The host handles the selected machine and workspace; a plugin does not need to own that workspace to serve it.
 - **Capabilities** let a plugin declare the host or plugin functionality it requires. Dependencies must be available at the requested version before the plugin starts.
@@ -86,6 +88,12 @@ Plugins can follow the selected machine, project, workspace, and session even wh
 Plugins can publish namespaced session metadata to identify workflows and link to saved context. It is browser-public data saved with the conversation, available after reopening without a live Pi connection. Missing metadata is not inferred from titles or conversation text.
 
 Only deliberately published session metadata is exposed, not arbitrary Pi custom entries. Keep secrets and private extension state out of it. Namespaces organize data rather than enforce ownership or authorization, and plugins must validate their own schema and render values as untrusted input. Browser API v4 remains unchanged; older hosts omit the field.
+
+### Automatic session naming
+
+The bundled **Session naming** Pi extension (`@jmfederico/pi-session-naming`) names each new conversation from its first prompt in PI WEB and the TUI. Remove it through **Settings → Pi packages** to use another naming extension; reinstall it from **Available packages** to restore naming.
+
+See [Session naming configuration](config.md#session-naming) for model, token-budget, thinking-level, and timeout settings, plus migration from the old core settings.
 
 ### Dispatch a session from a Pi extension
 
@@ -134,6 +142,52 @@ Plugins can add buttons beside transcript messages, for example to quote text in
 **Plugin actions do not automatically ask for confirmation.** Plugins must provide any needed safeguards. Built-in **Fork** and **Go back** retain their confirmations. On a non-user message, they retain its checkpoint and intervening history before the next checkpoint; on a user message, they act before that entry and restore its text to the editor. Neither action reruns commands or reverses filesystem changes.
 
 Older hosts may ignore message actions or lack newer display-action features; update PI WEB before relying on them.
+
+### Transcript renderers
+
+Browser v5 plugins can contribute `transcriptRenderers` to customize tool entries, including built-in tools, and displayed custom messages. The host retains the transcript frame and its controls; the plugin supplies the entry body. Rendering changes presentation, not tool execution or session history. Hidden custom messages remain hidden; this API does not expose `appendEntry`.
+
+Each contribution has a unique local `id`. Declare the host capability `pi-web/transcript-rendering@1` (`pluginId: "pi-web"`, `id: "transcript-rendering"`, `version: 1`) in `requires` when the plugin needs this feature on older hosts. The capability is a feature marker; rendering uses contributions, not capability methods.
+
+**Tools** contribute `{ id, target: "tool", resolve(toolName, next) }`. There is no declarative `toolName` field: the resolver chooses which names to handle. Resolvers run synchronously in plugin discovery order, so the first resolver gets first refusal. Asynchronous import completion does not change that order. A resolver returns a `TranscriptToolRenderer`—an object with `render(input): TemplateResult | undefined`—or `undefined`.
+
+- **Delegate:** return `next()` for a name you do not handle.
+- **Replace:** return your own renderer without calling `next()`.
+- **Wrap:** call `next()` to obtain the downstream renderer, then return a renderer that calls `downstream.render(input)` and decorates its result.
+
+`next()` returns renderer callbacks, not HTML. Treat the returned renderer as read-only; return a new renderer object to replace or wrap it. The web transcript supplies its core default renderer at the end of the chain, so wrappers can decorate the normal tool card as well as another plugin's renderer. Delegating unchanged all the way to that default keeps the normal view without a custom-view toggle. The resolver type still permits `undefined` for contexts without a supplied default. Returning `undefined` from a resolver ends selection; the host does not automatically try later resolvers and instead shows the core fallback. Returning `undefined` from a selected renderer's `render` also shows that fallback without restarting selection.
+
+**Custom messages** contribute `{ id, target: "custom-message", customType, render }`. The first eligible contribution in discovery order with an exact, case-sensitive `customType` wins, like TUI custom-message rendering. Messages have no `next` callback. Declining or failing does not try a later matching message renderer.
+
+The [standalone example](https://github.com/jmfederico/pi-web/tree/main/examples/transcript-renderer-plugin) demonstrates actual tool chaining: a wrapper resolver precedes the checks renderer in the same contribution array. Its core pattern is:
+
+```ts
+{
+  id: "checks-wrapper",
+  target: "tool",
+  resolve(toolName, next) {
+    if (toolName !== "example_checks") return next();
+    const downstream = next();
+    if (!downstream) return undefined;
+    return {
+      render(input) {
+        const body = downstream.render(input);
+        return body === undefined ? undefined : html`
+          <div><p>Rendered by the example plugin</p>${body}</div>
+        `;
+      },
+    };
+  },
+}
+```
+
+`scope` contains `machineId` and `sessionId`, with optional `projectId` and `workspaceId`. A tool `entry` contains `toolName`, `status` (`pending`, `running`, `success`, or `error`), and optional `toolCallId`, `args`, `content`, `details`, and `resultText`. A custom-message `entry` contains `customType`, `content`, and optional `entryId` and `details`. Treat opaque `args`, `content`, and `details` as untrusted data: validate your own schema before using them.
+
+Both tool and message `render` callbacks receive `{ scope, entry, signal, fail }`. Rendering is synchronous and returns a Lit `TemplateResult` or `undefined`; returning a Promise is unsupported. Unlike resolver delegation through `next()`, returning `undefined` from `render` declines the current body and retains the existing view without restarting selection. An empty template deliberately renders an empty body. A thrown error or `fail(error)` restores the existing view. The host's default-view control also lets the user bypass the custom body.
+
+Rendering may repeat as inputs change. Keep it repeatable and do not execute tools or session operations as a side effect of rendering. Honor `signal` for asynchronous work and release resources: it aborts when inputs change, the entry unmounts, the plugin is disabled, or the user selects the default view. Report asynchronous failures through `fail`; obsolete calls are ignored.
+
+Use the existing [stylesheet integration](#integrating-plugin-components) for plugin-owned shadow roots and [theme tokens and cascade layers](theme-architecture.md) for appearance. The host's frame remains core-owned; renderer bodies do not replace it or introduce a separate styling contract.
 
 ### Content previews in chat and Files
 
@@ -333,7 +387,7 @@ pi-web workspaces notify --project ID --plugin git
 
 Use **Settings → Pi packages** to install, update, or remove a package. Enter its npm, git/URL, or local package source. Use **Settings → PI WEB plugins** to enable or disable its web integration and see whether it is active or needs a restart.
 
-Relays and Workflows are managed bundled packages, not independently versioned installs. At session-daemon startup, PI WEB updates their configured sources in the active agent profile to the running installation while preserving resource filters. Removing them through **Settings → Pi packages** is remembered; absent packages stay removed.
+Relays, Workflows, and Session naming ship and update with PI WEB. At session-daemon startup, PI WEB updates their configured sources in the active agent profile to the running installation while preserving resource filters. Remove them through **Settings → Pi packages** for persistent removal. A package removed only with `pi remove` may be installed again at daemon startup.
 
 | Change | What to do next |
 | --- | --- |

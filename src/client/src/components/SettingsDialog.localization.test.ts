@@ -21,7 +21,6 @@ beforeEach(() => {
   vi.spyOn(themeCatalog, "loadThemeCatalog").mockResolvedValue(builtInThemeCatalog());
   vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => undefined);
   vi.spyOn(configApi, "config").mockResolvedValue(configResponse({ uploads: { defaultFolder: "original" } }));
-  vi.spyOn(configApi, "namingModels").mockResolvedValue({ models: [] });
   vi.spyOn(configApi, "updateConfig").mockImplementation((update) => Promise.resolve(configResponse(update.set ?? {})));
   vi.spyOn(pluginsApi, "plugins").mockResolvedValue(pluginsResponse([]));
   vi.spyOn(piPackagesApi, "packages").mockResolvedValue({ packages: [] });
@@ -138,7 +137,6 @@ it("retains pending save state and resolves its success and failure in the curre
 
 it("localizes delayed and settled load failures in every settings owner without translating diagnostics", async () => {
   vi.mocked(configApi.config).mockRejectedValue(new Error(raw));
-  vi.mocked(configApi.namingModels).mockRejectedValue(new Error(raw));
   vi.mocked(pluginsApi.plugins).mockRejectedValue(new Error(raw));
   vi.mocked(piPackagesApi.packages).mockRejectedValue(new Error(raw));
   const dialog = await mount();
@@ -153,7 +151,6 @@ it("localizes delayed and settled load failures in every settings owner without 
     await settle(dialog);
     const daemon = required(dialog.shadowRoot?.querySelector<SettingsSessiondPanel>("settings-sessiond-panel"));
     expect(daemon.error).toBe(messages.t("loadSessiond", { target: settingsFeedbackTargetLabel(remote), error: raw }));
-    expect(daemon.namingModelsError).toBe(messages.t("loadModels", { target: settingsFeedbackTargetLabel(remote), error: raw }));
     dialog.section = "plugins";
     await settle(dialog);
     expect(required(dialog.shadowRoot?.querySelector<SettingsPluginsPanel>("settings-plugins-panel")).error).toBe(messages.t("loadPluginSettings", { target: settingsFeedbackTargetLabel(remote), errors: localization.list([messages.t("configDiagnostic", { error: raw }), messages.t("pluginsDiagnostic", { error: raw })]) }));

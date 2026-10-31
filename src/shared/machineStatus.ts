@@ -62,6 +62,8 @@ export const CORE_STATUS_FLAGS = {
   terminal: "core:terminal",
   /** An unread session completion in the subtree. */
   unread: "core:unread",
+  /** A session in the subtree requires user intervention, independently of work. */
+  interventionRequired: "core:intervention-required",
 } as const;
 
 /**

@@ -54,9 +54,9 @@ describe("ask_user registration", () => {
   it("offers the stateless tool when enabled, including to restricted children", () => {
     for (const delegationEnabled of [true, false]) {
       expect(createPiWebCustomToolDefinitions("/workspace", delegationEnabled, undefined, undefined, true).map((tool) => tool.name))
-        .toEqual(["edit", "ask_user"]);
+        .toEqual(["edit", "request_human_intervention", "ask_user"]);
     }
-    expect(createPiWebCustomToolDefinitions("/workspace", true).map((tool) => tool.name)).toEqual(["edit"]);
+    expect(createPiWebCustomToolDefinitions("/workspace", true).map((tool) => tool.name)).toEqual(["edit", "request_human_intervention"]);
   });
 });
 
@@ -281,6 +281,8 @@ describe("durable questions across runtime/service restarts", () => {
       if (originalSession === undefined) throw new Error("Expected original SDK session");
       await originalSession.prompt("Ask me which database to use");
       expect(modelContexts).toHaveLength(1); // terminate skips the automatic follow-up.
+      expect(await first.service.status(sessionRef(started.id, directory))).toMatchObject({ interventionRequired: true });
+      expect((await first.service.list(directory)).find((entry) => entry.id === started.id)?.interventionRequired).toBe(true);
       const sessionFile = originalSession.sessionFile;
       if (sessionFile === undefined) throw new Error("Expected a durable session file");
       expect(SessionManager.open(sessionFile).getBranch().find((entry) => entry.type === "message" && entry.message.role === "toolResult"))
@@ -291,9 +293,12 @@ describe("durable questions across runtime/service restarts", () => {
 
       reopened = newService();
       const ref = sessionRef(started.id, directory);
+      expect((await reopened.service.list(directory)).find((entry) => entry.id === started.id)?.interventionRequired).toBe(true);
       await expect(reopened.service.submitAsk(ref, "persisted-ask", { answers: [{ id: "db", values: ["pg"] }] })).resolves.toMatchObject({ sessionId: started.id });
       await reopened.service.submitAsk(ref, "persisted-ask", { answers: [{ id: "db", values: [], otherText: "DuckDB" }] });
       await reopened.service.cancelAsk(ref, "persisted-ask");
+      expect(await reopened.service.status(ref)).toMatchObject({ interventionRequired: false });
+      expect((await reopened.service.list(directory)).find((entry) => entry.id === started.id)?.interventionRequired).toBe(false);
       expect(nativeSessions).toHaveLength(2);
       expect(modelContexts).toHaveLength(4);
       expect(JSON.stringify(modelContexts[1])).toContain("The user submitted answers to your questions.");

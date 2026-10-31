@@ -77,14 +77,26 @@ These tests prove browser painting, hit targeting, anchoring, and focus/dismissa
 | Local iteration | Focused tests, optionally in watch mode | Developer/agent workspace |
 | Local completion | Relevant tests; scoped ESLint and cached typecheck for TypeScript changes; diff/link checks as applicable | Developer/agent workspace |
 | Commit | `git diff --cached --check` only, through the pre-commit hook | Local workspace after `npm install`/`npm ci` configures `.githooks` |
-| Pull request | `npm run verify`, build, artifact checks; browser surface contracts in a separate Linux job | GitHub Actions CI, Linux and Windows |
-| Merge/push to `main` | Same full CI and browser checks; installed-package smoke on Linux | GitHub Actions CI |
-| Manual CI run | Same full CI checks; installed-package smoke on Linux | GitHub Actions `workflow_dispatch`, selected ref |
+| Pull request | Linux: full ordinary suite, static checks, build, artifact checks, and browser contracts. Windows: `npm run test:windows` | GitHub Actions CI |
+| Merge/push to `main` | Same CI checks; installed-package and runtime smoke checks on Linux | GitHub Actions CI |
+| Manual CI run | Same CI checks; installed-package and runtime smoke checks on Linux | GitHub Actions `workflow_dispatch`, selected ref |
 | Package publication | Full verification, build, artifact checks, installed-package smoke, then publish | GitHub Actions publish workflow, Linux |
 
 Pre-commit checks only the staged diff for whitespace errors and introduced conflict markers. It starts no npm/Node process and runs no typecheck, lint, Knip, tests, or build. Agents choose and run the scoped completion checks explicitly, then commit without repeating them. A successful commit proves hygiene only; CI independently checks the code.
 
 `npm run verify` runs uncached typechecking, whole-project ESLint, Knip unused-code analysis, and the ordinary test suite. Run it locally when a change's affected surface cannot be bounded, validation configuration changes, or a user explicitly requests full verification. A shared helper with identifiable consumers can still use related tests; a final handoff alone is not a reason to rerun every check. CI provides the mandatory broad PR/merge gate.
+
+CI runs these independent jobs in parallel:
+
+- `Static checks`: typecheck, lint, and Knip on Linux.
+- `Tests (ubuntu-latest)`: the full ordinary suite.
+- `Tests (windows-latest)`: `npm run test:windows`, the explicit native-boundary subset in `vitest.windows.config.ts`.
+- `Package and runtime contracts (Linux)`: build, then artifact checks and main/manual installed-package smoke checks.
+- `Browser surface contracts`: the isolated browser suite on Linux.
+
+The Windows subset repeats real filesystem/path handling, process startup, module loading, and local transports. Linux also runs these files through the full suite; the second run protects host OS differences. Pure logic, mocked OS/service behavior, DOM tests, and static artifact contracts run only on Linux. Add tests to the Windows subset when their real OS interaction adds coverage, not just because they mention Windows.
+
+This overlaps static analysis with tests and keeps smoke checks from waiting for the full suite. Build still precedes checks that consume its output. Branch rules requiring individual checks must use the names above instead of the former `Verify and package (...)` checks.
 
 Report the exact commands and scope actually verified. A focused test run is not a full-suite pass, and local results do not replace checking the CI result.
 

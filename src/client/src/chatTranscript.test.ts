@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ASK_USER_ANSWERS_CUSTOM_TYPE, type AskUserOutcome, type AskUserRequest } from "../../shared/apiTypes";
 import { groupChatMessages } from "./chatGroups";
 import { normalizeMessages, textMessage } from "./chatMessages";
-import { openTranscriptQuestion } from "./chatQuestions";
+import { openTranscriptQuestion, transcriptQuestionOutcomes } from "./chatQuestions";
 import { applyTranscriptEvent, seedStreamingPartial } from "./chatTranscript";
 import type { ChatLine } from "./components/shared";
 
@@ -163,7 +163,9 @@ describe("applyTranscriptEvent", () => {
     expect(live).toEqual(hydrated);
     expect(live).toEqual([{
       role: "system",
-      parts: [{ type: "askUserRecord", outcome: askUserOutcome }],
+      parts: [{ type: "customMessage", customType: ASK_USER_ANSWERS_CUSTOM_TYPE,
+        content: rawMessage.content, details: askUserOutcome,
+        parts: [{ type: "askUserRecord", outcome: askUserOutcome }] }],
       entryId: "response-entry",
     }]);
     expect(applyTranscriptEvent(live ?? [], { type: "message.end", message: rawMessage })).toEqual(live);
@@ -174,6 +176,18 @@ describe("applyTranscriptEvent", () => {
       ...hydrated,
       ...normalizeMessages([nextRawMessage]),
     ]);
+  });
+
+  it("does not duplicate a wrapped response when a later tool result carries the same outcome", () => {
+    const response = { role: "custom", customType: ASK_USER_ANSWERS_CUSTOM_TYPE,
+      content: "Answers sent", details: askUserOutcome, entryId: "answer-1" };
+    let live = applyTranscriptEvent([], { type: "message.end", message: response }) ?? [];
+    live = applyTranscriptEvent(live, { type: "message.end", message: {
+      role: "toolResult", toolName: "ask_user", toolCallId: "ask-call",
+      content: "Next step", details: { superseded: askUserOutcome }, isError: false,
+    } }) ?? live;
+    expect(transcriptQuestionOutcomes(live).get(askUserOutcome.askId)).toEqual([askUserOutcome]);
+    expect(live[0]?.parts[0]).toMatchObject({ type: "customMessage", customType: ASK_USER_ANSWERS_CUSTOM_TYPE });
   });
 
   it("keeps superseded ask records identical across live tool events and hydrated history", () => {
@@ -337,6 +351,36 @@ describe("applyTranscriptEvent", () => {
     live = applyTranscriptEvent(live, { type: "tool.end", toolName: "ask_user", toolCallId: "ask-call", text: "failed", details, isError: true }) ?? live;
     expect(live.flatMap((line) => line.parts).some((part) => part.type === "askUserQuestion")).toBe(false);
     expect(live[0]?.parts[0]).toMatchObject({ type: "toolExecution", status: "error", resultText: "failed" });
+  });
+
+  it("reconciles custom entries by durable identity, not equal fallback text", () => {
+    const first = { role: "custom", customType: "extension.card", content: "same", details: { card: 1 }, entryId: "card-1" };
+    const second = { ...first, details: { card: 2 }, entryId: "card-2" };
+    const third = { ...first, customType: "other.card", entryId: "card-3" };
+    let live: ChatLine[] = [];
+    for (const message of [first, second, third]) {
+      live = applyTranscriptEvent(live, { type: "message.end", message }) ?? live;
+    }
+    const revised = { ...first, details: { card: "updated" } };
+    live = applyTranscriptEvent(live, { type: "message.append", message: revised }) ?? live;
+    live = applyTranscriptEvent(live, { type: "message.end", message: revised }) ?? live;
+    expect(live).toEqual(normalizeMessages([revised, second, third]));
+    expect(live).toHaveLength(3);
+    const ordinary = { role: "system", content: "same" };
+    expect(applyTranscriptEvent(live, { type: "message.end", message: ordinary })).toEqual([
+      ...live, textMessage("system", "same"),
+    ]);
+  });
+
+  it("keeps identityless custom messages, including details-only cards, distinct", () => {
+    const card = { role: "custom", customType: "extension.card", content: "", details: { card: true } };
+    let live = applyTranscriptEvent([], { type: "message.end", message: card }) ?? [];
+    live = applyTranscriptEvent(live, { type: "message.end", message: card }) ?? live;
+    expect(live).toEqual(normalizeMessages([card, card]));
+    expect(live).toHaveLength(2);
+    for (const type of ["message.end", "message.append"] as const) {
+      expect(applyTranscriptEvent(live, { type, message: { ...card, display: false } }) ?? live).toEqual(live);
+    }
   });
 
   it("reconciles delivery of one response but keeps two replies to the same question", () => {

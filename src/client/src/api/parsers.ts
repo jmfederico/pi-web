@@ -15,7 +15,6 @@ import { parseServerNoticeScope } from "../../../shared/serverNoticeContract";
 import { requireDefaultThemePreference } from "../../../shared/themePreference";
 import { requireDefaultLocalization } from "../../../shared/defaultLocalization";
 import { requireDefaultStreamingBehavior } from "../../../shared/streamingBehavior";
-import { isKnownThinkingLevel } from "../../../shared/thinkingLevels";
 import { requireInstallationName } from "../../../shared/installationName";
 import { parseRuntimeActivityPresentation } from "../../../shared/sessionActivityPresentation";
 
@@ -299,6 +298,7 @@ export function parseSessionInfo(value: unknown): SessionInfo {
     path: requireString(record, "path"),
     cwd: requireString(record, "cwd"),
     ...(persisted === undefined ? {} : { persisted }),
+    ...optionalField("interventionRequired", parseOptionalBoolean(record["interventionRequired"], "interventionRequired")),
     ...(agentSubsession === true ? { agentSubsession: true } : {}),
     ...(name === undefined ? {} : { name }),
     ...(metadata === undefined ? {} : { metadata }),
@@ -550,6 +550,7 @@ export function parseSessionStatus(value: unknown): SessionStatus {
     sessionId: requireString(record, "sessionId"),
     ...optionalField("persisted", parseOptionalBoolean(record["persisted"], "persisted")),
     recentlyActiveElsewhere: recentlyActiveElsewhere ?? warnings?.some(isLegacyOtherInstanceActivityWarning) ?? false,
+    ...optionalField("interventionRequired", parseOptionalBoolean(record["interventionRequired"], "interventionRequired")),
     isStreaming: requireBoolean(record, "isStreaming"),
     isCompacting: requireBoolean(record, "isCompacting"),
     isBashRunning: requireBoolean(record, "isBashRunning"),
@@ -1529,6 +1530,7 @@ function optionalConfigSources(value: unknown): Record<string, string> | undefin
 
 function parsePiWebConfigValues(value: unknown): PiWebConfigValues {
   const record = requireRecord(value);
+  if (Object.hasOwn(record, "sessionNaming")) throw new Error("Retired PI WEB sessionNaming config field");
   return {
     ...optionalField("host", optionalString(record, "host")),
     ...optionalField("port", optionalNumber(record, "port")),
@@ -1552,7 +1554,6 @@ function parsePiWebConfigValues(value: unknown): PiWebConfigValues {
     ...optionalField("askUser", optionalBoolean(record, "askUser")),
     ...optionalField("environmentFacts", optionalBoolean(record, "environmentFacts")),
     ...optionalField("extensionDialogsTimeoutMs", optionalNumber(record, "extensionDialogsTimeoutMs")),
-    ...optionalField("sessionNaming", optionalSessionNaming(record["sessionNaming"])),
     ...optionalField("sessionArchive", optionalSessionArchive(record["sessionArchive"])),
   };
 }
@@ -1561,25 +1562,6 @@ function optionalSessionArchive(value: unknown): PiWebConfigValues["sessionArchi
   if (value === undefined) return undefined;
   if (!isRecord(value) || Array.isArray(value)) throw new Error("Invalid PI WEB sessionArchive field");
   return { ...optionalField("directory", optionalString(value, "directory")) };
-}
-
-function optionalSessionNaming(value: unknown): PiWebConfigValues["sessionNaming"] {
-  if (value === undefined) return undefined;
-  if (!isRecord(value) || Array.isArray(value)) throw new Error("Invalid PI WEB sessionNaming field");
-  const model = optionalString(value, "model");
-  const maxTokens = optionalNumber(value, "maxTokens");
-  const thinkingLevel = optionalString(value, "thinkingLevel");
-  const timeoutMs = optionalNumber(value, "timeoutMs");
-  if (model !== undefined && !/^[^/\s]+\/[^\s]+$/.test(model)) throw new Error("Invalid PI WEB sessionNaming.model field");
-  if (maxTokens !== undefined && (!Number.isSafeInteger(maxTokens) || maxTokens <= 0)) throw new Error("Invalid PI WEB sessionNaming.maxTokens field");
-  if (thinkingLevel !== undefined && !isKnownThinkingLevel(thinkingLevel)) throw new Error("Invalid PI WEB sessionNaming.thinkingLevel field");
-  if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2147483647)) throw new Error("Invalid PI WEB sessionNaming.timeoutMs field");
-  return {
-    ...optionalField("model", model),
-    ...optionalField("maxTokens", maxTokens),
-    ...optionalField("thinkingLevel", thinkingLevel),
-    ...optionalField("timeoutMs", timeoutMs),
-  };
 }
 
 function optionalAgent(value: unknown): PiWebConfigValues["agent"] | undefined {

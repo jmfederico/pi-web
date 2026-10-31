@@ -71,6 +71,8 @@ Local sticky headers, shadows, and decorations can still use small stacking valu
 
 `listStyles` provides `.list-status` for muted, padded loading feedback inside a list body. Use `role="status"` for announcements and `aria-busy` on the loading body.
 
+`activityIndicatorStyles` in `src/client/src/theme/base/activityIndicatorStyles.ts` owns the shared activity, intervention, and unread marks used by navigation lists and the machine selector. `listStyles` includes it; the machine selector imports it directly. Consumers own placement and can retain a root-specific work-pulse variant, but the static intervention/unread treatments remain shared. These defaults use `pi-web-base`, so contributed theme rules can override them without `!important`. Indicator internals remain experimental; use the documented navigation state and anatomy hooks for supported theme contributions.
+
 `sidebarListStyles` is the shared treatment for navigation lists. Projects, workspaces, and sessions expose supported context, anatomy, and state hooks through the [navigation-row styling contract](theme-styling-contract.md#sidebar-navigation-rows); those hooks reuse existing containers without changing row behavior. Grey section headers provide hierarchy above dark, continuous rows. Keep rows full-width and gapless; do not introduce inset card surfaces or visual gutters. Selected, hover, and keyboard-focus states remain on the entire row. Collapsed navigation sections keep the heading's 1px separator and omit the outer section border so adjacent borders do not double the line thickness.
 
 ## Dialog patterns

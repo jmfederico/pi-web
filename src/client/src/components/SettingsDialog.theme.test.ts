@@ -12,7 +12,6 @@ import { SettingsThemePanel } from "./settings/SettingsThemePanel";
 beforeEach(() => {
   vi.spyOn(themeCatalog, "loadThemeCatalog").mockResolvedValue(builtInThemeCatalog());
   vi.spyOn(configApi, "config").mockResolvedValue(configResponse({}));
-  vi.spyOn(configApi, "namingModels").mockResolvedValue({ models: [] });
   vi.spyOn(pluginsApi, "plugins").mockResolvedValue(pluginsResponse([]));
   vi.spyOn(piPackagesApi, "packages").mockResolvedValue({ packages: [] });
 });

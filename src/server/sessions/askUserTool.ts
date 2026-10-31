@@ -11,7 +11,7 @@ import {
 } from "../../shared/apiTypes.js";
 import { createAskUserRequest, type AskUserRequestOptions } from "./askUserDomain.js";
 
-interface AskUserToolDetails { ask: AskUserRequest }
+interface AskUserToolDetails { ask: AskUserRequest; interventionRequired: true }
 
 const AskUserOptionParams = Type.Object({
   value: Type.String({
@@ -110,7 +110,7 @@ export function createAskUserToolDefinition(options: AskUserRequestOptions = {})
       const ask = createAskUserRequest(params.questions.map(toQuestion), options);
       return {
         content: [{ type: "text", text: postedText(ask) }],
-        details: { ask },
+        details: { ask, interventionRequired: true },
         terminate: true,
       };
     },

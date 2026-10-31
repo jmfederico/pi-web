@@ -1,6 +1,6 @@
 import { argumentSummaryPresentation } from "./chatPresentation";
 import { appendText, appendThinking, askUserQuestionFromToolDetails, askUserRecordFromToolDetails, normalizeMessage, normalizeMessages, previewFromDetails, summarizeArgs, textMessage, withMessageMeta } from "./chatMessages";
-import type { ChatLine, ToolExecutionPart } from "./chatTypes";
+import { chatFallbackParts, type ChatLine, type ToolExecutionPart } from "./chatTypes";
 import { appendShellChunk, finalizeShellMessage, shellStartMessage } from "./shellMessages";
 import type { SessionUiEvent } from "./sessionSocket";
 
@@ -135,16 +135,18 @@ function applyFinalLine(messages: ChatLine[], displayEnded: ChatLine): ChatLine[
   const skillReadIndexes = findMatchingSkillReadIndexes(messages, displayEnded);
   if (skillReadIndexes.length > 0) return replaceSkillReadLines(messages, skillReadIndexes, displayEnded);
   const askUserRecord = displayEnded.parts.find((part) => part.type === "askUserRecord");
-  if (askUserRecord !== undefined) return reconcileFinalAskUserRecord(messages, displayEnded);
+  if (askUserRecord !== undefined || displayEnded.parts.some((part) => part.type === "customMessage")) {
+    return reconcileFinalRecord(messages, displayEnded);
+  }
   const last = messages.at(-1);
   if (last?.role !== displayEnded.role) return [...messages, displayEnded];
-  if (displayEnded.role === "assistant" || sameMessageText(last, displayEnded)) return [...messages.slice(0, -1), displayEnded];
+  if (displayEnded.role === "assistant" || (!last.parts.some((part) => part.type === "customMessage") && sameMessageText(last, displayEnded))) return [...messages.slice(0, -1), displayEnded];
   return [...messages, displayEnded];
 }
 
-function reconcileFinalAskUserRecord(messages: ChatLine[], displayEnded: ChatLine): ChatLine[] {
-  // Equal answers are distinct human actions. Only a durable entry identity can
-  // prove that two events describe the same response; transport replay is also
+function reconcileFinalRecord(messages: ChatLine[], displayEnded: ChatLine): ChatLine[] {
+  // Equal content does not identify a custom message or human response. Only a
+  // durable entry identity proves two events describe the same entry; replay is also
   // filtered by the session's ordinary sequence watermark.
   const index = displayEnded.entryId === undefined ? -1
     : messages.findIndex((line) => line.entryId === displayEnded.entryId);
@@ -278,8 +280,8 @@ function lineHasAskUserRecord(
   line: ChatLine | undefined,
   record: Extract<ChatLine["parts"][number], { type: "askUserRecord" }>,
 ): boolean {
-  return line?.parts.some((part) => part.type === "askUserRecord"
-    && JSON.stringify(part.outcome) === JSON.stringify(record.outcome)) === true;
+  return line !== undefined && chatFallbackParts(line.parts).some((part) => part.type === "askUserRecord"
+    && JSON.stringify(part.outcome) === JSON.stringify(record.outcome));
 }
 
 function updateToolExecution(
@@ -426,6 +428,9 @@ function appendNewMessage(messages: ChatLine[], rawMessage: unknown): ChatLine[]
   const toolResult = toolResultFromRawMessage(rawMessage);
   if (toolResult !== undefined) return finalizeToolExecution(messages, toolResult, true);
   const lines = normalizeMessage(rawMessage);
+  if (lines.some((line) => line.parts.some((part) => part.type === "customMessage"))) {
+    return lines.reduce((next, line) => reconcileFinalRecord(next, line), messages);
+  }
   return lines.length === 0 && messages.at(-1)?.parts.at(-1)?.type === "askUserQuestion"
     ? normalizeMessages([...messages, rawMessage]) : [...messages, ...lines];
 }

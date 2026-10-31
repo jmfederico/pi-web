@@ -16,6 +16,8 @@ import { chatQueuedMessageSections, renderQueuedMessageSection, type QueuedMessa
 export { chatQueuedMessageSections, chatQueuedSectionShowsClearAction, type QueuedMessageSection } from "./chat/QueuedMessages";
 import type { DisplayedMessageActionAvailabilityContext, MessageActionAvailabilityContext, MessageActionResult } from "../../../plugin-api";
 import type { RegisteredMessageAction } from "../plugins/messageActions";
+import type { RegisteredTranscriptRenderer } from "../plugins/transcriptRenderers";
+import type { TranscriptRendererScope } from "../../../plugin-api";
 import { machineSessionKey } from "../machineKeys";
 import { canonicalEntryActionHeaders, groupChatMessages, groupConsecutiveImageOutputs, type ChatDisplayGroup, type ChatGroup } from "../chatGroups";
 import { openTranscriptQuestion, transcriptQuestionOutcomes } from "../chatQuestions";
@@ -37,6 +39,7 @@ import type { ImageGalleryDialog } from "./ImageGalleryDialog";
 import "./FormattedText";
 import type { MarkdownWorkspaceContext } from "../formatting/workspaceLinks";
 import "./ToolExecutionView";
+import "./TranscriptRendererHost";
 import { transcriptImageSource } from "./TranscriptImage";
 import type { ImageOpenDetail } from "./ImagePresentation";
 
@@ -119,6 +122,8 @@ export class ChatView extends LitElement {
   @property() sessionCwd = "";
   @property({ attribute: false }) workspaceContext: MarkdownWorkspaceContext | undefined;
   @property({ attribute: false }) contentRendering: import("../formatting/contentRendering").ChatContentRendering | undefined;
+  @property({ attribute: false }) transcriptRenderers: readonly RegisteredTranscriptRenderer[] = [];
+  private rendererScope: TranscriptRendererScope | undefined;
   @property() machineId = "local";
   @property({ attribute: false }) messageActions: readonly RegisteredMessageAction[] = [];
   @property({ attribute: false }) messageActionContext?: Omit<MessageActionAvailabilityContext, "message">;
@@ -194,6 +199,7 @@ export class ChatView extends LitElement {
   private questionIds: ReadonlySet<string> = new Set();
   private groupedMessagesInput?: ChatLine[];
   private groupedMessagesStart = 0;
+  private groupedRenderers: readonly RegisteredTranscriptRenderer[] | undefined;
   private groupedMessagesCache: ChatGroup[] = [];
   private messageMetaCache = new WeakMap<ChatLine, string>();
   private navigationLocalizationChanged = false;
@@ -415,10 +421,12 @@ export class ChatView extends LitElement {
   }
 
   private groupedMessages(): ChatGroup[] {
-    if (this.groupedMessagesInput === this.messages && this.groupedMessagesStart === this.messageStart) return this.groupedMessagesCache;
+    if (this.groupedMessagesInput === this.messages && this.groupedMessagesStart === this.messageStart && this.groupedRenderers === this.transcriptRenderers) return this.groupedMessagesCache;
     this.groupedMessagesInput = this.messages;
     this.groupedMessagesStart = this.messageStart;
-    this.groupedMessagesCache = groupChatMessages(this.messages, this.messageStart);
+    this.groupedRenderers = this.transcriptRenderers;
+    this.groupedMessagesCache = groupChatMessages(this.messages, this.messageStart,
+      (customType) => this.transcriptRenderers.some((renderer) => renderer.target === "custom-message" && renderer.customType === customType));
     return this.groupedMessagesCache;
   }
 
@@ -539,6 +547,12 @@ export class ChatView extends LitElement {
   }
 
   private transcriptRenderContext(): TranscriptRenderContext {
+    const workspace = this.workspaceContext?.machineId === this.machineId ? this.workspaceContext : undefined;
+    if (this.rendererScope?.machineId !== this.machineId || this.rendererScope.sessionId !== this.sessionId
+      || this.rendererScope.projectId !== workspace?.projectId || this.rendererScope.workspaceId !== workspace?.workspaceId) {
+      this.rendererScope = Object.freeze({ machineId: this.machineId, sessionId: this.sessionId,
+        ...(workspace === undefined ? {} : { projectId: workspace.projectId, workspaceId: workspace.workspaceId }) });
+    }
     return {
       machineId: this.machineId,
       sessionId: this.sessionId,
@@ -547,6 +561,8 @@ export class ChatView extends LitElement {
       messageStart: this.messageStart,
       behaviors: this.behaviors,
       contentRendering: this.contentRendering,
+      transcriptRenderers: this.transcriptRenderers,
+      rendererScope: this.rendererScope,
       workspaceContext: this.workspaceContext,
       anchors: { message: chatMessageAnchorKey, event: chatEventAnchorKey },
       disclosure: {
@@ -624,7 +640,7 @@ export class ChatView extends LitElement {
   }
 
   private scrollContentChanged(changed: Map<string, unknown>): boolean {
-    return changed.has("messages") || changed.has("historyReady") || changed.has("messageEnd") || changed.has("messageTotal") || changed.has("onSubmitAsk") || changed.has("pendingDialogs") || changed.has("closedDialogs");
+    return changed.has("messages") || changed.has("transcriptRenderers") || changed.has("historyReady") || changed.has("messageEnd") || changed.has("messageTotal") || changed.has("onSubmitAsk") || changed.has("pendingDialogs") || changed.has("closedDialogs");
   }
 
   private requestLoadMore(): void {

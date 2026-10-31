@@ -14,14 +14,12 @@ export interface ActiveCwdActivity {
   hasTerminalActivity: boolean;
 }
 
-/**
- * In-memory record of which cwds currently have session or terminal activity.
- * Entries without activity are already filtered out by the recorder.
- */
+/** Working activity and independent intervention state, filtered by the recorder. */
 interface MachineStatusActivitySource {
   snapshot(): {
     workspaces: readonly ActiveCwdActivity[];
     sessions: readonly { sessionId: string; cwd: string }[];
+    interventionSessions?: readonly { sessionId: string; cwd: string }[];
   };
 }
 
@@ -143,13 +141,17 @@ export class MachineStatusService {
   private async computeTree(): Promise<MachineStatusTree> {
     const activity = this.dependencies.activity.snapshot();
     const unread = this.dependencies.unread.catalogSnapshot();
-    const flagsByCwd = this.flagsByCwd(activity.workspaces, unread.sessions);
+    const interventionSessions = activity.interventionSessions ?? [];
+    const flagsByCwd = this.flagsByCwd(activity.workspaces, unread.sessions, interventionSessions);
     const sessions = new FlagAccumulator();
     for (const session of activity.sessions) {
       sessions.add(session.sessionId, { [CORE_STATUS_FLAGS.working]: true });
     }
     for (const session of unread.sessions) {
       sessions.add(session.sessionId, { [CORE_STATUS_FLAGS.unread]: true });
+    }
+    for (const session of interventionSessions) {
+      sessions.add(session.sessionId, { [CORE_STATUS_FLAGS.interventionRequired]: true });
     }
     const attributions = await this.dependencies.attribution.attribute(flagsByCwd.keys());
 
@@ -190,6 +192,7 @@ export class MachineStatusService {
   private flagsByCwd(
     activities: readonly ActiveCwdActivity[],
     unreadSessions: readonly { cwd: string }[],
+    interventionSessions: readonly { cwd: string }[],
   ): Map<string, StatusFlags> {
     const flagsByCwd = new Map<string, Record<string, boolean>>();
     const setFlag = (cwd: string, flagId: string): void => {
@@ -204,6 +207,9 @@ export class MachineStatusService {
     }
     for (const session of unreadSessions) {
       setFlag(session.cwd, CORE_STATUS_FLAGS.unread);
+    }
+    for (const session of interventionSessions) {
+      setFlag(session.cwd, CORE_STATUS_FLAGS.interventionRequired);
     }
     return flagsByCwd;
   }

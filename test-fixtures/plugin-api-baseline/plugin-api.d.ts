@@ -65,6 +65,7 @@ export interface PluginContributionsV5 extends Omit<PluginContributions, "action
     syntaxHighlighters?: SyntaxHighlighterContribution[];
     filePreviewers?: FilePreviewerContribution[];
     contentRenderers?: ContentRendererContributionV5[];
+    transcriptRenderers?: TranscriptRendererContribution[];
     /** @deprecated Declare static themes in package.json piWeb.plugins[].themes with browserRoot and stylesheet paths. */
     themes?: ThemeContributionV5[];
     fileIconThemes?: FileIconThemeContribution[];
@@ -189,6 +190,65 @@ export interface ContentRendererContributionV5 extends Omit<ContentRendererContr
     supports?(request: Readonly<ContentRenderRequest>): boolean;
     render(input: ContentRendererInputV5): TemplateResult;
 }
+export interface TranscriptRendererScope {
+    readonly machineId: string;
+    readonly sessionId: string;
+    readonly projectId?: string;
+    readonly workspaceId?: string;
+}
+export interface TranscriptToolEntry {
+    readonly toolCallId?: string;
+    readonly toolName: string;
+    readonly args?: unknown;
+    readonly status: "pending" | "running" | "success" | "error";
+    readonly content?: unknown;
+    readonly details?: unknown;
+    readonly resultText?: string;
+}
+export interface TranscriptMessageEntry {
+    readonly entryId?: string;
+    readonly customType: string;
+    readonly content: unknown;
+    readonly details?: unknown;
+}
+export interface TranscriptRendererInput {
+    readonly scope: TranscriptRendererScope;
+    /** Aborted when the entry, selection, mounting, or plugin lifetime changes. */
+    readonly signal: AbortSignal;
+    /** Report asynchronous failure; calls from obsolete renders are ignored. */
+    readonly fail: (error: unknown) => void;
+}
+export interface TranscriptToolRendererInput extends TranscriptRendererInput {
+    readonly entry: TranscriptToolEntry;
+}
+export interface TranscriptMessageRendererInput extends TranscriptRendererInput {
+    readonly entry: TranscriptMessageEntry;
+}
+/**
+ * Render synchronously; undefined retains the host's generic view, without continuing the chain.
+ * Treat inputs as read-only and honor signal for component-owned asynchronous work.
+ */
+export interface TranscriptToolRenderer {
+    render(input: TranscriptToolRendererInput): TemplateResult | undefined;
+}
+/**
+ * Resolve synchronously; call next() to delegate to the remaining tool resolvers.
+ * The web transcript supplies its core default renderer at the chain tail. next() may
+ * return undefined when another resolver stops the chain or a caller supplies no base.
+ * Returning undefined retains the host's generic view. Resolvers receive no entry payloads.
+ */
+export type TranscriptToolRendererResolver = (toolName: string, next: () => TranscriptToolRenderer | undefined) => TranscriptToolRenderer | undefined;
+/** Tools resolve in discovery order; custom messages use the first exact customType match. */
+export type TranscriptRendererContribution = {
+    id: LocalContributionId;
+    target: "tool";
+    resolve: TranscriptToolRendererResolver;
+} | {
+    id: LocalContributionId;
+    target: "custom-message";
+    customType: string;
+    render(input: TranscriptMessageRendererInput): TemplateResult | undefined;
+};
 export interface FilePreviewRequest {
     readonly machineId: string;
     readonly projectId: string;

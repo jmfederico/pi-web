@@ -5,7 +5,6 @@ import type { SessionNotificationPresentation } from "./sessionNotificationPrese
 import type { RuntimeActivityPresentation } from "./sessionActivityPresentation.js";
 import type { MachineStatusUiEvent } from "./machineStatus.js";
 import type { TerminalPluginMode } from "./requiredTerminalPlugin.js";
-import type { ThinkingLevel } from "./thinkingLevels.js";
 import type { PiWebDefaultLocalization } from "./defaultLocalization.js";
 export type { PiWebDefaultLocalization, LocalizationHourCycle } from "./defaultLocalization.js";
 import type {
@@ -210,14 +209,6 @@ export interface PiWebConfigValues {
   maxUploadBytes?: number;
   /** Destination for newly archived transcripts; the index remains in the PI WEB data directory. */
   sessionArchive?: { directory?: string };
-  /** Machine-wide naming overrides; defaults are the session model, 24 tokens, and minimal thinking. */
-  sessionNaming?: {
-    model?: string;
-    maxTokens?: number;
-    thinkingLevel?: ThinkingLevel;
-    /** Total wall time in milliseconds; defaults to 10000 when omitted. */
-    timeoutMs?: number;
-  };
   /** When true, LLMs can start new sessions via the spawn_session tool. */
   spawnSessions?: boolean;
   /** When true, LLMs can send messages to other sessions. On by default; independent of spawning. */
@@ -666,6 +657,8 @@ export interface SessionNotificationSummaryEvent {
 
 export interface SessionInfo extends SessionRef {
   path: string;
+  /** Session yielded for human input; any new agent run clears this state. */
+  interventionRequired?: boolean;
   /** Only true for positively verified tracked agent subsessions; absent otherwise. */
   agentSubsession?: boolean;
   /** True when the server has verified a backing session file exists; false when known transient. */
@@ -1236,6 +1229,8 @@ export interface SessionWarning {
 
 export interface SessionStatus {
   sessionId: string;
+  /** Live value, including false; absent on older daemons. */
+  interventionRequired?: boolean;
   /** True when the server has verified a backing session file exists; false when known transient. */
   persisted?: boolean;
   /**

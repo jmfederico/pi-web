@@ -35,8 +35,10 @@ For each schema-declared setting, the highest-priority supplied value replaces t
 
 Approved namespaces:
 
-- Static containers: `uploads.defaultFolder`, `attachments.defaultFolder`, `sessionNaming.model`, `sessionNaming.maxTokens`, `sessionNaming.thinkingLevel`, `sessionNaming.timeoutMs`, `sessionArchive.directory`, `pathAccess.allowedPaths`, and `defaultLocalization.language`, `.formatLocale`, `.timeZone`, `.hourCycle`. Keep the existing object representations and scopes. Empty project `uploads`/`attachments` objects preserve inherited folder defaults.
+- Static containers: `uploads.defaultFolder`, `attachments.defaultFolder`, `sessionArchive.directory`, `pathAccess.allowedPaths`, and `defaultLocalization.language`, `.formatLocale`, `.timeZone`, `.hourCycle`. Keep the existing object representations and scopes. Empty project `uploads`/`attachments` objects preserve inherited folder defaults.
 - Plugins: plugin IDs coexist; each plugin's `enabled` and each top-level plugin-specific setting resolve independently. An individual plugin setting's object/array value replaces completely. No recursive merging inside it. Preserve required-plugin and project-enablement constraints.
+
+`sessionNaming` is retired from the core schema and API. The file loader alone recognizes old values to migrate them into the removable naming package's profile config. Publish the package file before removing the writable legacy key; preserve existing package files, unrelated config, symlinks, and permissions. Never edit deployment defaults. Log migration errors and retain source data for retry without blocking startup. The package alone consumes its environment override and subsequent tuning.
 
 `defaultTheme` remains one atomic, coherent preference; `shortcuts` remains an atomic dictionary, and deprecated `agent` remains atomic. Their object shape does not make them namespaces.
 
@@ -50,9 +52,9 @@ Admins may enforce the base, additions, or both through environment variables. E
 - Machine settings write to the writable config; personal preferences write to browser storage.
 - Never modify the deployment defaults file or environment from Settings.
 - Reset removes an override, exposing the next applicable layer. Do not persist the current default as the reset value.
-- Use one update operation carrying `set` values and an `unset` list of setting identifiers; saves and resets may share one request. Example: `{"set":{"installationName":"Office"},"unset":["/quietMode","/sessionNaming/model"]}`.
+- Use one update operation carrying `set` values and an `unset` list of setting identifiers; saves and resets may share one request. Example: `{"set":{"installationName":"Office"},"unset":["/quietMode","/defaultLocalization/language"]}`.
 - `unset` removes from the addressed writable scope only. It is not persisted as a tombstone. Omitted settings remain unchanged; `null`, empty objects, and empty arrays retain their normal data meanings.
-- Use JSON pointers for known leaf settings and container resets, such as `/sessionNaming/model` and `/sessionNaming`. Escape pointer segments rather than splitting arbitrary plugin IDs/keys on dots. Reject conflicting set/unset targets and validate the complete update before writing. Keep existing API replacement/patch contracts until explicitly migrated.
+- Use JSON pointers for known leaf settings and container resets, such as `/defaultLocalization/language` and `/defaultLocalization`. Escape pointer segments rather than splitting arbitrary plugin IDs/keys on dots. Reject conflicting set/unset targets and validate the complete update before writing. Keep existing API replacement/patch contracts until explicitly migrated.
 - UI container-group resets remove only unlocked saved leaves in one request. API container resets that overlap any enforced leaf are rejected, preserving saved choices hidden by enforcement.
 - Environment-controlled fields are read-only and identify the controlling variable.
 - Preserve saved values hidden by enforcement so they return when enforcement is removed.
@@ -63,7 +65,7 @@ Admins may enforce the base, additions, or both through environment variables. E
 - Share setting definitions and validation across file, environment, API, and Settings paths; avoid independent per-source rules.
 - Record each setting's type, environment mapping, namespace membership, scope, default, browser applicability, exposure/redaction, and activation timing. Namespace containers may supply JSON; enforce only the independent settings explicitly supplied, not unspecified siblings.
 - Report effective values and their sources to Settings without exposing secrets. Source and enforcement pointers address declared leaves, such as `/pathAccess/allowedPaths`, not their containers.
-- Retain existing container JSON environment names (`PI_WEB_UPLOADS`, `PI_WEB_ATTACHMENTS`, `PI_WEB_SESSION_NAMING`, `PI_WEB_SESSION_ARCHIVE`, `PI_WEB_PATH_ACCESS`, `PI_WEB_DEFAULT_LOCALIZATION`); only supplied leaves are enforced. The archive alias `PI_WEB_SESSION_ARCHIVE_DIR` maps to `/sessionArchive/directory`.
+- Retain existing container JSON environment names (`PI_WEB_UPLOADS`, `PI_WEB_ATTACHMENTS`, `PI_WEB_SESSION_ARCHIVE`, `PI_WEB_PATH_ACCESS`, `PI_WEB_DEFAULT_LOCALIZATION`); only supplied leaves are enforced. The archive alias `PI_WEB_SESSION_ARCHIVE_DIR` maps to `/sessionArchive/directory`.
 - Use JSON as canonical environment syntax for arrays and objects. Preserve documented, unambiguous legacy shorthand per setting, including comma-separated allowed hosts. Do not accept CSV generically: values such as paths may contain commas. Malformed JSON-form input must not fall back to shorthand.
 - Environment booleans accept only `true`, `false`, `1`, and `0`; boolean words are case-insensitive. Invalid explicit environment values fail startup with source context, not silently select a fallback. Migrate existing permissive/presence-based switches explicitly.
 - Distinguish unset, empty, `false`, and `0`. Validate supplied file/API values visibly; reject invalid updates without writing. Corrupt optional browser preferences may warn and be discarded rather than prevent application startup.
