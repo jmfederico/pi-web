@@ -12,6 +12,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         overlays: fileURLToPath(new URL("overlays.html", import.meta.url)),
+        viewport: fileURLToPath(new URL("viewport.html", import.meta.url)),
         cleanup: fileURLToPath(new URL("cleanup.html", import.meta.url)),
         navigation: fileURLToPath(new URL("navigation.html", import.meta.url)),
         terminal: fileURLToPath(new URL("terminal.html", import.meta.url)),

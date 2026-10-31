@@ -19,6 +19,21 @@ function cloneSnapshot(snapshot: ChatDisclosureSnapshot): ChatDisclosureSnapshot
 }
 
 describe("ChatDisclosureController", () => {
+  it("isolates identical sessions on different machines while preserving local storage", () => {
+    const storage = new MemoryDisclosureStorage();
+    storage.snapshots.set("same", { open: ["choice"], closedDefaultOpen: [] });
+    const controller = new ChatDisclosureController(storage);
+    controller.syncSession("same");
+    expect(controller.isOpen("choice", false)).toBe(true);
+    controller.syncSession("same", "remote");
+    expect(controller.isOpen("choice", false)).toBe(false);
+    controller.applyToggle("remote-only", true, false);
+    controller.syncSession("same");
+    expect(controller.isOpen("remote-only", false)).toBe(false);
+    controller.syncSession("same", "remote");
+    expect(controller.isOpen("remote-only", false)).toBe(true);
+  });
+
   it("keeps a default-open live group closed after the user closes it", () => {
     const storage = new MemoryDisclosureStorage();
     const controller = new ChatDisclosureController(storage);
