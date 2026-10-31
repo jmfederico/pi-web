@@ -48,6 +48,8 @@ export interface WorkspaceProviderRegistryOptions {
   logger: WorkspaceProviderRegistryLogger;
   providerTimeoutMs?: number;
   pathInspector?: WorkspacePathInspector;
+  /** Notify derived projections after a complete catalog record is published. */
+  onPublished?: (projectId: string) => void;
 }
 
 /** Current owner snapshot used by the host-owned workspace removal orchestrator. */
@@ -81,6 +83,12 @@ export class WorkspaceProviderRemovalError extends Error {
   ) {
     super(message, options);
   }
+}
+
+interface DiscoveredProjectWorkspaces {
+  project: ProjectInput;
+  key: string;
+  resolution?: WorkspaceProviderAuthorityResolution;
 }
 
 interface ParsedProviderWorkspace {
@@ -127,15 +135,18 @@ export function eligibleWorkspaceProviderContributions(
 }
 
 /**
- * Resolves one exclusive workspace owner from the active server-plugin snapshot.
- * Probe failures are local to one resolution; a claimant that later fails to
- * list never falls through to a lower-priority provider.
+ * Owns provider discovery and the daemon's established workspace records.
+ * resolve publishes discovery; lookup reads identity; checkCurrent validates
+ * fresh authority for an action without changing the catalog. Probe failures
+ * are local; a claimant that fails to list never falls through to another owner.
  */
 export class WorkspaceProviderRegistry {
   private readonly contributions: readonly ServerPluginProviderContribution[];
   private readonly providerTimeoutMs: number;
   private readonly pathInspector: WorkspacePathInspector;
   private readonly pendingResolutions = new Map<string, Promise<WorkspaceProviderAuthorityResolution>>();
+  private readonly discoveredProjects = new Map<string, DiscoveredProjectWorkspaces>();
+  private readonly discoveryOperations = new Set<Promise<WorkspaceProviderAuthorityResolution>>();
   private readonly pendingIntegrations = new Map<string, Promise<void>>();
   private readonly shutdown = new AbortController();
   private readonly providerOperations = new Set<Promise<unknown>>();
@@ -149,24 +160,20 @@ export class WorkspaceProviderRegistry {
     this.pathInspector = options.pathInspector ?? pathIsDirectory;
   }
 
-  /** Workspace-lister adapter used by spawned-session target validation. */
+  /** Fresh workspace-lister adapter used by spawned-session target validation. */
   async list(project: Project): Promise<WorkspaceListing[]> {
-    const resolution = await this.resolve(project);
+    const resolution = await this.checkCurrent(project);
     return [...resolution.workspaces];
   }
 
   /**
-   * Resolve workspaces together with attributable diagnostics for host consumers.
-   * Only identical work already in flight is shared; the entry is removed before
-   * callers observe completion so ownership and topology are never cached.
+   * Explicit catalog discovery checks current ownership and topology, then
+   * publishes a complete record. Only equivalent work in flight is shared.
+   * Routine lookups neither own nor await this catalog-owned work.
    */
-  async resolve(project: Project, signal?: AbortSignal): Promise<WorkspaceProviderAuthorityResolution> {
+  async resolve(project: Project): Promise<WorkspaceProviderAuthorityResolution> {
     this.assertAccepting();
     const input = snapshotProject(project);
-    // A cancellable request must own its resolution work. Sharing it would let
-    // one disconnected caller abort another caller's authority lookup.
-    if (signal !== undefined) return await this.resolveSnapshot(input, signal);
-
     const key = workspaceResolutionKey(input);
     const existing = this.pendingResolutions.get(key);
     if (existing !== undefined) return existing;
@@ -178,6 +185,12 @@ export class WorkspaceProviderRegistry {
     } finally {
       if (this.pendingResolutions.get(key) === pending) this.pendingResolutions.delete(key);
     }
+  }
+
+  /** Fresh caller-owned validation, without changing the established catalog. */
+  async checkCurrent(project: Project, signal?: AbortSignal): Promise<WorkspaceProviderAuthorityResolution> {
+    this.assertAccepting();
+    return await this.runDiscovery(snapshotProject(project), signal);
   }
 
   /** Explicit host lifecycle step: integrations never run from probe/list or authority validation. */
@@ -216,7 +229,7 @@ export class WorkspaceProviderRegistry {
   /** A hint cannot select an owner, add paths, or bypass fresh provider authority. */
   async acceptNotification(project: Project, pluginId: string, signal?: AbortSignal): Promise<boolean> {
     const input = snapshotProject(project);
-    const resolution = await this.resolve(project, signal);
+    const resolution = await this.checkCurrent(project, signal);
     const owner = this.integrationOwner(input, resolution);
     const integration = owner?.provider.integration;
     if (owner?.pluginId !== pluginId || integration === undefined) return false;
@@ -232,7 +245,69 @@ export class WorkspaceProviderRegistry {
     return this.contributions.find(({ pluginId }) => pluginId === resolution.ownerPluginId);
   }
 
-  private async resolveSnapshot(input: ProjectInput, signal?: AbortSignal): Promise<WorkspaceProviderAuthorityResolution> {
+  /** Read established identity only: never starts or waits for discovery. */
+  lookup(project: Project, signal?: AbortSignal): Promise<WorkspaceProviderAuthorityResolution | undefined> {
+    this.assertAccepting();
+    throwIfAborted(signal);
+    const input = snapshotProject(project);
+    const record = this.discoveredProjects.get(input.id);
+    return Promise.resolve(record?.key === workspaceResolutionKey(input) ? record.resolution : undefined);
+  }
+
+  /**
+   * Mutations request catalog-owned discovery, not invalidation-on-next-read.
+   * Keep established identity available until the replacement is published.
+   */
+  requestRefresh(projectId: string): void {
+    if (this.shutdown.signal.aborted) return;
+    const record = this.discoveredProjects.get(projectId);
+    // Unopened projects will be discovered by startup or an explicit listing.
+    if (record === undefined) return;
+    // A mutation must supersede discovery that started before the mutation.
+    const pending = this.resolveSnapshot(record.project);
+    this.pendingResolutions.set(record.key, pending);
+    void pending.catch((error: unknown) => {
+      if (!this.shutdown.signal.aborted) {
+        this.options.logger.warn({ err: error, projectId }, "workspace discovery refresh failed");
+      }
+    }).finally(() => {
+      if (this.pendingResolutions.get(record.key) === pending) this.pendingResolutions.delete(record.key);
+    });
+  }
+
+  private async resolveSnapshot(input: ProjectInput): Promise<WorkspaceProviderAuthorityResolution> {
+    const previous = this.discoveredProjects.get(input.id);
+    const key = workspaceResolutionKey(input);
+    const entry: DiscoveredProjectWorkspaces = {
+      project: input,
+      key,
+      ...(previous?.key === key && previous.resolution !== undefined ? { resolution: previous.resolution } : {}),
+    };
+    this.discoveredProjects.set(input.id, entry);
+    const resolution = await this.runDiscovery(input);
+    if (this.discoveredProjects.get(input.id) === entry) {
+      entry.resolution = resolution;
+      try {
+        this.options.onPublished?.(input.id);
+      } catch (error) {
+        this.options.logger.warn({ err: error, projectId: input.id }, "workspace discovery projection notification failed");
+      }
+    }
+    return resolution;
+  }
+
+  private async runDiscovery(input: ProjectInput, signal?: AbortSignal): Promise<WorkspaceProviderAuthorityResolution> {
+    const operation = this.discoverSnapshot(input, signal);
+    // Track all admitted scans, including superseded scans doing path inspection.
+    this.discoveryOperations.add(operation);
+    try {
+      return await operation;
+    } finally {
+      this.discoveryOperations.delete(operation);
+    }
+  }
+
+  private async discoverSnapshot(input: ProjectInput, signal?: AbortSignal): Promise<WorkspaceProviderAuthorityResolution> {
     const diagnostics: WorkspaceProviderDiagnostic[] = [];
 
     for (const tier of ["primary", "fallback"] as const) {
@@ -470,7 +545,8 @@ export class WorkspaceProviderRegistry {
 
   private async closeProviderOperations(reason: string): Promise<void> {
     if (!this.shutdown.signal.aborted) this.shutdown.abort(new DOMException(reason, "AbortError"));
-    await Promise.allSettled([...this.providerOperations]);
+    this.discoveredProjects.clear();
+    await Promise.allSettled([...this.discoveryOperations, ...this.providerOperations]);
     await this.providerCallbacks.waitForSettled(
       this.providerTimeoutMs,
       "Workspace provider callbacks",

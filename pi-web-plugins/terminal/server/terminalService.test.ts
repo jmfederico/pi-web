@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ServerPluginNoticeInput } from "@jmfederico/pi-web/server-plugin-api";
 import { interactiveShellArgs, TerminalService, type TerminalActivitySink, type TerminalInfo, type TerminalScope, type TerminalWorkspaceScope } from "./terminalService";
 import { createDefaultPtyProvider } from "./ptyComposition.js";
+import type { PtyHandlers } from "./ptyProvider.js";
 
 describe("interactive shell arguments", () => {
   it.each([
@@ -405,6 +406,88 @@ describe.skipIf(process.platform === "win32")("TerminalService command runs", ()
     } finally {
       service.dispose();
     }
+  });
+});
+
+describe("private command settlement", () => {
+  function fixture(synchronousExit?: number) {
+    let handlers: PtyHandlers | undefined;
+    const dispose = vi.fn();
+    const recordNotice = vi.fn<(input: ServerPluginNoticeInput) => void>();
+    const service = new TerminalService({
+      kind: "node",
+      spawn: (_options, supplied) => {
+        handlers = supplied;
+        if (synchronousExit !== undefined) supplied.exit(synchronousExit);
+        return { write: vi.fn(), resize: vi.fn(), dispose };
+      },
+    }, recordNotice);
+    const activity = createWorkspaceActivityRecorder();
+    service.bindActivitySink(activity);
+    const start = (onSettled: () => void) => service.runCommand({
+      ...scope(), origin: "core", title: "Remove workspace", command: "remove", onSettled,
+    });
+    return { service, start, dispose, recordNotice, activity, exit: (code: number) => { handlers?.exit(code); } };
+  }
+
+  it.each([0, 7])("settles exactly once after exit %i and does not expose the callback", (code) => {
+    const f = fixture();
+    const onSettled = vi.fn();
+    try {
+      const run = f.start(onSettled);
+      expect(onSettled).not.toHaveBeenCalled();
+      f.exit(code);
+      expect(f.service.getCommandRun(run.id)).toMatchObject({ status: code === 0 ? "succeeded" : "failed" });
+      expect(onSettled).toHaveBeenCalledOnce();
+      expect(run).not.toHaveProperty("onSettled");
+      expect(f.service.getCommandRun(run.id)).not.toHaveProperty("onSettled");
+      f.service.close(scope(), run.terminalId);
+      f.exit(code);
+      expect(onSettled).toHaveBeenCalledOnce();
+    } finally { f.service.dispose(); }
+  });
+
+  it("settles forced close once even without a provider exit", () => {
+    const f = fixture();
+    const onSettled = vi.fn();
+    const run = f.start(onSettled);
+    f.service.close(scope(), run.terminalId);
+    f.service.dispose();
+    expect(onSettled).toHaveBeenCalledOnce();
+    expect(f.service.getCommandRun(run.id)).toMatchObject({ status: "failed" });
+    expect(f.dispose).toHaveBeenCalledOnce();
+  });
+
+  it("installs settlement before a synchronous spawn exit", () => {
+    const f = fixture(0);
+    const onSettled = vi.fn();
+    try {
+      const run = f.start(onSettled);
+      expect(run.status).toBe("succeeded");
+      expect(onSettled).toHaveBeenCalledOnce();
+    } finally { f.service.dispose(); }
+    expect(onSettled).toHaveBeenCalledOnce();
+  });
+
+  it.each(["exit", "close"])("reports callback errors without interrupting %s cleanup", (mode) => {
+    const f = fixture();
+    const onSettled = vi.fn(() => { throw new Error("Refresh failed"); });
+    const run = f.start(onSettled);
+    try {
+      if (mode === "exit") {
+        f.exit(0);
+        expect(f.activity.updated.at(-1)).toMatchObject({ id: run.terminalId, exited: true });
+      } else {
+        f.service.close(scope(), run.terminalId);
+        expect(f.activity.removed).toEqual([{ terminalId: run.terminalId, cwd: process.cwd() }]);
+      }
+      expect(f.dispose).toHaveBeenCalledOnce();
+      expect(f.recordNotice).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        severity: "error", scope: { projectId: "p1" },
+        context: { commandRunId: run.id, detail: "Refresh failed" },
+      }));
+    } finally { f.service.dispose(); }
+    expect(onSettled).toHaveBeenCalledOnce();
   });
 });
 

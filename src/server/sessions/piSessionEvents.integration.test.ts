@@ -107,7 +107,7 @@ describe("hosted package messaging with native Pi", () => {
         const project = { id: "project", name: "Project", path: directory, createdAt: new Date().toISOString() };
         const instance = createServerPluginPiSessionsCapabilityFactory({
           projects: { requireProject: () => Promise.resolve(project) },
-          workspaces: { resolve: () => Promise.resolve({ status: "folder", projectId: project.id, workspaces: [
+          workspaces: { checkCurrent: () => Promise.resolve({ status: "folder", projectId: project.id, workspaces: [
             { id: "workspace", projectId: project.id, path: directory, label: "Workspace", isMain: true },
           ], diagnostics: [] }) },
           sessions: service,

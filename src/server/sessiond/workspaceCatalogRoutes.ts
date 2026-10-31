@@ -9,6 +9,7 @@ export interface WorkspaceCatalogProjectReader {
 
 export interface WorkspaceCatalogResolver {
   resolve(project: Project): Promise<WorkspaceProviderAuthorityResolution>;
+  lookup(project: Project): Promise<WorkspaceProviderAuthorityResolution | undefined>;
   reconcileProject(project: Project, resolution: WorkspaceProviderAuthorityResolution): Promise<void>;
 }
 
@@ -40,7 +41,8 @@ export function registerWorkspaceCatalogRoutes(
   app.get<{ Params: { projectId: string; workspaceId: string } }>(`${prefix}/projects/:projectId/workspaces/:workspaceId`, async (request, reply) => {
     try {
       const project = await dependencies.projects.requireProject(request.params.projectId);
-      const resolution = await dependencies.workspaces.resolve(project);
+      const resolution = await dependencies.workspaces.lookup(project);
+      if (resolution === undefined) return await reply.code(503).send({ error: "Workspace discovery is not ready; refresh the project's workspace list" });
       const workspace = resolution.workspaces.find((candidate) => candidate.id === request.params.workspaceId);
       if (workspace === undefined) return await reply.code(404).send({ error: "Workspace not found" });
       return workspace;

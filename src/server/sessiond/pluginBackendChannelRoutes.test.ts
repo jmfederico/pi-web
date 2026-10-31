@@ -52,7 +52,7 @@ describe("session daemon plugin backend channels", () => {
         opened.push(scope.kind);
         return { receive() { /* no incoming frames */ }, close };
       }), apiVersion: 5 }],
-      workspaces: { resolve: () => Promise.reject(new Error("Workspace resolution must not run")) },
+      workspaces: { lookup: () => Promise.reject(new Error("Workspace resolution must not run")) },
     });
     registerPluginBackendChannelRoutes(app, { projects, backends: registry });
     await app.listen({ host: "127.0.0.1", port: 0 });

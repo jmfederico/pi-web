@@ -24,7 +24,7 @@ it("loads a companion tool that calls its v5 peer across native reload and inval
   }];
   const resolveWorkspace = vi.fn(() => { throw new Error("Machine scope must not resolve a workspace"); });
   const requireProject = vi.fn(() => { throw new Error("Machine scope must not resolve a project"); });
-  const registry = new PluginBackendRegistry({ contributions, workspaces: { resolve: resolveWorkspace } });
+  const registry = new PluginBackendRegistry({ contributions, workspaces: { lookup: resolveWorkspace } });
   const events = new PiSessionEventConnections((bus) => bindCompanionBackend(bus, {
     backends: registry, contributions, projects: { requireProject },
   }));

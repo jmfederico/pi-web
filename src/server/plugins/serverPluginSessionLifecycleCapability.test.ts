@@ -10,7 +10,7 @@ function fixture() {
   const project = { id: "p", name: "Project", path: cwd, createdAt: "now" };
   const projects = { requireProject: vi.fn(() => Promise.resolve(project)) };
   const workspace = { id: "w", projectId: "p", path: cwd, label: "Main", isMain: true };
-  const workspaces = { resolve: vi.fn(() => Promise.resolve({ projectId: "p", status: "provider" as const, diagnostics: [], workspaces: [workspace] })) };
+  const workspaces = { checkCurrent: vi.fn(() => Promise.resolve({ projectId: "p", status: "provider" as const, diagnostics: [], workspaces: [workspace] })) };
   const failures: { sessionId: string; error: string }[] = [];
   const sessions = {
     listCatalogSessions: vi.fn((selectedCwd: string, signal?: AbortSignal): Promise<readonly Omit<PluginSessionSnapshot, "pinned">[]> => {

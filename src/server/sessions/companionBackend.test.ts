@@ -21,7 +21,7 @@ function fixture(backend: ServerPluginPeerV5, apiVersion: 3 | 5 = 5, options: { 
     return Promise.resolve(project);
   });
   const resolve = vi.fn(() => Promise.resolve({ status: "folder" as const, projectId: project.id, workspaces: [workspace], diagnostics: [] }));
-  const registry = new PluginBackendRegistry({ contributions: [contribution], workspaces: { resolve }, ...options });
+  const registry = new PluginBackendRegistry({ contributions: [contribution], workspaces: { lookup: resolve }, ...options });
   const detach = bindCompanionBackend(bus, { backends: registry, contributions: [contribution], projects: { requireProject } });
   return { bus, contribution, requireProject, resolve, registry, detach, discover: () => createCompanionBackend(bus, "paired") };
 }

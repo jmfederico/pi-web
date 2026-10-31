@@ -14,7 +14,7 @@ import type { ServerPluginHostCapabilityContext, ServerPluginHostCapabilityFacto
 
 export interface CreateServerPluginCatalogCapabilityOptions {
   readonly projects: Pick<ProjectService, "list" | "requireProject">;
-  readonly workspaces: Pick<WorkspaceProviderRegistry, "resolve">;
+  readonly workspaces: Pick<WorkspaceProviderRegistry, "resolve" | "lookup">;
   readonly pins: {
     readonly pinnedSessionIds: () => Promise<readonly string[]>;
   };
@@ -59,10 +59,14 @@ export function createServerPluginCatalogCapabilityFactory(
         if (result.id !== projectId) throw new Error("Catalog project authority returned a mismatched project");
         return result;
       }
-      async function workspaces(projectId: string, signal: AbortSignal): Promise<readonly PluginCatalogWorkspace[]> {
+      async function workspaces(projectId: string, signal: AbortSignal, mode: "discover" | "lookup"): Promise<readonly PluginCatalogWorkspace[]> {
         const selected = await project(projectId, signal);
-        const resolution = await options.workspaces.resolve(selected, signal);
+        // Explicit listing owns discovery independently of the reader's lifetime.
+        const resolution = mode === "discover"
+          ? await options.workspaces.resolve(selected)
+          : await options.workspaces.lookup(selected, signal);
         assertActive(signal);
+        if (resolution === undefined) throw new Error("Workspace discovery is not ready; refresh the project's workspace list");
         if (resolution.projectId !== projectId) throw new Error("Catalog workspace authority returned a mismatched project");
         return resolution.workspaces.map((workspace) => {
           if (workspace.projectId !== projectId) throw new Error("Catalog workspace is outside selected project");
@@ -74,7 +78,7 @@ export function createServerPluginCatalogCapabilityFactory(
         });
       }
       async function workspace(selection: PluginWorkspaceSelection, signal: AbortSignal): Promise<PluginCatalogWorkspace> {
-        const result = (await workspaces(selection.projectId, signal)).find(({ id }) => id === selection.workspaceId);
+        const result = (await workspaces(selection.projectId, signal, "lookup")).find(({ id }) => id === selection.workspaceId);
         if (result === undefined) throw new Error("Catalog selected workspace is stale or unavailable");
         return result;
       }
@@ -102,7 +106,7 @@ export function createServerPluginCatalogCapabilityFactory(
           get: (id: string, requested?: PluginCatalogReadOptions) => read(requested, async (signal) => projectSnapshot(await project(id, signal))),
         },
         workspaces: {
-          list: (id: string, requested?: PluginCatalogReadOptions) => read(requested, (signal) => workspaces(id, signal)),
+          list: (id: string, requested?: PluginCatalogReadOptions) => read(requested, (signal) => workspaces(id, signal, "discover")),
           get: (selection: PluginWorkspaceSelection, requested?: PluginCatalogReadOptions) => read(requested, (signal) => workspace(selection, signal)),
         },
         sessions: {
