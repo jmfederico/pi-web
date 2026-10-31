@@ -29,7 +29,6 @@ beforeEach(() => {
   vi.spyOn(configApi, "config").mockImplementation((id) => Promise.resolve(configResponse(id === undefined ? gatewayConfig : {
     uploads: { defaultFolder: `${id}/uploads` }, spawnSessions: true, plugins: { info: { enabled: true } },
   })));
-  vi.spyOn(configApi, "namingModels").mockResolvedValue({ models: [] });
   let savedGateway: PiWebConfigValues = { ...gatewayConfig };
   vi.spyOn(configApi, "updateConfig").mockImplementation((update, id) => {
     if (id !== undefined) return Promise.resolve(configResponse(update.set ?? {}));
@@ -141,66 +140,6 @@ function submit(input: HTMLInputElement): void {
 }
 
 describe("settings-only machine selection DOM", () => {
-  it("passes selected-machine naming models to the daemon panel and refreshes them", async () => {
-    const models = [{ provider: "provider", id: "naming" }];
-    vi.mocked(configApi.namingModels).mockResolvedValue({ models });
-    const dialog = await mount();
-    await navigate(dialog, "sessiond", "Session daemon");
-    const panel = query<SettingsSessiondPanel>(root(dialog), "settings-sessiond-panel");
-
-    expect(configApi.namingModels).toHaveBeenCalledWith(remoteMachine.id);
-    expect(panel.namingModels).toEqual(models);
-    expect(panel.namingModelsLoading).toBe(false);
-    expect(panel.namingModelsError).toBe("");
-
-    vi.mocked(configApi.namingModels).mockClear().mockResolvedValue({ models: [] });
-    await panel.onReload?.();
-    await settle(dialog);
-    expect(configApi.namingModels).toHaveBeenCalledExactlyOnceWith(remoteMachine.id);
-    expect(panel.namingModels).toEqual([]);
-  });
-
-  it("keeps daemon config editable when naming models fail to load", async () => {
-    vi.mocked(configApi.namingModels).mockRejectedValue(new Error("Model catalog unavailable"));
-    const dialog = await mount();
-    await navigate(dialog, "sessiond", "Session daemon");
-    const panel = query<SettingsSessiondPanel>(root(dialog), "settings-sessiond-panel");
-
-    expect(panel.loading).toBe(false);
-    expect(panel.error).toBe("");
-    expect(panel.namingModelsLoading).toBe(false);
-    expect(panel.namingModelsError).toContain("Model catalog unavailable");
-    expect(panel.namingModelsError).toContain("Lab Mac");
-    expect(query<HTMLInputElement>(root(panel), "#spawn-sessions").disabled).toBe(false);
-  });
-
-  it.each(["success", "failure"])("ignores stale naming-model %s after switching away and back", async (outcome) => {
-    const stale = deferred<{ models: { provider: string; id: string }[] }>();
-    const currentModels = [{ provider: "provider", id: "current" }];
-    vi.mocked(configApi.namingModels).mockResolvedValue({ models: currentModels });
-    const dialog = await mount();
-    await navigate(dialog, "sessiond", "Session daemon");
-    const panel = query<SettingsSessiondPanel>(root(dialog), "settings-sessiond-panel");
-    vi.mocked(configApi.namingModels).mockReturnValueOnce(stale.promise);
-    // Refresh the original target, then switch away and return before it finishes.
-    const refresh = panel.onReload?.();
-    await settle(dialog);
-    expect(panel.namingModelsLoading).toBe(true);
-
-    await selectMachine(dialog, secondRemoteMachine.id);
-    expect(configApi.namingModels).toHaveBeenLastCalledWith(secondRemoteMachine.id);
-    expect(panel.namingModels).toEqual(currentModels);
-    await selectMachine(dialog, remoteMachine.id);
-    if (outcome === "success") stale.resolve({ models: [{ provider: "old", id: "stale" }] });
-    else stale.reject(new Error("Stale model error"));
-    await refresh;
-    await settle(dialog);
-
-    expect(panel.namingModels).toEqual(currentModels);
-    expect(panel.namingModelsLoading).toBe(false);
-    expect(panel.namingModelsError).toBe("");
-  });
-
   it("defaults to the current machine and retargets every machine endpoint and save without changing the workspace machine", async () => {
     const dialog = await mount();
     expect(selector(dialog).value).toBe(remoteMachine.id);
@@ -228,11 +167,6 @@ describe("settings-only machine selection DOM", () => {
     query<HTMLInputElement>(root(sessiond), "#spawn-sessions").click();
     await settle(dialog);
     expect(configApi.updateConfig).toHaveBeenLastCalledWith({ set: { spawnSessions: false }, unset: [] }, "remote-b");
-    const namingBudget = query<HTMLInputElement>(root(sessiond), "#session-naming-max-tokens");
-    namingBudget.value = "48";
-    namingBudget.dispatchEvent(new Event("change"));
-    await settle(dialog);
-    expect(configApi.updateConfig).toHaveBeenLastCalledWith({ set: { sessionNaming: { maxTokens: 48 } }, unset: [] }, "remote-b");
 
     await navigate(dialog, "plugins", "PI WEB plugins");
     const plugins = query<SettingsPluginsPanel>(root(dialog), "settings-plugins-panel");

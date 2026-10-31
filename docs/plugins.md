@@ -89,6 +89,12 @@ Plugins can publish namespaced session metadata to identify workflows and link t
 
 Only deliberately published session metadata is exposed, not arbitrary Pi custom entries. Keep secrets and private extension state out of it. Namespaces organize data rather than enforce ownership or authorization, and plugins must validate their own schema and render values as untrusted input. Browser API v4 remains unchanged; older hosts omit the field.
 
+### Automatic session naming
+
+The bundled **Session naming** Pi extension (`@jmfederico/pi-session-naming`) names each new conversation from its first prompt in PI WEB and the TUI. Remove it through **Settings → Pi packages** to use another naming extension; reinstall it from **Available packages** to restore naming.
+
+See [Session naming configuration](config.md#session-naming) for model, token-budget, thinking-level, and timeout settings, plus migration from the old core settings.
+
 ### Dispatch a session from a Pi extension
 
 Trusted hosted Pi extensions can start an independent conversation in a workspace of the same registered project, with a prompt, name, and public metadata. Model and thinking settings inherit from the initiating conversation unless explicitly overridden. Dispatch respects the same delegation restrictions as `spawn_session`.
@@ -381,7 +387,7 @@ pi-web workspaces notify --project ID --plugin git
 
 Use **Settings → Pi packages** to install, update, or remove a package. Enter its npm, git/URL, or local package source. Use **Settings → PI WEB plugins** to enable or disable its web integration and see whether it is active or needs a restart.
 
-Relays and Workflows are managed bundled packages, not independently versioned installs. At session-daemon startup, PI WEB updates their configured sources in the active agent profile to the running installation while preserving resource filters. Removing them through **Settings → Pi packages** is remembered; absent packages stay removed.
+Relays, Workflows, and Session naming ship and update with PI WEB. At session-daemon startup, PI WEB updates their configured sources in the active agent profile to the running installation while preserving resource filters. Remove them through **Settings → Pi packages** for persistent removal. A package removed only with `pi remove` may be installed again at daemon startup.
 
 | Change | What to do next |
 | --- | --- |

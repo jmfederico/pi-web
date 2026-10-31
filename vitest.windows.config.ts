@@ -15,6 +15,7 @@ export default defineConfig({
       "scripts/build-plugins.test.mjs",
       // Atomic replacement and host-native path normalization.
       "src/config.test.ts",
+      "src/configSessionNamingMigration.test.ts",
       "src/serverPluginRecovery.test.ts",
       "src/server/workingDirectory.test.ts",
       "src/server/storage/navigationPreferenceStore.test.ts",

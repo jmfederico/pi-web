@@ -69,7 +69,7 @@ enforced environment > browser-local choice > supported project override
 
 Browser-local choices apply to colour theme, file icon theme, and localization. Project config participates only for supported keys. Environment policy wins over both; it is not a default that projects or browsers can override.
 
-Each declared setting replaces its lower-priority value, including arrays and dictionaries; there is no general recursive merge. The schema declares these namespace leaves: `uploads.defaultFolder`, `attachments.defaultFolder`, `sessionNaming.model`, `.maxTokens`, `.thinkingLevel`, `.timeoutMs`, `sessionArchive.directory`, `pathAccess.allowedPaths`, and `defaultLocalization.language`, `.formatLocale`, `.timeZone`, `.hourCycle`. Each inherits independently across deployment defaults, writable config, applicable project config, and environment policy. An empty namespace `{}` contributes no overrides; missing leaves inherit.
+Each declared setting replaces its lower-priority value, including arrays and dictionaries; there is no general recursive merge. The schema declares these namespace leaves: `uploads.defaultFolder`, `attachments.defaultFolder`, `sessionArchive.directory`, `pathAccess.allowedPaths`, and `defaultLocalization.language`, `.formatLocale`, `.timeZone`, `.hourCycle`. Each inherits independently across deployment defaults, writable config, applicable project config, and environment policy. An empty namespace `{}` contributes no overrides; missing leaves inherit.
 
 Each plugin's `enabled` and each top-level `plugins.<id>.settings.<key>` also resolve independently. An individual array/dictionary-valued setting still replaces entirely, including an explicit empty value. `defaultTheme` remains one atomic, coherent preference; `shortcuts` and deprecated `agent` are also atomic. JSON depth alone does not define a setting. Path additions have the separate composition rules below.
 
@@ -93,7 +93,7 @@ Boolean environment inputs accept only `true`/`false` (case-insensitive) or `1`/
 
 Settings identifies inherited sources and environment-enforced values. Enforced controls are read-only. Where a saved override has a **Reset saved override** control, resetting deletes that override and exposes the next applicable layer; it does not copy today's effective default into the writable file. Loading deployment defaults keeps them separate from writable overrides. Theme and localization enforcement temporarily masks saved browser choices without erasing them; removing policy restores those choices.
 
-The config API returns `config` (writable overrides), `effectiveConfig`, optional `defaultsPath` / `defaultsConfig`, `configSources` (JSON-pointer identifiers mapped to `defaults`, `config`, or the controlling environment variable), and `enforcedSettings` (identifiers mapped to environment variables). Source and enforcement pointers address declared leaves, such as `/sessionNaming/model` and `/pathAccess/allowedPaths`; the archive alias reports `/sessionArchive/directory`. Missing source entries inherit built-in/feature defaults; this is machine metadata, not browser/project provenance.
+The config API returns `config` (writable overrides), `effectiveConfig`, optional `defaultsPath` / `defaultsConfig`, `configSources` (JSON-pointer identifiers mapped to `defaults`, `config`, or the controlling environment variable), and `enforcedSettings` (identifiers mapped to environment variables). Source and enforcement pointers address declared leaves, such as `/defaultLocalization/language` and `/pathAccess/allowedPaths`; the archive alias reports `/sessionArchive/directory`. Missing source entries inherit built-in/feature defaults; this is machine metadata, not browser/project provenance.
 
 Use `PATCH /api/config` for explicit updates, or `PATCH /api/machines/<machineId>/config` for selected-machine-supported keys (`local` selects the gateway machine). The body has optional `set` (config-shaped values) and `unset` (JSON-pointer strings):
 
@@ -104,7 +104,7 @@ Use `PATCH /api/config` for explicit updates, or `PATCH /api/machines/<machineId
 }
 ```
 
-`unset` accepts known leaf pointers such as `/sessionNaming/model`, `/uploads/defaultFolder`, and `/pathAccess/allowedPaths`, as well as container resets such as `/sessionNaming`. Atomic settings reset at their top-level pointer, such as `/defaultTheme`. UI container-group resets remove only unlocked saved leaves in one request. An API container reset overlapping any enforced leaf is rejected, preserving saved choices hidden by enforcement. Escape `~` as `~0` and `/` as `~1` within pointer segments: a plugin setting named `a/b~c` uses `/plugins/git/settings/a~1b~0c`. Conflicting set/unset targets and changes to enforced settings are rejected. There is no null reset sentinel: `null` retains its schema-defined meaning, such as disabling a shortcut. Existing `PUT` endpoints remain available. They retain replacement semantics for unenforced settings, but omitted enforced settings preserve their hidden saved values. Supplying a different saved value for an enforced setting is rejected; unchanged saved values may round-trip. This protection also applies when no saved override exists: a legacy save cannot create one for an enforced setting. Federated protection requires the target to report enforcement metadata; upgrade older peers before relying on it.
+`unset` accepts known leaf pointers such as `/defaultLocalization/language`, `/uploads/defaultFolder`, and `/pathAccess/allowedPaths`, as well as container resets such as `/defaultLocalization`. Atomic settings reset at their top-level pointer, such as `/defaultTheme`. UI container-group resets remove only unlocked saved leaves in one request. An API container reset overlapping any enforced leaf is rejected, preserving saved choices hidden by enforcement. Escape `~` as `~0` and `/` as `~1` within pointer segments: a plugin setting named `a/b~c` uses `/plugins/git/settings/a~1b~0c`. Conflicting set/unset targets and changes to enforced settings are rejected. There is no null reset sentinel: `null` retains its schema-defined meaning, such as disabling a shortcut. Existing `PUT` endpoints remain available. They retain replacement semantics for unenforced settings, but omitted enforced settings preserve their hidden saved values. Supplying a different saved value for an enforced setting is rejected; unchanged saved values may round-trip. This protection also applies when no saved override exists: a legacy save cannot create one for an enforced setting. Federated protection requires the target to report enforcement metadata; upgrade older peers before relying on it.
 
 ### When changes apply
 
@@ -114,7 +114,7 @@ Process restarts depend on the key:
 - `maxUploadBytes`: restart both the web/API process and the session daemon on that machine.
 - `spawnSessions` / `subsessions` / `sessionMessages` / `askUser` / `extensionDialogsTimeoutMs` / `environmentFacts`: restart the session daemon on that machine.
 - `sessionArchive.directory`: restart the session daemon on that machine; changes only the destination for new archives.
-- `sessionNaming`: saved model, token budget, thinking level, and timeout apply to the next naming request without a restart. Existing names and in-progress naming requests are unchanged.
+- Session naming is owned by a removable Pi package. Its config file is read for each new title. Old core file values are migrated and removed when configuration is loaded; they are no longer core settings. See [Session naming](#session-naming).
 - `pathAccess`: applies on the next request; existing file views may need a browser refresh.
 - `uploads.defaultFolder`: applies to newly opened Files upload dialogs and new direct drag/drop batches after config/workspace refresh.
 - `attachments.defaultFolder`: applies to new prompt-attachment saves after config/workspace refresh.
@@ -252,7 +252,6 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 | Session messaging | `sessionMessages` | `PI_WEB_SESSION_MESSAGES` | Global/session daemon | Not supported locally; independent of spawning flags | Restart session daemon on that machine |
 | Agent can post question forms | `askUser` | `PI_WEB_ASK_USER` | Global/session daemon | Not supported locally | Restart session daemon on that machine |
 | Session archive directory | `sessionArchive.directory` | `PI_WEB_SESSION_ARCHIVE` (JSON object), `PI_WEB_SESSION_ARCHIVE_DIR` alias | Global/session daemon | Not supported locally | Restart session daemon on that machine; new archives only |
-| Session naming | `sessionNaming.model`, `sessionNaming.maxTokens`, `sessionNaming.thinkingLevel`, `sessionNaming.timeoutMs` | `PI_WEB_SESSION_NAMING` (JSON object) | Global/session daemon | Not supported locally | Next naming request; no restart |
 | Extension dialog auto-cancel timeout | `extensionDialogsTimeoutMs` | `PI_WEB_EXTENSION_DIALOGS_TIMEOUT_MS` | Global/session daemon | Not supported locally | Restart session daemon on that machine |
 | Session environment facts | `environmentFacts` | `PI_WEB_ENVIRONMENT_FACTS` | Global/session daemon | Not supported locally | Restart session daemon on that machine |
 | PI WEB plugin desired enablement | `plugins.<id>.enabled` | `PI_WEB_PLUGINS` (JSON object) | Global | Not supported locally | Browser-only: reload tab. Server-backed: manually restart sessiond, then reload tab |
@@ -503,28 +502,39 @@ Restart the session daemon after changing `askUser` or after upgrading PI WEB to
 
 ### Session naming
 
-Use **Settings → Session daemon → Session naming** on the selected machine to choose a naming model, generation budget, thinking level, and timeout. The naming model button opens a searchable list of that machine's available models; choose **Use session model** to remove the model override. No active session is required. Refresh settings to reload the list after configuring a provider. By default, naming uses the session's model and **24 tokens**, including for reasoning models. Naming does not change the conversation's model.
+The bundled **Session naming** Pi extension (`@jmfederico/pi-session-naming`) names new conversations from their first prompt. PI WEB installs it in the active Pi profile. The TUI also loads it when using that profile.
 
-These settings are optional machine-global overrides:
+To use another naming extension, remove **Session naming** through **Settings → Pi packages**. Reinstall it from **Available packages** to restore automatic naming. Package changes apply to new conversations.
+
+Configure naming in `<active-agent-profile>/session-naming/config.json` (normally `~/.pi/agent/session-naming/config.json`):
 
 ```json
 {
-  "sessionNaming": {
-    "model": "provider/model-id",
-    "maxTokens": 2048,
-    "thinkingLevel": "off",
-    "timeoutMs": 90000
-  }
+  "model": "provider/model-id",
+  "maxTokens": 2048,
+  "thinkingLevel": "off",
+  "timeoutMs": 90000
 }
 ```
 
-`model` must identify a model in that machine's model catalog, using its configured provider and credentials. Omit it to use the session model. `maxTokens` must be a positive integer; omit it to restore 24. This is a generation budget, not title length; providers may count reasoning against it. Project-local overrides are not supported.
+All fields are optional:
 
-`thinkingLevel` defaults to `minimal`. Supported values are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. Choose `off` to disable optional reasoning where supported, while keeping a positive token budget for the title. Models and providers may limit or map thinking levels; `off` cannot disable mandatory reasoning. Naming settings do not change the conversation's thinking level.
+- **`model`** defaults to the conversation's model. Use an exact provider/model ID from your profile's model catalog, with its configured credentials.
+- **`maxTokens`** defaults to `24`. Use a positive safe integer. Providers may count reasoning tokens against this budget.
+- **`thinkingLevel`** defaults to `minimal`. Options are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. Provider limits apply; some models require reasoning even with `off`.
+- **`timeoutMs`** defaults to `10000` (10 seconds). It covers model loading and generation. Use an integer from `1` through `2147483647` milliseconds.
 
-`timeoutMs` sets the total naming-request timeout, including gateway queueing, model loading, and generation. It defaults to `10000` (10 seconds). Use a positive integer in milliseconds, up to `2147483647`; Settings displays seconds. Increase it for local models that need time to load. Resetting the saved `sessionNaming` override restores inherited naming settings (10 seconds if no lower layer supplies a timeout). This is a total wall-time limit, not an idle timeout. Naming fields inherit independently; reset `/sessionNaming/timeoutMs` to restore only the inherited timeout, or `/sessionNaming` to remove the saved group when no field is enforced. `PI_WEB_SESSION_NAMING` enforces only supplied fields, so `{"model":"provider/model-id"}` leaves token budget, thinking level, and timeout independently configurable.
+File edits apply to the next naming request. Remove a field to restore its default, or save `{}` to reset all file overrides. To enforce individual values, set `PI_WEB_SESSION_NAMING` to a JSON object and restart the affected process.
 
-Saved model, budget, thinking-level, and timeout changes apply to the next naming request without a restart or reload. Existing names and in-progress naming requests are unchanged. Agent permission changes in the same panel still require a session-daemon restart. Naming failures use the existing first-message fallback and are recorded in daemon logs.
+If naming fails, the extension reports the error and uses the first few words of the prompt as the title.
+
+#### Existing settings
+
+PI WEB imports old `sessionNaming` values into the package file when it loads configuration. An existing package config takes precedence. After migration, PI WEB removes the old key from writable core config. For deployment-default entries, check the package file and remove the obsolete entries at the locations reported in the log.
+
+Use the package file for future changes. The core config API rejects the retired `sessionNaming` setting.
+
+If migration fails, check the logged source and destination paths and fix the reported problem. PI WEB retains the old key and continues startup. Migration retries on the next config load or startup. Until repaired, naming may use the package's existing config or defaults.
 
 ### Extension dialogs
 

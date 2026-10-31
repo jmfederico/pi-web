@@ -15,7 +15,6 @@ import { parseServerNoticeScope } from "../../../shared/serverNoticeContract";
 import { requireDefaultThemePreference } from "../../../shared/themePreference";
 import { requireDefaultLocalization } from "../../../shared/defaultLocalization";
 import { requireDefaultStreamingBehavior } from "../../../shared/streamingBehavior";
-import { isKnownThinkingLevel } from "../../../shared/thinkingLevels";
 import { requireInstallationName } from "../../../shared/installationName";
 import { parseRuntimeActivityPresentation } from "../../../shared/sessionActivityPresentation";
 
@@ -1531,6 +1530,7 @@ function optionalConfigSources(value: unknown): Record<string, string> | undefin
 
 function parsePiWebConfigValues(value: unknown): PiWebConfigValues {
   const record = requireRecord(value);
+  if (Object.hasOwn(record, "sessionNaming")) throw new Error("Retired PI WEB sessionNaming config field");
   return {
     ...optionalField("host", optionalString(record, "host")),
     ...optionalField("port", optionalNumber(record, "port")),
@@ -1554,7 +1554,6 @@ function parsePiWebConfigValues(value: unknown): PiWebConfigValues {
     ...optionalField("askUser", optionalBoolean(record, "askUser")),
     ...optionalField("environmentFacts", optionalBoolean(record, "environmentFacts")),
     ...optionalField("extensionDialogsTimeoutMs", optionalNumber(record, "extensionDialogsTimeoutMs")),
-    ...optionalField("sessionNaming", optionalSessionNaming(record["sessionNaming"])),
     ...optionalField("sessionArchive", optionalSessionArchive(record["sessionArchive"])),
   };
 }
@@ -1563,25 +1562,6 @@ function optionalSessionArchive(value: unknown): PiWebConfigValues["sessionArchi
   if (value === undefined) return undefined;
   if (!isRecord(value) || Array.isArray(value)) throw new Error("Invalid PI WEB sessionArchive field");
   return { ...optionalField("directory", optionalString(value, "directory")) };
-}
-
-function optionalSessionNaming(value: unknown): PiWebConfigValues["sessionNaming"] {
-  if (value === undefined) return undefined;
-  if (!isRecord(value) || Array.isArray(value)) throw new Error("Invalid PI WEB sessionNaming field");
-  const model = optionalString(value, "model");
-  const maxTokens = optionalNumber(value, "maxTokens");
-  const thinkingLevel = optionalString(value, "thinkingLevel");
-  const timeoutMs = optionalNumber(value, "timeoutMs");
-  if (model !== undefined && !/^[^/\s]+\/[^\s]+$/.test(model)) throw new Error("Invalid PI WEB sessionNaming.model field");
-  if (maxTokens !== undefined && (!Number.isSafeInteger(maxTokens) || maxTokens <= 0)) throw new Error("Invalid PI WEB sessionNaming.maxTokens field");
-  if (thinkingLevel !== undefined && !isKnownThinkingLevel(thinkingLevel)) throw new Error("Invalid PI WEB sessionNaming.thinkingLevel field");
-  if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2147483647)) throw new Error("Invalid PI WEB sessionNaming.timeoutMs field");
-  return {
-    ...optionalField("model", model),
-    ...optionalField("maxTokens", maxTokens),
-    ...optionalField("thinkingLevel", thinkingLevel),
-    ...optionalField("timeoutMs", timeoutMs),
-  };
 }
 
 function optionalAgent(value: unknown): PiWebConfigValues["agent"] | undefined {

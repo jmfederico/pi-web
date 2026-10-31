@@ -58,7 +58,7 @@ import type { ActiveSession } from "./sessionRuntimeStore.js";
 import type { PluginSessionSnapshot } from "../../shared/pluginCatalogTypes.js";
 import type { PiWebHostPiSessionConnection } from "../../server-plugin-api.js";
 import { PiSessionEventConnections } from "./piSessionEventConnections.js";
-import { fallbackSessionName, generateShortSessionName, requireInitialSessionName } from "./sessionNameGenerator.js";
+import { requireInitialSessionName } from "./sessionNameGenerator.js";
 import { createExtensionSessionDispatch } from "./extensionSessionDispatch.js";
 import { computeEditPreview, type EditPreviewResult } from "./editPreview.js";
 import { attachmentsToInlineImages, saveAttachmentsToWorkspace } from "./attachmentService.js";
@@ -1195,7 +1195,7 @@ export interface PiSessionServiceDependencies {
    */
   catalogRefreshStatus?: CatalogRefreshStatus;
   /**
-   * Live global config reader for attachments and automatic session naming.
+   * Live global config reader for attachments.
    * Read fresh at request time so Settings edits apply without a daemon restart.
    * When omitted, built-in
    * defaults apply, with the project-local layer supported for attachments only.
@@ -1220,6 +1220,7 @@ export class PiSessionService implements SessionRouteService {
   private readonly commandService: SessionCommandService<PiAgentSession>;
   /** Runtime-identity gate held while Pi may await abandoned-branch summarization. */
   private readonly treeNavigations = new WeakSet<PiAgentSession>();
+  private readonly publishedSessionNames = new WeakMap<PiAgentSession, { sessionId: string; name: string | undefined }>();
   /**
    * Bare live leaf selected without an appended summary entry. Recording that
    * leaf distinguishes the unpersisted move from a later runtime append that
@@ -1258,7 +1259,6 @@ export class PiSessionService implements SessionRouteService {
   private readonly subsessionStoppedParents = new WeakSet<PiAgentSession>();
   private readonly subsessionDeliveringParents = new WeakSet<PiAgentSession>();
   private readonly subsessionDeliveryScheduled = new WeakSet<PiAgentSession>();
-  private readonly deferredGeneratedSessionNames = new WeakMap<PiAgentSession, string>();
   private readonly compactionPromptQueues = new Map<string, QueuedPrompt[]>();
   private readonly compactionDrainTimers = new Map<string, NodeJS.Timeout>();
   private readonly authLossWarnings = new Set<string>();
@@ -1372,6 +1372,7 @@ export class PiSessionService implements SessionRouteService {
       (sessionId, text) => this.prompt(this.activeSessionRef(sessionId), text, undefined, undefined, { echoUserMessage: false }),
       events,
       {
+        onSessionNameChanged: (session) => { this.publishSessionName(session); },
         onCompactionStart: (session) => {
           this.beginSessionEntryMutation(session, "compact the session");
           this.manualCompactionEnded.delete(session);
@@ -1739,7 +1740,6 @@ export class PiSessionService implements SessionRouteService {
         ...(session.model === undefined ? {} : { model: modelScopeId(session.model) }),
         thinkingLevel: session.thinkingLevel,
       };
-      if (promptText !== undefined) this.maybeGenerateSessionName(session, promptText);
       const created = this.announceCreatedSession(active, cwd);
       // Publication transfers lifetime ownership to normal hosting. Plugin
       // cancellation after this point must not abort this or later user work.
@@ -3152,7 +3152,6 @@ export class PiSessionService implements SessionRouteService {
     await this.assertWritable(ref);
     const session = await this.getOrOpen(ref);
     this.assertTreeNavigationInactive(session, "send a prompt");
-    this.maybeGenerateSessionName(session, promptText);
     const isQueued = session.isStreaming || session.isCompacting;
     const behavior = isQueued ? requestedBehavior ?? "followUp" : undefined;
     if (isQueued && images.length === 0 && this.hasQueuedMessageText(session, promptText)) {
@@ -3448,8 +3447,6 @@ export class PiSessionService implements SessionRouteService {
         this.flushDeferredTreeNavigationWork(session);
         this.reconcileRuntimeMessageCount(session);
         this.publishStatus(session);
-      } else {
-        this.deferredGeneratedSessionNames.delete(session);
       }
     }
   }
@@ -4867,8 +4864,10 @@ export class PiSessionService implements SessionRouteService {
     this.restoreSubsessionReceipts(session);
     this.reconcileRuntimeMessageCount(session);
     this.interventionStates.set(session, sessionInterventionRequired(session.sessionManager.getEntries?.() ?? session.sessionManager.getBranch()));
+    this.publishedSessionNames.set(session, { sessionId: session.sessionId, name: session.sessionName });
     const unsubscribe = session.subscribe((event) => {
       const eventType = getString(event, "type");
+      if (eventType === "session_info_changed") this.publishSessionName(session);
       const message = getProperty(event, "message");
       const inbox = this.subsessionInbox(session.sessionId, session.sessionFile);
       if (eventType === "agent_start") {
@@ -5036,56 +5035,7 @@ export class PiSessionService implements SessionRouteService {
     this.compactionDrainTimers.clear();
   }
 
-  private maybeGenerateSessionName(session: PiAgentSession, firstMessage: string): void {
-    if (session.sessionName !== undefined || session.messages.length !== 0 || session.isStreaming || session.isCompacting) return;
-
-    void this.generateSessionName(session, firstMessage).then((name) => {
-      if (name === undefined) this.logger.info({ sessionId: session.sessionId }, "Session naming returned no title; using the first-message fallback");
-      this.applyGeneratedSessionName(session, name ?? fallbackSessionName(firstMessage));
-    }).catch((err: unknown) => {
-      this.logger.info({ sessionId: session.sessionId, err }, "Session naming failed; using the first-message fallback");
-      this.applyGeneratedSessionName(session, fallbackSessionName(firstMessage));
-    });
-  }
-
-  private async generateSessionName(session: PiAgentSession, firstMessage: string): Promise<string | undefined> {
-    // Capture one config snapshot per request; later edits must not reroute an
-    // in-progress naming call or rename sessions that already have a title.
-    const naming = this.config === undefined ? {} : (await this.config.read()).effectiveConfig.sessionNaming ?? {};
-    let model = session.model;
-    if (naming.model !== undefined) {
-      const parsed = parseModelSpec(naming.model);
-      model = parsed === undefined ? undefined : session.modelRuntime.getModel(parsed.provider, parsed.modelId);
-      if (model === undefined) throw new Error(`Session naming model is unavailable: ${naming.model}`);
-    }
-    if (model === undefined) return undefined;
-    return generateShortSessionName(session.agent.streamFunction, model, firstMessage, naming);
-  }
-
-  private applyGeneratedSessionName(session: PiAgentSession, name: string | undefined): void {
-    if (name === undefined || session.sessionName !== undefined) return;
-    if (this.treeNavigations.has(session)) {
-      this.deferredGeneratedSessionNames.set(session, name);
-      return;
-    }
-    session.setSessionName(name);
-    this.publishSessionName(session);
-  }
-
   private flushDeferredTreeNavigationWork(session: PiAgentSession): void {
-    const generatedName = this.deferredGeneratedSessionNames.get(session);
-    this.deferredGeneratedSessionNames.delete(session);
-    if (generatedName !== undefined) {
-      try {
-        this.applyGeneratedSessionName(session, generatedName);
-      } catch (error: unknown) {
-        this.logger.info(
-          { sessionId: session.sessionId, error: error instanceof Error ? error.message : String(error) },
-          "failed to apply deferred session name",
-        );
-      }
-    }
-
     this.restoreSubsessionReceipts(session);
     this.scheduleSubsessionDelivery(session);
   }
@@ -5130,6 +5080,9 @@ export class PiSessionService implements SessionRouteService {
   }
 
   private publishSessionName(session: PiAgentSession): void {
+    const previous = this.publishedSessionNames.get(session);
+    if (previous?.sessionId === session.sessionId && previous.name === session.sessionName) return;
+    this.publishedSessionNames.set(session, { sessionId: session.sessionId, name: session.sessionName });
     const event = session.sessionName === undefined
       ? { type: "session.name", sessionId: session.sessionId } as const
       : { type: "session.name", sessionId: session.sessionId, name: session.sessionName } as const;

@@ -5,7 +5,7 @@ import { cache } from "lit/directives/cache.js";
 import { live } from "lit/directives/live.js";
 import type { AppAction } from "../actions";
 import { loadThemeCatalog, type BrowserThemeCatalog } from "../themeCatalog";
-import { configApi, piPackagesApi, pluginsApi, type Machine, type MachineHealth, type MachineRuntime, type SessionModel, type PiPackageMutationResponse, type PiPackageScope, type PiPackagesResponse, type PiWebConfigResponse, type PiWebConfigValues, type PiWebPluginsResponse } from "../api";
+import { configApi, piPackagesApi, pluginsApi, type Machine, type MachineHealth, type MachineRuntime, type PiPackageMutationResponse, type PiPackageScope, type PiPackagesResponse, type PiWebConfigResponse, type PiWebConfigValues, type PiWebPluginsResponse } from "../api";
 import type { McpAuthContext, McpAuthHandler } from "./settings/SettingsMcpPanel";
 import "./settings/SettingsMcpPanel";
 import type { SettingsSection } from "../settingsRoute";
@@ -86,11 +86,6 @@ export class SettingsDialog extends LitElement {
   @state() private loading = true;
   @state() private accessLoading = true;
   @state() private sessiondLoading = true;
-  @state() private namingModels: SessionModel[] = [];
-  @state() private namingModelsLoading = true;
-  @state() private namingModelsErrorPresentation: DisplayText = "";
-  private get namingModelsError(): string { return displayText(this.namingModelsErrorPresentation); }
-  private set namingModelsError(value: DisplayText) { this.namingModelsErrorPresentation = value; }
   @state() private pluginLoading = true;
   @state() private packageLoading = true;
   @state() private saving = false;
@@ -121,7 +116,6 @@ export class SettingsDialog extends LitElement {
   private loadRequestSeq = 0;
   private accessLoadRequestSeq = 0;
   private sessiondLoadRequestSeq = 0;
-  private namingModelsLoadRequestSeq = 0;
   private pluginLoadRequestSeq = 0;
   private packageLoadRequestSeq = 0;
   private packageMutationSeq = 0;
@@ -310,15 +304,11 @@ export class SettingsDialog extends LitElement {
       return html`
         <settings-sessiond-panel
           .configResponse=${this.sessiondConfigResponse}
-          .namingModels=${this.namingModels}
-          .namingModelsLoading=${this.namingModelsLoading}
-          .namingModelsError=${this.namingModelsError}
           .loading=${this.sessiondLoading}
           .saving=${this.saving}
           .error=${this.sessiondError}
           .savedMessage=${this.savedSection === "sessiond" ? this.savedMessage : ""}
           .targetLabel=${settingsFeedbackTargetLabel(this.settingsTarget())}
-          .targetId=${this.settingsTarget().id}
           .onReload=${() => this.reloadSessiondState()}
           .onSave=${(config: PiWebConfigValues, unset?: string[]) => this.saveSessiondConfig(config, unset)}
           .onReset=${(paths: string[]) => this.saveSessiondConfig({}, paths)}
@@ -493,27 +483,8 @@ export class SettingsDialog extends LitElement {
   private async reloadSessiondState(target = this.settingsTarget()): Promise<void> {
     await Promise.all([
       this.loadSessiondConfigForTarget(target),
-      this.loadNamingModelsForTarget(target),
       this.onRefreshMachineRuntime?.(target.id),
     ]);
-  }
-
-  private async loadNamingModelsForTarget(target = this.settingsTarget()): Promise<void> {
-    const requestSeq = ++this.namingModelsLoadRequestSeq;
-    this.namingModelsLoading = true;
-    this.namingModelsError = "";
-    try {
-      const response = await configApi.namingModels(target.id);
-      if (!this.isCurrentNamingModelsLoad(requestSeq, target)) return;
-      this.namingModels = response.models;
-    } catch (error) {
-      if (this.isCurrentNamingModelsLoad(requestSeq, target)) {
-        const diagnostic = errorMessage(error);
-        this.namingModelsError = () => settingsDialogMessages.t("loadModels", { target: settingsFeedbackTargetLabel(target), error: settingsFeedbackSelectedError(diagnostic, target) });
-      }
-    } finally {
-      if (this.isCurrentNamingModelsLoad(requestSeq, target)) this.namingModelsLoading = false;
-    }
   }
 
   private async loadSessiondConfigForTarget(target = this.settingsTarget()): Promise<void> {
@@ -743,12 +714,7 @@ export class SettingsDialog extends LitElement {
       if (!this.isCurrentSettingsTarget(target)) return;
       this.sessiondConfigResponse = response;
       if (target.kind === "local" && this.configResponse !== undefined) this.configResponse = mergeSelectedMachineSessiondConfig(this.configResponse, response);
-      const changedPaths = [...Object.keys(config).map((key) => `/${key}`), ...unset];
-      const namingOnly = changedPaths.length > 0 && changedPaths.every((path) => path === "/sessionNaming" || path.startsWith("/sessionNaming/"));
-      const message = () => namingOnly
-        ? settingsDialogMessages.t("namingSaved", { name: target.name })
-        : settingsDialogMessages.t("sessiondSaved", { name: target.name, naming: String(config.sessionNaming !== undefined) });
-      this.showSavedMessage(message, "sessiond");
+      this.showSavedMessage(() => settingsDialogMessages.t("sessiondSaved", { name: target.name }), "sessiond");
     } catch (error) {
       if (this.isCurrentSettingsTarget(target)) {
         const diagnostic = errorMessage(error);
@@ -864,10 +830,6 @@ export class SettingsDialog extends LitElement {
     return requestSeq === this.accessLoadRequestSeq && this.isCurrentSettingsTarget(target);
   }
 
-  private isCurrentNamingModelsLoad(requestSeq: number, target: SettingsMachineTarget): boolean {
-    return requestSeq === this.namingModelsLoadRequestSeq && this.isCurrentSettingsTarget(target);
-  }
-
   private isCurrentSessiondLoad(requestSeq: number, target: SettingsMachineTarget): boolean {
     return requestSeq === this.sessiondLoadRequestSeq && this.isCurrentSettingsTarget(target);
   }
@@ -901,10 +863,6 @@ export class SettingsDialog extends LitElement {
   }
 
   private resetSessiondStateForTargetChange(): void {
-    this.namingModelsLoadRequestSeq += 1;
-    this.namingModels = [];
-    this.namingModelsLoading = false;
-    this.namingModelsError = "";
     this.sessiondLoadRequestSeq += 1;
     this.sessiondLoading = false;
     this.sessiondError = "";

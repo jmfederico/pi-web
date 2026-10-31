@@ -1,0 +1,15 @@
+{
+  "name": "@jmfederico/pi-session-naming",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Name new Pi conversations from their first prompt without changing the conversation model.",
+  "keywords": ["pi-package"],
+  "pi": { "extensions": ["./extensions"] },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}

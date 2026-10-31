@@ -18,7 +18,6 @@ beforeEach(() => {
   // The dialog loads gateway and selected-machine settings data when it
   // connects; stub those boundary calls so the shell tests stay deterministic.
   vi.spyOn(configApi, "config").mockResolvedValue(configResponse({}));
-  vi.spyOn(configApi, "namingModels").mockResolvedValue({ models: [] });
   vi.spyOn(pluginsApi, "plugins").mockResolvedValue(pluginsResponse([]));
   vi.spyOn(piPackagesApi, "packages").mockResolvedValue({ packages: [] });
 });

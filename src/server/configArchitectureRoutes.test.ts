@@ -30,6 +30,24 @@ function start(env: NodeJS.ProcessEnv = {}): void {
 }
 
 describe("layered config updates", () => {
+  it.each(["/api/config", "/api/machines/local/config"])("rejects legacy core sessionNaming updates through %s without touching persistence", async (url) => {
+    const deployment = JSON.stringify({ uploads: { defaultFolder: "deployed" } });
+    const saved = JSON.stringify({ askUser: false });
+    writeFileSync(defaults, deployment);
+    writeFileSync(writable, saved);
+    start();
+    for (const [method, payload] of [
+      ["PUT", { config: { sessionNaming: { model: "provider/model" } } }],
+      ["PATCH", { set: { sessionNaming: {} } }],
+      ["PATCH", { unset: ["/sessionNaming"] }],
+    ] as const) {
+      const result = await app.inject({ method, url, payload });
+      expect(result.statusCode).toBe(400);
+      expect(readFileSync(writable, "utf8")).toBe(saved);
+      expect(readFileSync(defaults, "utf8")).toBe(deployment);
+    }
+  });
+
   it("resets sessionMessages to deployment defaults without persisting effective values", async () => {
     writeFileSync(defaults, JSON.stringify({ sessionMessages: false }));
     writeFileSync(writable, JSON.stringify({ spawnSessions: false, subsessions: false }));
@@ -66,35 +84,35 @@ describe("layered config updates", () => {
 
   it.each(["/api/config", "/api/machines/local/config"])("protects hidden overrides during legacy PUT through %s", async (url) => {
     writeFileSync(defaults, "{}");
-    const saved = { installationName: "Hidden", sessionNaming: { model: "provider/hidden", maxTokens: 64 }, askUser: false, quietMode: true };
+    const saved = { installationName: "Hidden", attachments: { defaultFolder: "hidden" }, uploads: { defaultFolder: "ordinary" }, askUser: false, quietMode: true };
     writeFileSync(writable, JSON.stringify(saved));
-    start({ PI_WEB_INSTALLATION_NAME: "Enforced", PI_WEB_SESSION_NAMING: '{"model":"provider/enforced"}' });
+    start({ PI_WEB_INSTALLATION_NAME: "Enforced", PI_WEB_ATTACHMENTS: '{"defaultFolder":"enforced"}' });
     const read = await app.inject({ method: "GET", url });
     const roundtrip = await app.inject({ method: "PUT", url, payload: { config: read.json<PiWebConfigResponse>().config } });
     expect(roundtrip.statusCode).toBe(200);
     expect(JSON.parse(readFileSync(writable, "utf8"))).toEqual(saved);
-    for (const config of [{ installationName: "New" }, { sessionNaming: { model: "provider/new" } }]) {
+    for (const config of [{ installationName: "New" }, { attachments: { defaultFolder: "new" } }]) {
       const rejected = await app.inject({ method: "PUT", url, payload: { config } });
       expect(rejected.statusCode).toBe(400);
       expect(rejected.json<{ error: string }>().error).toContain("enforced by");
       expect(JSON.parse(readFileSync(writable, "utf8"))).toEqual(saved);
     }
-    const result = await app.inject({ method: "PUT", url, payload: { config: { sessionNaming: { timeoutMs: 1000 } } } });
+    const result = await app.inject({ method: "PUT", url, payload: { config: { uploads: { defaultFolder: "updated" } } } });
     expect(result.statusCode).toBe(200);
     expect(JSON.parse(readFileSync(writable, "utf8"))).toEqual({
       ...(url === "/api/config" ? {} : { askUser: false, quietMode: true }),
-      installationName: "Hidden", sessionNaming: { model: "provider/hidden", timeoutMs: 1000 },
+      installationName: "Hidden", attachments: { defaultFolder: "hidden" }, uploads: { defaultFolder: "updated" },
     });
-    expect(result.json<PiWebConfigResponse>().effectiveConfig).toMatchObject({ installationName: "Enforced", sessionNaming: { model: "provider/enforced", timeoutMs: 1000 } });
+    expect(result.json<PiWebConfigResponse>().effectiveConfig).toMatchObject({ installationName: "Enforced", attachments: { defaultFolder: "enforced" }, uploads: { defaultFolder: "updated" } });
   });
 
   it.each(["/api/config", "/api/machines/local/config"])("does not materialize absent enforced saved settings through %s", async (url) => {
     writeFileSync(defaults, "{}");
     writeFileSync(writable, "{}");
-    start({ PI_WEB_INSTALLATION_NAME: "Enforced", PI_WEB_SESSION_NAMING: '{"model":"provider/enforced"}' });
-    const result = await app.inject({ method: "PUT", url, payload: { config: { sessionNaming: { maxTokens: 32 } } } });
+    start({ PI_WEB_INSTALLATION_NAME: "Enforced", PI_WEB_ATTACHMENTS: '{"defaultFolder":"enforced"}' });
+    const result = await app.inject({ method: "PUT", url, payload: { config: { uploads: { defaultFolder: "personal" } } } });
     expect(result.statusCode).toBe(200);
-    expect(JSON.parse(readFileSync(writable, "utf8"))).toEqual({ sessionNaming: { maxTokens: 32 } });
+    expect(JSON.parse(readFileSync(writable, "utf8"))).toEqual({ uploads: { defaultFolder: "personal" } });
   });
 
   it("saves and resets in one request without copying defaults or modifying the defaults file", async () => {
@@ -142,7 +160,7 @@ describe("layered config updates", () => {
     { set: { quietMode: "false" } },
     { set: { typo: true } },
     { unset: null },
-    { unset: ["/sessionNaming/unknown"] },
+    { unset: ["/uploads/unknown"] },
   ])("rejects an invalid complete update before writing: %j", async (payload) => {
     writeFileSync(defaults, "{}");
     writeFileSync(writable, "{}");
@@ -152,20 +170,20 @@ describe("layered config updates", () => {
     expect(readFileSync(writable, "utf8")).toBe("{}");
   });
 
-  it("saves and resets independent naming fields without touching enforced siblings", async () => {
-    writeFileSync(defaults, JSON.stringify({ sessionNaming: { model: "provider/deployed", maxTokens: 24, timeoutMs: 12000 } }));
-    writeFileSync(writable, JSON.stringify({ sessionNaming: { model: "provider/hidden", maxTokens: 64 } }));
-    start({ PI_WEB_SESSION_NAMING: '{"model":"provider/enforced"}' });
-    const saved = await app.inject({ method: "PATCH", url: "/api/machines/local/config", payload: { set: { sessionNaming: { maxTokens: 32 } } } });
+  it("saves and resets independent localization fields without touching enforced siblings", async () => {
+    writeFileSync(defaults, JSON.stringify({ defaultLocalization: { language: "en", timeZone: "UTC", formatLocale: "de-DE" } }));
+    writeFileSync(writable, JSON.stringify({ defaultLocalization: { language: "fr", timeZone: "Europe/Paris" } }));
+    start({ PI_WEB_DEFAULT_LOCALIZATION: '{"language":"de"}' });
+    const saved = await app.inject({ method: "PATCH", url: "/api/config", payload: { set: { defaultLocalization: { timeZone: "Europe/Berlin" } } } });
     expect(saved.statusCode).toBe(200);
-    expect(saved.json<PiWebConfigResponse>().effectiveConfig.sessionNaming).toEqual({ model: "provider/enforced", maxTokens: 32, timeoutMs: 12000 });
-    expect(saved.json<PiWebConfigResponse>().config.sessionNaming).toEqual({ model: "provider/hidden", maxTokens: 32 });
-    expect(saved.json<PiWebConfigResponse>().enforcedSettings).toEqual({ "/sessionNaming/model": "PI_WEB_SESSION_NAMING" });
-    const reset = await app.inject({ method: "PATCH", url: "/api/machines/local/config", payload: { unset: ["/sessionNaming/maxTokens"] } });
+    expect(saved.json<PiWebConfigResponse>().effectiveConfig.defaultLocalization).toEqual({ language: "de", timeZone: "Europe/Berlin", formatLocale: "de-DE" });
+    expect(saved.json<PiWebConfigResponse>().config.defaultLocalization).toEqual({ language: "fr", timeZone: "Europe/Berlin" });
+    expect(saved.json<PiWebConfigResponse>().enforcedSettings).toEqual({ "/defaultLocalization/language": "PI_WEB_DEFAULT_LOCALIZATION" });
+    const reset = await app.inject({ method: "PATCH", url: "/api/config", payload: { unset: ["/defaultLocalization/timeZone"] } });
     expect(reset.statusCode).toBe(200);
-    expect(reset.json<PiWebConfigResponse>().effectiveConfig.sessionNaming).toEqual({ model: "provider/enforced", maxTokens: 24, timeoutMs: 12000 });
-    expect(JSON.parse(readFileSync(writable, "utf8"))).toEqual({ sessionNaming: { model: "provider/hidden" } });
-    const rejected = await app.inject({ method: "PATCH", url: "/api/machines/local/config", payload: { unset: ["/sessionNaming"] } });
+    expect(reset.json<PiWebConfigResponse>().effectiveConfig.defaultLocalization).toEqual({ language: "de", timeZone: "UTC", formatLocale: "de-DE" });
+    expect(JSON.parse(readFileSync(writable, "utf8"))).toEqual({ defaultLocalization: { language: "fr" } });
+    const rejected = await app.inject({ method: "PATCH", url: "/api/config", payload: { unset: ["/defaultLocalization"] } });
     expect(rejected.statusCode).toBe(400);
   });
 

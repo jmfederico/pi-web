@@ -4,7 +4,7 @@ import {
 } from "./knownAutoInstallPiPackages.js";
 
 describe("isKnownAutoInstallablePiPackageId", () => {
-  it.each(["@jmfederico/pi-relay", "@jmfederico/pi-web-workflows"])("recognizes %s as a known auto-installable package", (id) => {
+  it.each(["@jmfederico/pi-relay", "@jmfederico/pi-web-workflows", "@jmfederico/pi-session-naming"])("recognizes %s as a known auto-installable package", (id) => {
     expect(isKnownAutoInstallablePiPackageId(id)).toBe(true);
   });
 

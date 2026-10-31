@@ -1,5 +1,5 @@
 /**
- * Relays and Workflows are distributed only with PI WEB. Their known package
+ * Bundled Pi packages are distributed with PI WEB. Their known package
  * identities are managed: configured copies follow the running installation,
  * while users retain control of resource filters and whether to install them.
  * Missing packages are installed unless dismissed through Settings.

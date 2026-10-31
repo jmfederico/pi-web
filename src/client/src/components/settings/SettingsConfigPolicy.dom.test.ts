@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { SettingsGeneralPanel } from "./SettingsGeneralPanel";
 import { SettingsThemePanel } from "./SettingsThemePanel";
 import { SettingsPluginsPanel } from "./SettingsPluginsPanel";
-import { SettingsSessiondPanel } from "./SettingsSessiondPanel";
 import { SettingsLocalizationPanel } from "./SettingsLocalizationPanel";
 import { localization } from "../../localization/browser";
 import { configResponse, pluginInfo, pluginsResponse } from "../SettingsDialog.testSupport";
@@ -95,32 +94,6 @@ describe("Settings source, enforcement and reset controls", () => {
     await localization.setPreferenceOverrides({});
   });
 
-  it("saves and resets naming leaves independently of an enforced model", async () => {
-    const panel = new SettingsSessiondPanel();
-    panel.configResponse = {
-      ...configResponse({ sessionNaming: { model: "hidden", maxTokens: 48, timeoutMs: 30000 } }),
-      effectiveConfig: { sessionNaming: { model: "enforced", maxTokens: 48, timeoutMs: 30000 } },
-      enforcedSettings: { "/sessionNaming/model": "PI_WEB_SESSION_NAMING" },
-    };
-    panel.onSave = vi.fn();
-    panel.onReset = vi.fn();
-    document.body.append(panel);
-    await panel.updateComplete;
-    expect(panel.shadowRoot?.querySelector<HTMLButtonElement>("#session-naming-model")?.disabled).toBe(true);
-    const budget = panel.shadowRoot?.querySelector<HTMLInputElement>("#session-naming-max-tokens");
-    if (!budget) throw new Error("Missing budget input");
-    expect(budget.disabled).toBe(false);
-    budget.value = "64";
-    budget.dispatchEvent(new Event("change"));
-    expect(panel.onSave).toHaveBeenCalledExactlyOnceWith({ sessionNaming: { maxTokens: 64 } });
-    budget.value = "";
-    budget.dispatchEvent(new Event("change"));
-    expect(panel.onSave).toHaveBeenLastCalledWith({}, ["/sessionNaming/maxTokens"]);
-    resetButton(panel, "/sessionNaming").click();
-    expect(panel.onReset).toHaveBeenCalledExactlyOnceWith(["/sessionNaming/maxTokens", "/sessionNaming/timeoutMs"]);
-    expect(panel.configResponse.config.sessionNaming?.model).toBe("hidden");
-  });
-
   it("clears folder overrides and saves other machine changes in one update", async () => {
     const panel = new SettingsGeneralPanel();
     panel.machineConfigResponse = configResponse({ installationName: "Saved", uploads: { defaultFolder: "saved-uploads" }, attachments: { defaultFolder: "saved-attachments" }, pathAccess: { allowedPaths: ["/saved"] } });
@@ -142,20 +115,4 @@ describe("Settings source, enforcement and reset controls", () => {
     expect(panel.onSaveMachineConfig).toHaveBeenCalledExactlyOnceWith({ pathAccess: { allowedPaths: [] } }, ["/uploads/defaultFolder", "/attachments/defaultFolder"]);
   });
 
-  it("disables the entire naming setting when env-controlled and resets the saved object when unlocked", async () => {
-    const panel = new SettingsSessiondPanel();
-    const response = { ...configResponse({ sessionNaming: { maxTokens: 48 } }), enforcedSettings: { "/sessionNaming": "PI_WEB_SESSION_NAMING" } };
-    panel.configResponse = response;
-    panel.onReset = vi.fn();
-    document.body.append(panel);
-    await panel.updateComplete;
-    for (const id of ["session-naming-model", "session-naming-max-tokens", "session-naming-thinking-level", "session-naming-timeout"]) {
-      expect(panel.shadowRoot?.querySelector<HTMLInputElement>(`#${id}`)?.disabled).toBe(true);
-    }
-    expect(resetButton(panel, "/sessionNaming").disabled).toBe(true);
-    panel.configResponse = { ...response, enforcedSettings: {} };
-    await panel.updateComplete;
-    resetButton(panel, "/sessionNaming").click();
-    expect(panel.onReset).toHaveBeenCalledExactlyOnceWith(["/sessionNaming/maxTokens"]);
-  });
 });

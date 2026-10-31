@@ -40,9 +40,7 @@ describe("settings-dialog session daemon machine targeting", () => {
     expect(getDialogProperty(dialog, "sessiondLoading")).toBe(false);
   });
 
-  it("reloads session-daemon config, naming models, and the machine runtime together", async () => {
-    const models = [{ provider: "provider", id: "naming" }];
-    const modelsSpy = vi.spyOn(configApi, "namingModels").mockResolvedValue({ models });
+  it("reloads session-daemon config and the machine runtime together", async () => {
     const config = configResponse({ spawnSessions: false, subsessions: true });
     const configSpy = vi.spyOn(configApi, "config").mockResolvedValue(config);
     const runtimeRefresh = vi.fn(() => Promise.resolve());
@@ -54,9 +52,6 @@ describe("settings-dialog session daemon machine targeting", () => {
 
     expect(configSpy).toHaveBeenCalledWith(remoteMachine.id);
     expect(runtimeRefresh).toHaveBeenCalledWith(remoteMachine.id);
-    expect(modelsSpy).toHaveBeenCalledWith(remoteMachine.id);
-    expect(getDialogProperty(dialog, "namingModels")).toBe(models);
-    expect(getDialogProperty(dialog, "namingModelsLoading")).toBe(false);
     expect(getDialogProperty(dialog, "sessiondConfigResponse")).toBe(config);
   });
 
@@ -75,48 +70,6 @@ describe("settings-dialog session daemon machine targeting", () => {
     expect(getDialogProperty(dialog, "configResponse")).toMatchObject({ config: { host: "127.0.0.1", spawnSessions: true, subsessions: false } });
     expect(getDialogProperty(dialog, "savedMessage")).toBe("Session daemon settings saved for local. Restart the session daemon to apply agent permission changes. Restarting interrupts active sessions.");
     expect(getDialogProperty(dialog, "saving")).toBe(false);
-  });
-
-  it.each([
-    { model: "provider/naming", maxTokens: 48 },
-    { maxTokens: 64 },
-  ])("confirms naming-only saves apply without a restart, including resets (%j)", async (sessionNaming) => {
-    stubWindowTimers();
-    const patch = { sessionNaming };
-    const saved = configResponse(patch);
-    const saveSpy = vi.spyOn(configApi, "updateConfig").mockResolvedValue(saved);
-    const dialog = new SettingsDialog();
-    dialog.machine = remoteMachine;
-
-    await callDialogPromise(dialog, "saveSessiondConfig", patch);
-
-    expect(saveSpy).toHaveBeenCalledWith({ set: patch, unset: [] }, remoteMachine.id);
-    expect(getDialogProperty(dialog, "sessiondConfigResponse")).toBe(saved);
-    expect(getDialogProperty(dialog, "savedMessage")).toBe(`Session naming settings saved for ${remoteMachine.name}. They apply to the next naming request without a restart. Existing names and in-progress naming requests are unchanged.`);
-  });
-
-  it("resets a naming group in one request without deleting an enforced saved model", async () => {
-    stubWindowTimers();
-    const snapshot = configResponse({ sessionNaming: { model: "hidden", maxTokens: 48, timeoutMs: 30000 } });
-    snapshot.enforcedSettings = { "/sessionNaming/model": "PI_WEB_SESSION_NAMING" };
-    const saveSpy = vi.spyOn(configApi, "updateConfig").mockResolvedValue(snapshot);
-    const dialog = new SettingsDialog();
-    dialog.machine = remoteMachine;
-    setDialogProperty(dialog, "sessiondConfigResponse", snapshot);
-    await callDialogPromise(dialog, "saveSessiondConfig", {}, ["/sessionNaming"]);
-    expect(saveSpy).toHaveBeenCalledExactlyOnceWith({ unset: ["/sessionNaming/maxTokens", "/sessionNaming/timeoutMs"] }, remoteMachine.id);
-    expect(getDialogProperty(dialog, "savedMessage")).toContain("without a restart");
-  });
-
-  it("keeps the permission restart warning when a patch also changes naming", async () => {
-    stubWindowTimers();
-    const patch = { askUser: true, sessionNaming: { maxTokens: 48 } };
-    vi.spyOn(configApi, "updateConfig").mockResolvedValue(configResponse(patch));
-    const dialog = new SettingsDialog();
-
-    await callDialogPromise(dialog, "saveSessiondConfig", patch);
-
-    expect(getDialogProperty(dialog, "savedMessage")).toBe("Session daemon settings saved for local. Restart the session daemon to apply agent permission changes. Restarting interrupts active sessions. Naming changes apply to the next naming request without a restart.");
   });
 
   it("saves session-daemon toggles on the selected remote machine", async () => {
