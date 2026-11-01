@@ -13,6 +13,7 @@ import { rememberExternalMarkdownImageDimensions, restoreExternalMarkdownImageDi
 import type { MarkdownWorkspaceContext, WorkspaceFileOpenRequest } from "../formatting/workspaceLinks";
 import { formattedTextStyles } from "./formattedTextStyles";
 import { codeBlockFrameStyles } from "./codeBlockFrameStyles";
+import { markdownMathStyles } from "../formatting/markdownMathStyles";
 
 @customElement("formatted-text")
 export class FormattedText extends LitElement {
@@ -199,7 +200,7 @@ export class FormattedText extends LitElement {
     button.setAttribute("aria-label", label);
   }
 
-  static override styles = [formattedTextStyles, codeBlockFrameStyles, css`
+  static override styles = [formattedTextStyles, codeBlockFrameStyles, markdownMathStyles, css`
     .pending-source { white-space: pre-wrap; overflow-wrap: anywhere; }
     .enhanced-content { display: contents; }
     .enhanced-content[hidden] { display: none; }

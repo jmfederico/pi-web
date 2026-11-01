@@ -22,6 +22,7 @@ export default defineConfig({
         scheduledTasks: fileURLToPath(new URL("scheduled-tasks.html", import.meta.url)),
         transcriptRenderers: fileURLToPath(new URL("transcript-renderers.html", import.meta.url)),
         transcriptExample: fileURLToPath(new URL("transcript-example.html", import.meta.url)),
+        markdownMath: fileURLToPath(new URL("markdown-math.html", import.meta.url)),
       },
     },
   },

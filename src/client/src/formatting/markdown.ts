@@ -1,4 +1,5 @@
-import { marked, type Renderer } from "marked";
+import { Marked, Renderer } from "marked";
+import { markdownMath } from "./markdownMath";
 import messages from "../components/formattedText.messages";
 import { DEFAULT_CODE_BLOCK_POLICY, type CodeBlockPolicy } from "./codeBlockPolicy";
 import { replaceLocalMarkdownImages } from "./markdownImages";
@@ -6,10 +7,11 @@ import { workspaceFilePreviewUrl } from "../api/urls";
 import { resolveAppUrl } from "../appUrl";
 import { workspaceMarkdownFilePath, type MarkdownWorkspaceContext } from "./workspaceLinks";
 
-const nativeCodeRenderer = new marked.Renderer();
+const markdown = new Marked(markdownMath);
+const nativeCodeRenderer = new Renderer();
 
 function markdownRenderer(codeBlocks: CodeBlockPolicy): Renderer {
-  const renderer = new marked.Renderer();
+  const renderer = new Renderer();
   renderer.html = ({ text }) => escapeHtml(text);
   renderer.code = (token) => {
     const block = codeBlocks.presentation === "code"
@@ -42,7 +44,7 @@ export function toSafeMarkdownHtml(text: string, workspace?: MarkdownWorkspaceCo
   ]]);
   const cached = markdownHtmlCache.get(key);
   if (cached !== undefined) return cached;
-  const html = marked.parse(text, { async: false, breaks: true, gfm: true, renderer: markdownRenderer(codeBlocks) });
+  const html = markdown.parse(text, { async: false, breaks: true, gfm: true, renderer: markdownRenderer(codeBlocks) });
   const safeHtml = sanitizeHtml(html, workspace, imageIntentKey, imagesEnabled);
   markdownHtmlCache.set(key, safeHtml);
   if (markdownHtmlCache.size > MAX_MARKDOWN_CACHE_ENTRIES) {

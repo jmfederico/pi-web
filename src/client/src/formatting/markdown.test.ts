@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { marked } from "marked";
+import { Parser } from "marked";
 import { toSafeMarkdownHtml } from "./markdown";
 import { DEFAULT_CODE_BLOCK_POLICY, PLAIN_CODE_BLOCK_POLICY } from "./codeBlockPolicy";
 import { markdownWorkspaceContext, type MarkdownWorkspaceContext } from "./workspaceLinks";
@@ -30,7 +30,7 @@ describe("final Markdown HTML cache", () => {
   it("reuses sanitized HTML without parsing or rebuilding DOM, including across route query changes", () => {
     vi.stubEnv("BASE_URL", "./");
     window.history.replaceState(null, "", "/nested/pi/?view=chat");
-    const parse = vi.spyOn(marked, "parse");
+    const parse = vi.spyOn(Parser, "parse");
     const createElement = vi.spyOn(document, "createElement");
     const text = "[cache reuse](./cached.txt)\n\n| A |\n| - |\n| B |";
     const first = toSafeMarkdownHtml(text, workspace);
@@ -55,7 +55,7 @@ describe("final Markdown HTML cache", () => {
     expect(toSafeMarkdownHtml(text, workspace)).toContain("/fixed/api/");
 
     const plain = toSafeMarkdownHtml(text);
-    const parse = vi.spyOn(marked, "parse");
+    const parse = vi.spyOn(Parser, "parse");
     vi.stubEnv("BASE_URL", "/elsewhere/");
     expect(toSafeMarkdownHtml(text)).toBe(plain);
     expect(parse).not.toHaveBeenCalled();
@@ -65,9 +65,60 @@ describe("final Markdown HTML cache", () => {
     const text = "cache eviction sentinel";
     toSafeMarkdownHtml(text);
     for (let index = 0; index < 300; index++) toSafeMarkdownHtml(`cache eviction ${String(index)}`);
-    const parse = vi.spyOn(marked, "parse");
+    const parse = vi.spyOn(Parser, "parse");
     toSafeMarkdownHtml(text);
     expect(parse).toHaveBeenCalledOnce();
+  });
+});
+
+describe("Markdown equations", () => {
+  it.each([
+    ["Inline $x_1^2 + \\frac{a}{b}$ text", "x_1^2 + \\frac{a}{b}", false],
+    [String.raw`中文\(E = mc^2\)公式`, "E = mc^2", false],
+    ["$$\\sum_{i=1}^{n} i$$", "\\sum_{i=1}^{n} i", true],
+    ["Before\n\\[\n\\frac{a}{b}\n\\]\nAfter", "\\frac{a}{b}", true],
+    ["Before\n$$\n\\begin{aligned}a &= b \\\\ c &= d\\end{aligned}\n$$\nAfter", String.raw`\begin{aligned}a &= b \\ c &= d\end{aligned}`, true],
+    ["**Energy $E=mc^2$** and [$x$](https://example.com)", "E=mc^2", false],
+    ["- Value $x_1$\n- Other", "x_1", false],
+    ["| Value |\n| --- |\n| $x$ |", "x", false],
+  ])("renders math before Markdown can consume TeX syntax: %s", (text, tex, display) => {
+    const root = render(text);
+    expect(root.querySelector(".katex annotation")?.textContent.trim()).toBe(tex);
+    expect(root.querySelector(".katex math")).not.toBeNull();
+    expect(root.querySelector(".katex-html[aria-hidden=true]")).not.toBeNull();
+    expect(root.querySelector(".katex-error")).toBeNull();
+    expect(root.querySelector(".katex-display") !== null).toBe(display);
+    if (text.startsWith("Before")) {
+      expect(root.textContent).toContain("Before");
+      expect(root.textContent).toContain("After");
+    }
+  });
+
+  it.each([
+    "Costs $5 and $10, or $20.50.",
+    String.raw`Escaped \$x\$ and \(unfinished`,
+    "Not math: $ spaced $ or $unclosed",
+    "Streaming $$x+1$",
+    "`$x$` and `\\(y\\)`\n\n```latex\n$$x^2$$\n\\[y\\]\n```\n\n    $z$",
+  ])("keeps currency, literal code, escapes and incomplete math out of the renderer: %s", (text) => {
+    expect(render(text).querySelector(".katex")).toBeNull();
+  });
+
+  it("completes a streamed equation without reusing incomplete HTML", () => {
+    expect(render("Answer: $\\frac{1}{2}").querySelector(".katex")).toBeNull();
+    expect(render("Answer: $\\frac{1}{2}$").querySelector(".katex annotation")?.textContent).toBe(String.raw`\frac{1}{2}`);
+  });
+
+  it("contains invalid TeX and untrusted commands without losing surrounding prose", () => {
+    const root = render(String.raw`Before $\notARealCommand{x}$ after.
+
+$\href{javascript:alert(1)}{bad}$ $\includegraphics{https://example.com/track.png}$
+$\htmlClass{injected}{x}$
+<img src=x onerror=alert(1)>`);
+    expect(root.textContent).toContain("Before");
+    expect(root.textContent).toContain("after.");
+    expect(root.textContent).toContain(String.raw`\notARealCommand`);
+    expect(root.querySelector("a, img, script, iframe, .injected, [onerror]")).toBeNull();
   });
 });
 
@@ -151,7 +202,7 @@ describe("plain Markdown code blocks", () => {
   it("reuses HTML across overflow and preview choices but not presentation or copy choices", () => {
     const text = "```text\nindependent block policy cache\n```";
     const plain = toSafeMarkdownHtml(text, undefined, undefined, true, PLAIN_CODE_BLOCK_POLICY);
-    const parse = vi.spyOn(marked, "parse");
+    const parse = vi.spyOn(Parser, "parse");
     expect(toSafeMarkdownHtml(text, undefined, undefined, true, { ...PLAIN_CODE_BLOCK_POLICY, overflow: "scroll", previews: true })).toBe(plain);
     expect(parse).not.toHaveBeenCalled();
     expect(toSafeMarkdownHtml(text, undefined, undefined, true, { ...PLAIN_CODE_BLOCK_POLICY, presentation: "code" })).toContain("<pre><code");
