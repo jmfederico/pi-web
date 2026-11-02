@@ -29,6 +29,8 @@ async function packageFixture(directory: string, name = sdkName, version = "1.0.
   return directory;
 }
 
+const piName = process.platform === "win32" ? "pi.cmd" : "pi";
+
 async function executableFixture(root: string, bin: string): Promise<void> {
   await mkdir(join(root, "bin"), { recursive: true });
   const target = join(root, "bin", "pi.js");
@@ -36,6 +38,18 @@ async function executableFixture(root: string, bin: string): Promise<void> {
   await chmod(target, 0o755);
   await mkdir(bin, { recursive: true });
   await symlink(target, join(bin, process.platform === "win32" ? "pi.cmd" : "pi"));
+}
+
+async function managedInstallerFixture(root: string, version = "1.0.0"): Promise<string> {
+  const agent = join(root, "pi-agent");
+  await packageFixture(join(agent, "install", "releases", version, "node_modules", sdkName), sdkName, version);
+  await writeFile(join(agent, "install", "current-version"), `${version}\n`);
+  // A plain launcher script like the managed installer: not a package symlink.
+  await mkdir(join(agent, "bin"), { recursive: true });
+  const launcher = join(agent, "bin", piName);
+  await writeFile(launcher, "#!/bin/sh\n# managed Pi launcher\n");
+  await chmod(launcher, 0o755);
+  return agent;
 }
 
 function missingLocalSdk(): never {
@@ -102,6 +116,58 @@ describe("Pi package selection", () => {
     expect(await selectPiRuntimePackageDir({
       env: { PATH: prefix }, platform: "win32", resolveLocalSdk: missingLocalSdk,
     })).toBe(await realpath(host));
+  });
+
+  it("resolves the SDK beside a managed-installer launcher script on PATH", async () => {
+    const directory = await workspace();
+    const agent = await managedInstallerFixture(directory, "2.1.3");
+    expect(await selectPiRuntimePackageDir({
+      env: { PATH: [join(directory, "absent"), join(agent, "bin")].join(delimiter) },
+      resolveLocalSdk: missingLocalSdk,
+    })).toBe(join(agent, "install", "releases", "2.1.3", "node_modules", sdkName));
+  });
+
+  it("follows a linked managed launcher from a PATH overlay", async () => {
+    const directory = await workspace();
+    const agent = await managedInstallerFixture(directory);
+    const bin = join(directory, "bin");
+    await mkdir(bin);
+    await symlink(join(agent, "bin", piName), join(bin, piName));
+    expect(await selectPiRuntimePackageDir({
+      env: { PATH: bin }, resolveLocalSdk: missingLocalSdk,
+    })).toBe(await realpath(join(agent, "install", "releases", "1.0.0", "node_modules", sdkName)));
+  });
+
+  it.each(["missing", "empty"])("treats a managed install without a usable current-version as unrelated", async (kind) => {
+    const directory = await workspace();
+    const agent = await managedInstallerFixture(directory);
+    if (kind === "empty") await writeFile(join(agent, "install", "current-version"), "\n");
+    else await rm(join(agent, "install", "current-version"));
+    await expect(selectPiRuntimePackageDir({
+      env: { PATH: join(agent, "bin") }, resolveLocalSdk: missingLocalSdk,
+    })).rejects.toThrow("does not expose a Pi npm SDK package");
+  });
+
+  it("keeps ordinary npm resolution ahead of a managed-installer launcher on PATH", async () => {
+    const directory = await workspace();
+    const local = await packageFixture(join(directory, "local"));
+    const agent = await managedInstallerFixture(directory);
+    expect(await selectPiRuntimePackageDir({
+      env: { PATH: join(agent, "bin") }, resolveLocalSdk: () => pathToFileURL(join(local, "index.js")).href,
+    })).toBe(local);
+  });
+
+  it("still rejects a launcher script without a managed install before a later managed Pi", async () => {
+    const directory = await workspace();
+    const bin = join(directory, "bin");
+    await mkdir(bin);
+    const standalone = join(bin, piName);
+    await writeFile(standalone, "#!/bin/sh\n# not a managed installer\n");
+    await chmod(standalone, 0o755);
+    const agent = await managedInstallerFixture(directory);
+    await expect(selectPiRuntimePackageDir({
+      env: { PATH: [bin, join(agent, "bin")].join(delimiter) }, resolveLocalSdk: missingLocalSdk,
+    })).rejects.toThrow("PI WEB will not select a different Pi");
   });
 
   it("does not silently replace an unsupported PATH Pi with a later installation", async () => {
