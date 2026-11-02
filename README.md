@@ -5,6 +5,7 @@
 [![Node.js](https://img.shields.io/node/v/@jmfederico/pi-web)](package.json)
 [![Bun*](https://img.shields.io/badge/Bun*-fbf0df?logo=bun&logoColor=black)](https://pi-web.dev/install#bun)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![omp status](https://omppackages.com/badge/@jmfederico/pi-web.svg)](https://omppackages.com/packages/@jmfederico/pi-web)
 
 **PI WEB is a web UI for [Pi Coding Agent](https://github.com/earendil-works/pi/tree/main/packages/coding-agent) that keeps agent sessions running in real workspaces on your machine or server.**
 
