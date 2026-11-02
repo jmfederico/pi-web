@@ -36,6 +36,28 @@ async function findSdkAncestor(file: string): Promise<string | undefined> {
   }
 }
 
+/**
+ * Mirror the managed Pi installer's launcher layout. The managed `pi` command
+ * is a plain shell script at `<agent dir>/bin/pi`, not a symlink into a
+ * package tree, so ancestry probing cannot find the SDK. Instead of parsing
+ * the launcher script, probe the documented managed-install layout beside it;
+ * a real SDK package in that layout is the only way the probe can succeed.
+ */
+async function managedInstallerSdk(agentDirectory: string): Promise<string | undefined> {
+  const installDirectory = join(agentDirectory, "install");
+  let version: string;
+  try {
+    version = (await readFile(join(installDirectory, "current-version"), "utf8")).trim();
+  } catch (error) {
+    if (error instanceof Error && "code" in error
+      && (error.code === "ENOENT" || error.code === "ENOTDIR")) return undefined;
+    throw error;
+  }
+  if (version === "") return undefined;
+  const candidate = join(installDirectory, "releases", version, "node_modules", SDK_PACKAGE);
+  return await isSdkPackage(candidate) ? candidate : undefined;
+}
+
 /** Prefer an explicit Pi host, then ordinary npm resolution, then the Pi command. */
 export async function selectPiRuntimePackageDir(options: PiRuntimeSelectionOptions = {}): Promise<string> {
   const env = options.env ?? process.env;
@@ -74,8 +96,15 @@ export async function selectPiRuntimePackageDir(options: PiRuntimeSelectionOptio
         && (error.code === "ENOENT" || error.code === "ENOTDIR" || error.code === "EACCES")) continue;
       throw error;
     }
-    const sdk = await findSdkAncestor(await realpath(executable));
+    const resolved = await realpath(executable);
+    const sdk = await findSdkAncestor(resolved);
     if (sdk !== undefined) return sdk;
+    if (platform !== "win32") {
+      // The managed launcher lives at `<agent dir>/bin/pi`; the SDK selection
+      // needs the agent directory one level above the launcher's directory.
+      const managed = await managedInstallerSdk(dirname(dirname(resolved)));
+      if (managed !== undefined) return managed;
+    }
     if (platform === "win32") {
       // npm's Windows command shim is a regular file beside node_modules, not
       // a symlink into the SDK. Use the shim's ordinary Node search paths.
