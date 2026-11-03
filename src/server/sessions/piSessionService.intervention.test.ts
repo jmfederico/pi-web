@@ -29,7 +29,7 @@ describe("generic human intervention", () => {
     const tool = createRequestHumanInterventionToolDefinition();
     const result = await tool.execute("call", { reason: "Approve the migration described above" }, undefined, undefined, stubExtensionToolContext());
     expect(result.terminate).toBe(true);
-    expect(result.details).toEqual({ interventionRequired: true });
+    expect(result.details).toEqual({ interventionRequired: true, reason: "Approve the migration described above" });
     await expect(tool.execute("call", { reason: "  " }, undefined, undefined, stubExtensionToolContext())).rejects.toThrow("must not be empty");
   });
 
