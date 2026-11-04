@@ -1,15 +1,18 @@
 import { createRequire } from "node:module";
 import type { IPty, spawn } from "node-pty";
 import type { PtyProvider } from "./ptyProvider.js";
+import { ensureNodePtySpawnHelper } from "./nodePtySpawnHelper.js";
 
 type NodePtyProcess = Pick<IPty, "write" | "resize" | "kill" | "onData" | "onExit">;
 interface NodePtyModule { spawn(...args: Parameters<typeof spawn>): NodePtyProcess }
 
 function loadNodePty(): NodePtyModule {
-  const loaded: unknown = createRequire(import.meta.url)("node-pty");
+  const require = createRequire(import.meta.url);
+  const loaded: unknown = require("node-pty");
   if (!isNodePtyModule(loaded)) {
     throw new Error("node-pty does not expose spawn()");
   }
+  ensureNodePtySpawnHelper(require);
   return loaded;
 }
 
@@ -35,7 +38,8 @@ export function createNodePtyProvider(load: () => NodePtyModule = loadNodePty): 
       try {
         module = load();
       } catch (cause) {
-        throw new Error("Terminal PTY unavailable: could not load the node-pty native binding", { cause });
+        const detail = cause instanceof Error ? cause.message : String(cause);
+        throw new Error(`Terminal PTY unavailable: ${detail}`, { cause });
       }
       const child = module.spawn(options.shell, options.args, {
         name: "xterm-256color", cwd: options.cwd, cols: options.cols, rows: options.rows, env: options.env,

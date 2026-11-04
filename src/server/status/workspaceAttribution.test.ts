@@ -1,5 +1,8 @@
+import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { Project, WorkspaceListing } from "../types.js";
+import type { WorkspaceProviderAuthorityResolution } from "../../shared/apiTypes.js";
+import { WorkspaceProviderRegistry } from "../workspaces/workspaceProviderRegistry.js";
 import { CachedWorkspaceAttribution } from "./workspaceAttribution.js";
 
 describe("CachedWorkspaceAttribution", () => {
@@ -65,17 +68,17 @@ describe("CachedWorkspaceAttribution", () => {
     expect(resolved.get("/srv/dev/project-1/")?.projectId).toBe("project-1");
   });
 
-  it("lists workspace providers once per cache window instead of once per status change", async () => {
+  it("looks up established records once per cache window instead of once per status change", async () => {
     const deps = dependencies({ "project-1": ["/srv/dev/project-1"] });
     const attribution = new CachedWorkspaceAttribution(deps);
 
     await attribution.attribute(["/srv/dev/project-1"]);
     await attribution.attribute(["/srv/dev/project-1"]);
 
-    expect(deps.workspaces.list).toHaveBeenCalledTimes(1);
+    expect(deps.workspaces.lookup).toHaveBeenCalledTimes(1);
   });
 
-  it("shares one listing pass between concurrent callers", async () => {
+  it("shares one projection load between concurrent callers", async () => {
     const deps = dependencies({ "project-1": ["/srv/dev/project-1"] });
     const attribution = new CachedWorkspaceAttribution(deps);
 
@@ -84,10 +87,10 @@ describe("CachedWorkspaceAttribution", () => {
       attribution.attribute(["/srv/dev/project-1"]),
     ]);
 
-    expect(deps.workspaces.list).toHaveBeenCalledTimes(1);
+    expect(deps.workspaces.lookup).toHaveBeenCalledTimes(1);
   });
 
-  it("re-lists after a mutation invalidates the cache", async () => {
+  it("reloads established records after publication invalidates the cache", async () => {
     const deps = dependencies({ "project-1": ["/srv/dev/project-1"] });
     const attribution = new CachedWorkspaceAttribution(deps);
 
@@ -95,10 +98,10 @@ describe("CachedWorkspaceAttribution", () => {
     attribution.invalidate();
     await attribution.attribute(["/srv/dev/project-1"]);
 
-    expect(deps.workspaces.list).toHaveBeenCalledTimes(2);
+    expect(deps.workspaces.lookup).toHaveBeenCalledTimes(2);
   });
 
-  it("picks up a workspace created outside this process once the cache window expires", async () => {
+  it("reloads changed established records once the cache window expires", async () => {
     const paths: Record<string, string[]> = { "project-1": ["/srv/dev/project-1"] };
     let clock = 1_000;
     const deps = dependencies(paths, { topologyTtlMs: 5_000, now: () => clock });
@@ -113,11 +116,11 @@ describe("CachedWorkspaceAttribution", () => {
     expect((await attribution.attribute(["/srv/dev/project-1-hotfix"])).size).toBe(1);
   });
 
-  it("logs a provider listing failure and keeps attributing other projects", async () => {
+  it("logs a workspace lookup failure and keeps attributing other projects", async () => {
     const deps = dependencies({ "project-1": ["/srv/dev/project-1"], "project-2": ["/srv/dev/project-2"] });
-    deps.workspaces.list.mockImplementation((project: Project) => (project.id === "project-1"
-      ? Promise.reject(new Error("provider offline"))
-      : Promise.resolve(workspacesFor(project, ["/srv/dev/project-2"]))));
+    deps.workspaces.lookup.mockImplementation((project: Project) => (project.id === "project-1"
+      ? Promise.reject(new Error("lookup unavailable"))
+      : Promise.resolve(resolutionFor(project, ["/srv/dev/project-2"]))));
     const attribution = new CachedWorkspaceAttribution(deps);
 
     const resolved = await attribution.attribute(["/srv/dev/project-1", "/srv/dev/project-2"]);
@@ -126,8 +129,47 @@ describe("CachedWorkspaceAttribution", () => {
     expect(resolved.get("/srv/dev/project-2")?.projectId).toBe("project-2");
     expect(deps.logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({ projectId: "project-1" }),
-      "workspace attribution could not list workspaces for a project",
+      "workspace attribution could not look up workspaces for a project",
     );
+  });
+
+  it("leaves undiscovered projects unattributed until discovery publication invalidates the projection", async () => {
+    const owner = { ...project("project-1"), path: resolve("/srv/dev/project-1") };
+    const providerList = vi.fn(() => Promise.resolve([{ key: "root", path: owner.path, label: "Main", isMain: true }]));
+    const probe = vi.fn(() => Promise.resolve("claim" as const));
+    const logger = { warn: vi.fn() };
+    const registry = new WorkspaceProviderRegistry({
+      contributions: [{
+        pluginId: "provider", pluginName: "Provider", packageRoot: "/plugins/provider",
+        source: "test", scope: "local", moduleRevision: "r1", provider: { probe, list: providerList },
+      }],
+      pathInspector: () => true,
+      logger,
+      onPublished: () => { attribution.invalidate(); },
+    });
+    const attribution = new CachedWorkspaceAttribution({
+      projects: { list: () => Promise.resolve([owner]) }, workspaces: registry, logger,
+    });
+    try {
+      expect((await attribution.attribute([owner.path])).size).toBe(0);
+      attribution.invalidate();
+      expect((await attribution.attribute([owner.path])).size).toBe(0);
+      expect(probe).not.toHaveBeenCalled();
+      expect(providerList).not.toHaveBeenCalled();
+
+      const discovered = await registry.resolve(owner);
+      expect((await attribution.attribute([owner.path])).get(owner.path)).toEqual({
+        projectId: owner.id, workspaceId: discovered.workspaces[0]?.id,
+      });
+      for (let index = 0; index < 3; index += 1) {
+        attribution.invalidate();
+        expect((await attribution.attribute([owner.path])).size).toBe(1);
+      }
+      expect(probe).toHaveBeenCalledOnce();
+      expect(providerList).toHaveBeenCalledOnce();
+    } finally {
+      await registry.closeAll();
+    }
   });
 
   it("logs a failing project listing and does not retry it within the cache window", async () => {
@@ -164,7 +206,7 @@ function dependencies(pathsByProjectId: Record<string, string[]>, options: Attri
       list: vi.fn(() => Promise.resolve(Object.keys(pathsByProjectId).map(project))),
     },
     workspaces: {
-      list: vi.fn((candidate: Project) => Promise.resolve(workspacesFor(candidate, pathsByProjectId[candidate.id] ?? []))),
+      lookup: vi.fn<(candidate: Project) => Promise<WorkspaceProviderAuthorityResolution | undefined>>((candidate) => Promise.resolve(resolutionFor(candidate, pathsByProjectId[candidate.id] ?? []))),
     },
     logger: { warn: vi.fn<(details: Record<string, unknown>, message: string) => void>() },
     ...options,
@@ -173,6 +215,10 @@ function dependencies(pathsByProjectId: Record<string, string[]>, options: Attri
 
 function project(id: string): Project {
   return { id, name: id, path: `/srv/dev/${id}`, createdAt: "2026-07-28T00:00:00.000Z" };
+}
+
+function resolutionFor(owner: Project, paths: string[]): WorkspaceProviderAuthorityResolution {
+  return { status: "folder", projectId: owner.id, workspaces: workspacesFor(owner, paths), diagnostics: [] };
 }
 
 function workspacesFor(owner: Project, paths: string[]): WorkspaceListing[] {

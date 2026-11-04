@@ -27,9 +27,11 @@ const project: Project = {
 
 let app: FastifyInstance;
 let sockets: WebSocket[];
+let logLines: string[];
 
 beforeEach(async () => {
-  app = Fastify({ logger: false });
+  logLines = [];
+  app = Fastify({ logger: { stream: { write: (line: string) => { logLines.push(line); } } } });
   await app.register(fastifyWebsocket);
   installPluginBackendChannelWebSocketPayloadLimit(app.websocketServer);
   sockets = [];
@@ -52,7 +54,7 @@ describe("session daemon plugin backend channels", () => {
         opened.push(scope.kind);
         return { receive() { /* no incoming frames */ }, close };
       }), apiVersion: 5 }],
-      workspaces: { resolve: () => Promise.reject(new Error("Workspace resolution must not run")) },
+      workspaces: { lookup: () => Promise.reject(new Error("Workspace resolution must not run")) },
     });
     registerPluginBackendChannelRoutes(app, { projects, backends: registry });
     await app.listen({ host: "127.0.0.1", port: 0 });
@@ -316,6 +318,13 @@ describe("session daemon plugin backend channels", () => {
     expect(receiverError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ code: "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH" }));
     expect(openChannel).not.toHaveBeenCalled();
     await vi.waitFor(() => { expect(registry.activeChannelCount()).toBe(0); });
+    const rejectionLogs = (): unknown[] => logLines
+      .map((line): unknown => JSON.parse(line))
+      .filter((entry) => typeof entry === "object" && entry !== null && "msg" in entry
+        && entry.msg === "plugin backend channel transport failed");
+    expect(rejectionLogs()).toMatchObject([{
+      err: { code: "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH" }, phase: "awaiting-open",
+    }]);
 
     const oversizedData = connect(workspaceId);
     const messages = socketMessages(oversizedData);
@@ -327,6 +336,12 @@ describe("session daemon plugin backend channels", () => {
     expect([1009, 1006]).toContain((await oversizedDataClose).code);
     expect(receiverError).toHaveBeenCalledTimes(2);
     expect(receiverError).toHaveBeenNthCalledWith(2, expect.objectContaining({ code: "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH" }));
+    const rejections = rejectionLogs();
+    expect(rejections).toHaveLength(2);
+    expect(rejections[1]).toMatchObject({ err: { code: "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH" }, phase: "ready" });
+    const requestIds = rejections.map((entry) => typeof entry === "object" && entry !== null && "reqId" in entry ? entry.reqId : undefined);
+    expect(requestIds.every((id) => typeof id === "string")).toBe(true);
+    expect(new Set(requestIds).size).toBe(2);
     expect(openChannel).toHaveBeenCalledOnce();
     expect(receive).not.toHaveBeenCalled();
     await vi.waitFor(() => { expect(registry.activeChannelCount()).toBe(0); });

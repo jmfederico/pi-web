@@ -61,7 +61,7 @@ it.skipIf(process.platform === "win32" || namedHooks.status !== 0 || !namedHooks
       const publish = vi.fn<(event: WorkspaceChangedEvent) => void>();
       const invalidate = vi.fn();
       const notifyChanged = vi.fn();
-      const changes = new WorkspaceChangeNotifier({ attribution: { invalidate }, status: { notifyChanged }, publish });
+      const changes = new WorkspaceChangeNotifier({ requestRefresh: (projectId) => { registry?.requestRefresh(projectId); }, attribution: { invalidate }, status: { notifyChanged }, publish });
       registerWorkspaceNotificationRoutes(app, { projects, workspaces: registry, changes });
       await app.listen({ path: socket });
       await registry.reconcileProject(project);

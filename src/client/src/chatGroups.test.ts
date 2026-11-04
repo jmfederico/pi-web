@@ -34,6 +34,18 @@ describe("groupChatMessages", () => {
     ]);
   });
 
+  it("keeps successful intervention requests out of collapsed activity", () => {
+    const execution = (toolName: string, status: "pending" | "success", details?: unknown, args?: unknown): ChatLine => ({
+      role: "tool", parts: [{ type: "toolExecution", toolName, summary: "", status, ...(details === undefined ? {} : { details }), ...(args === undefined ? {} : { args }) }],
+    });
+    const request = execution("any_tool", "success", { interventionRequired: true, reason: "Approve the plan" });
+    const legacy = execution("request_human_intervention", "success", { interventionRequired: true }, { reason: "Approve the plan" });
+    const pending = execution("request_human_intervention", "pending", undefined, { reason: "Approve the plan" });
+    const askUser = execution("ask_user", "success", { interventionRequired: true, ask: {} });
+    expect(groupChatMessages([request, legacy]).map((group) => group.kind)).toEqual(["message", "message"]);
+    expect(groupChatMessages([pending, askUser]).map((group) => group.kind)).toEqual(["group"]);
+  });
+
   it("groups technical parts until a readable message is encountered", () => {
     const messages: ChatLine[] = [
       { role: "assistant", parts: [{ type: "thinking", text: "plan" }, { type: "toolCall", toolName: "read", summary: "file" }] },

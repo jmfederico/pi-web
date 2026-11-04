@@ -91,6 +91,135 @@ describe("WorkspaceProviderRegistry", () => {
     expect(Object.isFrozen(linked.removal)).toBe(true);
   });
 
+  it("keeps lookups read-only, including cold and changed project identities", async () => {
+    const probe = vi.fn(() => Promise.resolve<"claim">("claim"));
+    const list = vi.fn((input: { path: string }) => Promise.resolve([workspace("root", input.path, true)]));
+    const registry = registryFor([contribution("owner", provider({ probe, list }))]);
+    expect(await registry.lookup(project)).toBeUndefined();
+    expect(probe).not.toHaveBeenCalled();
+    const discovered = await registry.resolve(project);
+    expect(await registry.lookup(project)).toBe(discovered);
+    expect(await registry.lookup({ ...project, path: hostPath("/moved") })).toBeUndefined();
+    expect(list).toHaveBeenCalledOnce();
+    await registry.closeAll();
+  });
+
+  it("keeps established identity readable while a mutation-triggered refresh runs", async () => {
+    const replacement = deferred<ProviderWorkspace[]>();
+    const started = deferred<undefined>();
+    const list = vi.fn().mockResolvedValueOnce([workspace("root", project.path, true)])
+      .mockImplementationOnce(() => { started.resolve(undefined); return replacement.promise; });
+    const registry = registryFor([contribution("owner", provider({ probe: () => Promise.resolve("claim"), list }))]);
+    const established = await registry.resolve(project);
+    registry.requestRefresh(project.id);
+    await started.promise;
+    expect(await registry.lookup(project)).toBe(established);
+    replacement.resolve([workspace("new", hostPath("/new"), true)]);
+    const refreshed = await registry.resolve(project);
+    expect(await registry.lookup(project)).toBe(refreshed);
+    expect(refreshed.workspaces[0]?.path).toBe(hostPath("/new"));
+    expect(list).toHaveBeenCalledTimes(2);
+    await registry.closeAll();
+  });
+
+  it("keeps caller-owned authority checks out of the shared workspace record", async () => {
+    const started = deferred<undefined>();
+    const list = vi.fn((_input: unknown, signal: AbortSignal) => {
+      if (list.mock.calls.length === 1) return Promise.resolve([workspace("root", project.path, true)]);
+      started.resolve(undefined);
+      return new Promise<ProviderWorkspace[]>((_resolve, reject) => {
+        signal.addEventListener("abort", () => { reject(new Error("Disconnected")); }, { once: true });
+      });
+    });
+    const registry = registryFor([contribution("owner", provider({ probe: () => Promise.resolve("claim"), list }))]);
+    const known = await registry.resolve(project);
+    const controller = new AbortController();
+    const checking = registry.checkCurrent(project, controller.signal);
+    const rejected = expect(checking).rejects.toThrow();
+    await started.promise;
+    // Neither an in-flight check nor its cancellation interrupts routine reads.
+    expect(await registry.lookup(project)).toBe(known);
+    controller.abort();
+    await rejected;
+    expect(await registry.lookup(project)).toBe(known);
+    await registry.closeAll();
+  });
+
+  it("does not publish older discovery after a newer mutation refresh", async () => {
+    const stale = deferred<ProviderWorkspace[]>();
+    const started = deferred<undefined>();
+    const list = vi.fn().mockImplementationOnce(() => {
+      started.resolve(undefined);
+      return stale.promise;
+    }).mockResolvedValue([workspace("new", hostPath("/new"), true)]);
+    const onPublished = vi.fn();
+    const registry = new WorkspaceProviderRegistry({
+      contributions: [contribution("owner", provider({ probe: () => Promise.resolve("claim"), list }))],
+      logger: { warn: vi.fn() }, pathInspector: () => true, onPublished,
+    });
+    const oldDiscovery = registry.resolve(project);
+    await started.promise;
+    expect(await registry.lookup(project)).toBeUndefined();
+    registry.requestRefresh(project.id);
+    const fresh = await registry.resolve(project);
+    stale.resolve([workspace("old", hostPath("/old"), true)]);
+    await oldDiscovery;
+    expect(await registry.lookup(project)).toBe(fresh);
+    expect(fresh.workspaces[0]?.path).toBe(hostPath("/new"));
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(onPublished).toHaveBeenCalledExactlyOnceWith(project.id);
+    await registry.closeAll();
+  });
+
+  it("logs projection notification failures without failing already-published discovery", async () => {
+    const warn = vi.fn();
+    const registry = new WorkspaceProviderRegistry({
+      contributions: [], logger: { warn },
+      onPublished: () => { throw new Error("Projection unavailable"); },
+    });
+    const published = await registry.resolve(project);
+    expect(await registry.lookup(project)).toBe(published);
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: project.id }),
+      "workspace discovery projection notification failed",
+    );
+    await registry.closeAll();
+  });
+
+  it("drains superseded discovery still performing path inspection during shutdown", async () => {
+    const inspection = deferred<boolean>();
+    const started = deferred<undefined>();
+    const pathInspector = vi.fn().mockImplementationOnce(() => {
+      started.resolve(undefined);
+      return inspection.promise;
+    }).mockReturnValue(true);
+    const registry = new WorkspaceProviderRegistry({
+      contributions: [contribution("owner", provider({
+        probe: () => Promise.resolve("claim"),
+        list: () => Promise.resolve([workspace("root", project.path, true)]),
+      }))],
+      logger: { warn: vi.fn() },
+      pathInspector,
+    });
+    const oldDiscovery = registry.resolve(project);
+    await started.promise;
+    registry.requestRefresh(project.id);
+    await registry.resolve(project);
+    let closed = false;
+    const closing = registry.closeAll().then(() => { closed = true; });
+    try {
+      // Give the shutdown promise a full event-loop turn to settle if it has
+      // accidentally lost ownership of the superseded scan.
+      await new Promise<void>((resolveTurn) => { setImmediate(resolveTurn); });
+      expect(closed).toBe(false);
+    } finally {
+      inspection.resolve(true);
+      await oldDiscovery;
+      await closing;
+    }
+    expect(closed).toBe(true);
+  });
+
   it("coalesces only equivalent in-flight resolutions and never retains a completed result", async () => {
     const firstBaselineList = deferred<ProviderWorkspace[]>();
     let baselineLists = 0;

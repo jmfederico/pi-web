@@ -32,5 +32,6 @@ export default {
   skill: message("[skill]", "Skill invocation disclosure prefix, followed by a raw skill name"),
   loadedSkill: message<{ name: string }>("Loaded {name}", "Skill-read status; name is a raw skill identifier"),
   readSkill: message<{ path: string }>("read {path}", "Skill-read source path; path is not translated"),
+  interventionRequest: message("Input requested", "Heading of a request the agent addressed to the user when it stopped for input, approval, or an action"),
   toolResult: message<{ name: string; failed: string }>("{failed, select, yes {{name} result · Failed} other {{name} result}}", "Tool-result disclosure; name is a raw tool identifier"),
 };

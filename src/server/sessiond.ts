@@ -291,6 +291,12 @@ async function createSessionDaemonRuntime() {
     const workspaceProviders = new WorkspaceProviderRegistry({
       contributions: eligibleWorkspaceProviderContributions(providerContributions, providerHealth),
       logger: app.log,
+      // Discovery starts only after composition. Publication invalidates status
+      // after the new record exists; status reads never request more discovery.
+      onPublished: () => {
+        statusAttribution.invalidate();
+        machineStatus.notifyChanged();
+      },
     });
     const statusAttribution = new CachedWorkspaceAttribution({
       projects,
@@ -308,6 +314,7 @@ async function createSessionDaemonRuntime() {
     // browser never has to reconcile a snapshot fetch against live frames.
     eventHub.setGlobalJoinFrame(() => ({ type: "machine.status", status: machineStatus.snapshot() }));
     const workspaceChanges = new WorkspaceChangeNotifier({
+      requestRefresh: (projectId) => { workspaceProviders.requestRefresh(projectId); },
       attribution: statusAttribution,
       status: machineStatus,
       publish: (event) => { eventHub.publishRealtime(event); },
@@ -425,7 +432,10 @@ async function createSessionDaemonRuntime() {
       updateTerminal: (terminal) => { workspaceActivity.updateTerminal(terminal); },
       removeTerminal: (terminalId, cwd) => { workspaceActivity.removeTerminal(terminalId, cwd); },
     });
-    const workspaceRemovals = new WorkspaceRemovalService(workspaceProviders, terminals, { notices: serverNotices });
+    const workspaceRemovals = new WorkspaceRemovalService(workspaceProviders, terminals, {
+      notices: serverNotices,
+      onMutation: (projectId) => { workspaceChanges.notify(projectId); },
+    });
     const runtimeComponent = Object.freeze({
       // The deprecated-input report is fixed at startup: it was detected from
       // the captured pre-scrub daemon environment and the config snapshot this

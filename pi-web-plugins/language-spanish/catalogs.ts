@@ -247,6 +247,7 @@ const catalogs: Record<string, Record<string, string>> = {
     "skill": "[habilidad]",
     "loadedSkill": "Se cargó {name}",
     "readSkill": "read {path}",
+    "interventionRequest": "Se necesita tu intervención",
     "toolResult": "{failed, select, yes {Resultado de {name} · Falló} other {Resultado de {name}}}"
   },
   // src/client/src/commandResults.messages.ts

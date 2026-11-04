@@ -6,6 +6,7 @@ import { cache } from "lit/directives/cache.js";
 import { MessageActionsMenu } from "./chat/MessageActionsMenu";
 import { renderSessionWarningIcon } from "./shared";
 import { chatToolOutputLabel, chatMessageGroupClassName, chatMessageGroupLabel, localizedChatGroupSummary } from "./chat/transcriptLabels";
+import { interventionRequestText } from "../chatInterventions";
 import { chatMessageHasHeader, summarizeChatGroup, type ChatDisplayGroup, type ChatGroup } from "../chatGroups";
 import type { ChatBehaviors } from "../chatBehaviors";
 import type { AskUserSubmission, SessionRef } from "../api";
@@ -272,6 +273,12 @@ export function renderPart(context: TranscriptRenderContext, part: ChatPart, mes
     }
     if (part.type === "toolCall") return html`<div class="part tool-line ui-transcript-surface ui-transcript-activity ui-transcript-tool"><div class="ui-transcript-heading"><span aria-hidden="true">▶</span> ${part.toolName}<span class="summary">${part.summaryPresentation === undefined ? part.summary : localizedArgumentSummary(part.summaryPresentation)}</span></div></div>`;
     if (part.type === "toolExecution") {
+      const request = interventionRequestText(part);
+      if (request !== undefined) return html`
+      <section class="part intervention-request ui-transcript-surface ui-transcript-activity" aria-label=${messages.t("interventionRequest")}>
+        <div class="ui-transcript-heading">${messages.t("interventionRequest")}</div>
+        <p class="intervention-request-text" dir="auto">${request}</p>
+      </section>`;
       const fallback = html`<tool-execution-view class="part" .execution=${part}></tool-execution-view>`;
       if (!context.transcriptRenderers.some((candidate) => candidate.target === "tool")) return fallback;
       return html`<pi-web-transcript-renderer class="part" .itemKey=${intentKey} .scope=${context.rendererScope}

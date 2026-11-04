@@ -306,6 +306,7 @@ const catalogs: Record<string, Record<string, string>> = {
     "skill": "[färdighet]",
     "loadedSkill": "Läste in {name}",
     "readSkill": "läs {path}",
+    "interventionRequest": "Din insats behövs",
     "toolResult": "{failed, select, yes {resultat från {name} · Misslyckades} other {resultat från {name}}}"
   },
   // src/client/src/components/contentRenderer.messages.ts

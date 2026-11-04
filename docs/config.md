@@ -480,7 +480,7 @@ In **Settings → Session daemon**, these keys are saved on the selected machine
 
 #### Human intervention
 
-An agent can write a question in the conversation and call `request_human_intervention` with a short `reason` to mark the session **Needs input** and end its run. This tool is always available, independently of the spawning, messaging, and question-form settings. It also covers approvals and actions outside PI WEB; questions in text alone do not set the indicator.
+An agent can call `request_human_intervention` with a short, self-contained `reason` to mark the session **Needs input** and end its run. The reason appears in the transcript as an **Input requested** card, so the request is visible even when the agent wrote nothing else. This tool is always available, independently of the spawning, messaging, and question-form settings. It also covers approvals and actions outside PI WEB; questions in text alone do not set the indicator.
 
 The static hollow ring appears on the session and rolls up to its workspace, project, and machine, including collapsed agent-subsession groups. Unread activity remains separate. Any new agent run clears the agent-requested state, whether started by you, another agent, or a system message. Merely queueing a message, reading the session, or navigating its transcript does not clear it. If the agent still needs help after resuming, it requests intervention again.
 

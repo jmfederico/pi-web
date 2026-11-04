@@ -1,7 +1,8 @@
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { PI_WEB_HOST_CATALOG_CAPABILITY, type PluginSessionSnapshot } from "../../shared/pluginCatalogTypes.js";
-import type { WorkspaceListing } from "../../shared/apiTypes.js";
+import type { Project, WorkspaceListing, WorkspaceProviderAuthorityResolution } from "../../shared/apiTypes.js";
+import { WorkspaceProviderRegistry } from "../workspaces/workspaceProviderRegistry.js";
 import { createServerPluginCatalogCapabilityFactory } from "./serverPluginCatalogCapability.js";
 
 const repositoryPath = resolve("/repo");
@@ -20,7 +21,11 @@ function fixture() {
     if (id !== project.id) return Promise.reject(new Error("Project not found"));
     return Promise.resolve(project);
   }) };
-  const workspaces = { resolve: vi.fn(() => Promise.resolve({ projectId: project.id, status: "provider" as const, diagnostics: [], workspaces: rows })) };
+  const resolution = (): WorkspaceProviderAuthorityResolution => ({ projectId: project.id, status: "provider", diagnostics: [], workspaces: rows });
+  const workspaces = {
+    resolve: vi.fn<(project: Project) => Promise<WorkspaceProviderAuthorityResolution>>(() => Promise.resolve(resolution())),
+    lookup: vi.fn<(project: Project, signal?: AbortSignal) => Promise<WorkspaceProviderAuthorityResolution | undefined>>(() => Promise.resolve(resolution())),
+  };
   const sessions = { listCatalogSessions: vi.fn((cwd: string, signal?: AbortSignal): Promise<readonly Omit<PluginSessionSnapshot, "pinned">[]> => {
     signal?.throwIfAborted();
     return Promise.resolve([
@@ -75,7 +80,7 @@ describe("server plugin catalog capability", () => {
     await expect(f.catalog.sessions.list(selection)).rejects.toThrow("Pin storage unavailable");
   });
 
-  it("re-resolves authority and rejects stale workspaces, missing projects and sessions", async () => {
+  it("reads established authority and rejects stale workspaces, missing projects and sessions", async () => {
     const f = fixture();
     await expect(f.catalog.sessions.get({ ...selection, sessionId: "missing" })).rejects.toThrow("session is stale or unavailable");
     await expect(f.catalog.projects.get("missing")).rejects.toThrow("Project not found");
@@ -110,6 +115,67 @@ describe("server plugin catalog capability", () => {
     const disposed = fixture();
     await disposed.instance.dispose?.(new AbortController().signal);
     await expect(disposed.catalog.projects.list()).rejects.toThrow("no longer active");
+  });
+
+  it("establishes registry identity through explicit listing without sharing reader cancellation", async () => {
+    const f = fixture();
+    let finish!: () => void;
+    let started!: () => void;
+    const discoveryStarted = new Promise<void>((resolve) => { started = resolve; });
+    const discoveryReady = new Promise<void>((resolve) => { finish = resolve; });
+    const probe = vi.fn(async (_project: unknown, signal: AbortSignal) => {
+      started();
+      await discoveryReady;
+      expect(signal.aborted).toBe(false);
+      return "pass" as const;
+    });
+    const registry = new WorkspaceProviderRegistry({
+      contributions: [{
+        pluginId: "provider", pluginName: "Provider", packageRoot: "/plugins/provider",
+        source: "test", scope: "local", moduleRevision: "r1",
+        provider: { probe, list: () => Promise.resolve([]) },
+      }],
+      logger: { warn: vi.fn() },
+    });
+    const instance = createServerPluginCatalogCapabilityFactory({
+      projects: f.projects, workspaces: registry, sessions: f.sessions, pins: f.pins,
+    }).create({ pluginId: "consumer", packageRoot: "/plugins/consumer", lifetimeSignal: f.lifetime.signal });
+    const catalog = PI_WEB_HOST_CATALOG_CAPABILITY.parse(instance.value);
+    const caller = new AbortController();
+    try {
+      const pending = catalog.workspaces.list(f.project.id, { signal: caller.signal });
+      await discoveryStarted;
+      caller.abort(new Error("Reader disconnected"));
+      finish();
+      await expect(pending).rejects.toThrow("Reader disconnected");
+      const known = await registry.lookup(f.project);
+      expect(known?.workspaces).toHaveLength(1);
+      const workspaceId = known?.workspaces[0]?.id;
+      if (workspaceId === undefined) throw new Error("Expected discovered workspace identity");
+      await expect(catalog.workspaces.get({ projectId: f.project.id, workspaceId })).resolves.toMatchObject({ id: workspaceId });
+      expect(probe).toHaveBeenCalledOnce();
+    } finally {
+      finish();
+      await instance.dispose?.(new AbortController().signal);
+      await registry.closeAll();
+    }
+  });
+
+  it("uses lookup alone for workspace and session reads and fails closed before discovery", async () => {
+    const f = fixture();
+    await f.catalog.workspaces.get(selection);
+    await f.catalog.sessions.list(selection);
+    await f.catalog.sessions.get({ ...selection, sessionId: "busy" });
+    expect(f.workspaces.resolve).not.toHaveBeenCalled();
+    expect(f.workspaces.lookup).toHaveBeenCalledTimes(3);
+    expect(f.workspaces.lookup).toHaveBeenCalledWith(f.project, expect.any(AbortSignal));
+    f.workspaces.lookup.mockResolvedValue(undefined);
+    f.sessions.listCatalogSessions.mockClear();
+    await expect(f.catalog.workspaces.get(selection)).rejects.toThrow("discovery is not ready");
+    await expect(f.catalog.sessions.list(selection)).rejects.toThrow("discovery is not ready");
+    await expect(f.catalog.sessions.get({ ...selection, sessionId: "busy" })).rejects.toThrow("discovery is not ready");
+    expect(f.workspaces.resolve).not.toHaveBeenCalled();
+    expect(f.sessions.listCatalogSessions).not.toHaveBeenCalled();
   });
 
   it("honors caller cancellation without revoking subsequent reads", async () => {

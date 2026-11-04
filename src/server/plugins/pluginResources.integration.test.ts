@@ -31,7 +31,7 @@ async function resourceChain(resource: NonNullable<ServerPluginPeerV5["resource"
       packageRoot: "/plugins/reports", source: "fixture", scope: "local", moduleRevision: "r1",
       backend: { resource },
     }],
-    workspaces: { resolve: () => { throw new Error("Machine resources must not resolve a workspace"); } },
+    workspaces: { lookup: () => { throw new Error("Machine resources must not resolve a workspace"); } },
   });
   registries.push(registry);
   const daemon = Fastify({ forceCloseConnections: true });

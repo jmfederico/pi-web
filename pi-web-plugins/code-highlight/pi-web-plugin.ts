@@ -38,10 +38,12 @@ function isSyntaxHighlighting(value: unknown): value is SyntaxHighlightingCapabi
 /** Language IDs and aliases take precedence over a filename's extension. */
 function builtInLanguage(request: Pick<ContentRenderRequest, "language" | "filePath">): string | undefined {
   const language = request.language?.trim().split(/\s/u)[0]?.toLowerCase();
-  if (language !== undefined && hljs.getLanguage(language) !== undefined) return language;
   const name = request.filePath?.split(/[\\/]/u).at(-1);
   const extension = name?.includes(".") === true ? name.split(".").at(-1)?.toLowerCase() : undefined;
-  return extension !== undefined && hljs.getLanguage(extension) !== undefined ? extension : undefined;
+  const candidate = language !== undefined && hljs.getLanguage(language) !== undefined ? language : extension;
+  const grammar = candidate === undefined ? undefined : hljs.getLanguage(candidate);
+  // Plain text and its aliases add neither syntax coloring nor a useful alternate view.
+  return grammar !== undefined && grammar !== hljs.getLanguage("plaintext") ? candidate : undefined;
 }
 
 const plugin = {

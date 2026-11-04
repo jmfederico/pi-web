@@ -104,6 +104,9 @@ export const chatStyles = css`
   .part:is(details) > formatted-text { padding: 8px 12px 0; box-sizing: border-box; }
   .part.ui-transcript-activity > formatted-text { padding: 8px 12px 12px; }
   .part > formatted-text { display: block; max-width: 100%; min-width: 0; overflow: visible; }
+  .intervention-request { --ui-activity-tone: var(--pi-warning); }
+  .intervention-request > .ui-transcript-heading { font-weight: 600; }
+  .intervention-request-text { margin: 0; padding: 8px 12px 12px; white-space: pre-wrap; overflow-wrap: anywhere; text-align: start; unicode-bidi: plaintext; }
   .skill-invocation, .skill-read { padding: 8px 0; }
   .skill-invocation > summary, .skill-read > strong { color: var(--pi-purple); }
   .skill-invocation > summary > b { flex: 0 0 auto; }
