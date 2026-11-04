@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, realpath, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
@@ -611,7 +611,7 @@ function activationContext(overrides: Partial<ServerPluginActivationContext> = {
 }
 
 async function repositoryFixture() {
-  const root = await mkdtemp(join(tmpdir(), "pi-web-git-hooks-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "pi-web-git-hooks-")));
   temporaryRoots.push(root);
   const path = join(root, "repo's quoted checkout");
   await mkdir(path);
