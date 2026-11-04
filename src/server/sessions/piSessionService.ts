@@ -5231,6 +5231,9 @@ export class PiSessionService implements SessionRouteService {
     if (eventType === "message_end") { this.publishActivity(session, { kind: "messageComplete" }, "idle"); return; }
     if (eventType === "message_update") { this.publishActivity(session, { kind: "receivingResponse" }, "active"); return; }
     if (eventType === "tool_execution_start") { this.publishActivity(session, { kind: "runningTool" }, "active", getString(event, "toolName")); return; }
+    // Streamed output belongs to the tool that is already running: the generic
+    // fallback below would replace "running tool" with this event's raw name.
+    if (eventType === "tool_execution_update") { this.publishActivity(session, { kind: "runningTool" }, "active", getString(event, "toolName")); return; }
     if (eventType === "tool_execution_end") {
       const isError = getBoolean(event, "isError") === true;
       this.publishActivity(session, isError ? { kind: "toolFailed" } : { kind: "toolComplete" }, isError ? "error" : "idle", getString(event, "toolName"));
@@ -5238,6 +5241,9 @@ export class PiSessionService implements SessionRouteService {
     }
     if (eventType === "bash_execution_start") { this.publishActivity(session, { kind: "runningBash" }, "active"); return; }
     if (eventType === "bash_execution_end") { this.publishActivity(session, { kind: "bashComplete" }, "idle"); return; }
+    // Persisted entries are transcript data, not a change of what the agent is
+    // doing: extensions write them mid-turn while a tool is still running.
+    if (eventType === "entry_appended") return;
     if (this.hasActiveWork(session)) this.publishActivity(session, { kind: "event", value: eventType }, "active");
   }
 
