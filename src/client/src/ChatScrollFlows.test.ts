@@ -120,6 +120,98 @@ afterEach(() => {
   localStorage.clear();
 });
 
+describe("deferred content layout", () => {
+  function source(f: ReturnType<typeof fixture>, contentTop: number, initialHeight: number) {
+    const element = document.createElement("div");
+    const geometry = { height: initialHeight };
+    element.getBoundingClientRect = () => new DOMRect(0, 100 + contentTop - f.state.top, 600, geometry.height);
+    document.body.append(element);
+    return { element, geometry };
+  }
+
+  it("preserves the bottom-edge reading position through a shrink even when the browser clamps scrollTop", () => {
+    const f = fixture();
+    f.state.top = 600;
+    const block = source(f, 100, 800);
+    f.flows.onContentLayoutChanging(block.element);
+    block.geometry.height = 300;
+    f.state.height -= 500;
+    f.state.top = 200; // Browser clamps to the reduced scroll range before commit.
+    f.flows.onViewportResize();
+    f.frames.flush();
+    expect(f.state.top).toBe(100);
+    expect(f.writeTop).toHaveBeenCalledOnce();
+    expect(f.flows.followingLive).toBe(false);
+  });
+
+  it("coalesces repeated changes to a source and independent blocks above the reading point", () => {
+    const f = fixture();
+    f.state.top = 500;
+    const first = source(f, 0, 200);
+    const second = source(f, 200, 400);
+    f.flows.onContentLayoutChanging(first.element);
+    first.geometry.height = 250;
+    f.flows.onContentLayoutChanging(first.element);
+    f.flows.onContentLayoutChanging(second.element);
+    second.geometry.height = 500;
+    f.state.height += 150;
+    f.flows.onContentLayoutChanged();
+    f.frames.flush();
+    expect(f.state.top).toBe(650);
+    expect(f.writeTop).toHaveBeenCalledOnce();
+  });
+
+  it("does not compensate blocks starting within the viewport", () => {
+    const f = fixture();
+    const block = source(f, f.state.top + 50, 200);
+    f.flows.onContentLayoutChanging(block.element);
+    block.geometry.height = 100;
+    f.flows.onContentLayoutChanged();
+    f.frames.flush();
+    expect(f.writeTop).not.toHaveBeenCalled();
+  });
+
+  it("discards enhancement compensation when its capability is disabled", () => {
+    const f = fixture();
+    const block = source(f, 0, 800);
+    f.flows.onContentLayoutChanging(block.element);
+    block.geometry.height = 400;
+    f.flows.onContentLayoutChanged();
+    f.state.behaviors = { ...f.state.behaviors, anchorEnhancements: false };
+    f.flows.configure();
+    f.frames.flush();
+    expect(f.writeTop).not.toHaveBeenCalled();
+  });
+
+  it("lets explicit navigation discard a pending layout adjustment", () => {
+    const f = fixture();
+    const block = source(f, 0, 800);
+    f.flows.onContentLayoutChanging(block.element);
+    block.geometry.height = 400;
+    f.flows.onContentLayoutChanged();
+    f.flows.jumpToTop();
+    f.frames.flush();
+    expect(f.state.top).toBe(0);
+    expect(f.writeTop).toHaveBeenCalledOnce();
+  });
+
+  it("leaves following the live tail to the existing tail transaction", () => {
+    const f = fixture();
+    f.start();
+    f.frames.flush();
+    f.writeTop.mockClear();
+    const block = source(f, 0, 800);
+    f.flows.onContentLayoutChanging(block.element);
+    block.geometry.height = 1200;
+    f.state.height += 400;
+    f.flows.onContentLayoutChanged();
+    f.frames.flush();
+    expect(f.state.top).toBe(1100);
+    expect(f.writeTop).toHaveBeenCalledOnce();
+    expect(f.flows.followingLive).toBe(true);
+  });
+});
+
 describe("ChatScrollFlows composition", () => {
   it("does no geometry, storage, or scheduled work when all flows are disabled", () => {
     const f = fixture(MANUAL_CHAT_BEHAVIORS);
@@ -127,6 +219,7 @@ describe("ChatScrollFlows composition", () => {
     f.flows.configure();
     f.flows.onScroll();
     f.flows.onUpIntent();
+    f.flows.onContentLayoutChanging(document.createElement("div"));
     f.flows.onContentLayoutChanged();
     f.flows.onViewportResize();
     f.flows.savePosition();

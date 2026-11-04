@@ -42,7 +42,8 @@ type FormAlignment = ChatScrollAfterRender["openedForm"];
 type ViewportTarget =
   | { kind: "position"; position: ChatScrollPosition }
   | { kind: "tail"; form: FormAlignment }
-  | { kind: "edge"; end: boolean };
+  | { kind: "edge"; end: boolean }
+  | { kind: "layout"; top: number };
 
 const browserFrames: ChatScrollFrameScheduler = {
   request: (callback) => requestAnimationFrame(callback),
@@ -196,6 +197,7 @@ export class ChatScrollFlows {
   private requestedHistory = false;
   private prepend: ChatAnchorScrollPosition | undefined;
   private follow: { form: FormAlignment } | undefined;
+  private layout: { top: number; sources: Map<HTMLElement, number> } | undefined;
   private started = false;
   private disposed = false;
 
@@ -264,6 +266,7 @@ export class ChatScrollFlows {
       this.tail.recordScrollBaseline();
     }
     this.prepend = undefined;
+    this.layout = undefined;
     if (this.follow === undefined) this.cancelFrame();
   }
 
@@ -274,8 +277,21 @@ export class ChatScrollFlows {
     this.cancelFollow();
   }
 
+  onContentLayoutChanging(source: HTMLElement): void {
+    if (this.disposed || !this.host.getBehaviors().anchorEnhancements || this.restoration !== undefined || this.prepend !== undefined || this.tail.followingLive) return;
+    const scroller = this.host.getScroller();
+    if (scroller === undefined || !source.isConnected) return;
+    const rect = source.getBoundingClientRect();
+    // Content entering from below must keep its bottom edge in place. Blocks
+    // starting inside the viewport can grow naturally below the reading point.
+    if (rect.top >= scroller.getBoundingClientRect().top) return;
+    this.layout ??= { top: scroller.scrollTop, sources: new Map() };
+    if (!this.layout.sources.has(source)) this.layout.sources.set(source, rect.height);
+  }
+
   onContentLayoutChanged(): void {
     if (this.disposed || this.restoration !== undefined || this.prepend !== undefined) return;
+    if (this.layout !== undefined) this.scheduleViewport();
     this.scheduleFollow();
   }
 
@@ -283,6 +299,7 @@ export class ChatScrollFlows {
     if (this.disposed) return;
     if (this.restoration !== undefined) this.scheduleViewport();
     else if (this.prepend === undefined) {
+      if (this.layout !== undefined) this.scheduleViewport();
       this.scheduleFollow();
       this.scheduleHistory();
     }
@@ -296,7 +313,8 @@ export class ChatScrollFlows {
     if (!behaviors.rememberPosition) this.resetRestoration();
     if (!behaviors.automaticHistory) this.history.reset();
     if (!behaviors.anchorPrepends) this.prepend = undefined;
-    if (this.restoration === undefined && this.prepend === undefined && this.follow === undefined) this.cancelFrame();
+    if (!behaviors.anchorEnhancements) this.layout = undefined;
+    if (this.restoration === undefined && this.prepend === undefined && this.follow === undefined && this.layout === undefined) this.cancelFrame();
   }
 
   savePosition(scopeKey = this.host.getScopeKey()): void {
@@ -357,12 +375,15 @@ export class ChatScrollFlows {
   private flushViewport(): void {
     if (this.disposed) return;
     // One winner per frame. A remembered position outranks prepend compensation;
-    // both outrank tail/form alignment. Measurement happens after child renders.
+    // both outrank tail/form alignment and deferred-layout compensation.
+    // Measurement happens after child renders.
     const restoration = this.restoration;
     const prepend = this.prepend;
     const follow = this.follow;
+    const layout = this.layout;
     this.follow = undefined;
     this.prepend = undefined;
+    this.layout = undefined;
     if (restoration !== undefined) {
       if (restoration.scopeKey !== this.host.getScopeKey()) return;
       const result = this.commitViewport({ kind: "position", position: restoration.position });
@@ -385,6 +406,14 @@ export class ChatScrollFlows {
       const result = this.commitViewport({ kind: "tail", form: follow.form });
       if (result.status === "restored") this.tail.syncFollowingAfterNavigation();
       else if (result.status === "bottom") this.tail.recordScrollBaseline();
+    } else if (layout !== undefined) {
+      let delta = 0;
+      for (const [source, height] of layout.sources) {
+        if (source.isConnected) delta += source.getBoundingClientRect().height - height;
+      }
+      this.commitViewport({ kind: "layout", top: layout.top + delta });
+      this.tail.recordScrollBaseline();
+      this.scheduleSave();
     }
     this.scheduleHistory();
   }
@@ -394,6 +423,10 @@ export class ChatScrollFlows {
     const scroller = this.host.getScroller();
     if (target.kind === "position") return this.controller.restoreExplicitPosition(target.position, scroller, this.host.getAnchors());
     if (scroller === undefined) return { status: "skipped" } as const;
+    if (target.kind === "layout") {
+      scroller.scrollTop = target.top;
+      return { status: "restored" } as const;
+    }
     if (target.kind === "edge") {
       scroller.scrollTop = target.end ? scroller.scrollHeight : 0;
       return { status: target.end ? "bottom" : "restored" } as const;
@@ -420,7 +453,7 @@ export class ChatScrollFlows {
 
   private cancelFollow(): void {
     this.follow = undefined;
-    if (this.restoration === undefined && this.prepend === undefined) this.cancelFrame();
+    if (this.restoration === undefined && this.prepend === undefined && this.layout === undefined) this.cancelFrame();
   }
 
   private resetRestoration(): void {
@@ -439,6 +472,7 @@ export class ChatScrollFlows {
     this.resetRestoration();
     this.prepend = undefined;
     this.follow = undefined;
+    this.layout = undefined;
   }
 
   dispose(): void {

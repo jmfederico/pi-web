@@ -209,6 +209,9 @@ export class ChatView extends LitElement {
   private readonly onViewportResize = () => { this.scrollFlows.onViewportResize(); };
   // Formatting completes independently of message updates. Reuse the existing
   // layout/restore flow without making content loading wait for enhancement.
+  private readonly onContentLayoutChanging = (event: CustomEvent<HTMLElement>) => {
+    this.scrollFlows.onContentLayoutChanging(event.detail);
+  };
   private readonly onContentLayoutChanged = () => { this.scrollFlows.onViewportResize(); };
   private readonly handleScroll = () => { this.scrollFlows.onScroll(); };
   // Native details toggles do not bubble; capture layout changes independently
@@ -369,6 +372,7 @@ export class ChatView extends LitElement {
         <div class="chat" @image-open=${(event: CustomEvent<ImageOpenDetail>) => { this.openImageZoom(event.detail); }}
           @scroll=${this.behaviors.rememberPosition || this.behaviors.followTail || this.behaviors.automaticHistory ? this.handleScroll : undefined}
           @toggle=${this.behaviors.followTail ? this.handleDisclosureToggle : undefined}
+          @content-layout-changing=${this.onContentLayoutChanging}
           @content-layout-changed=${this.onContentLayoutChanged}
           @wheel=${this.handlesScrollIntent ? this.handleWheel : undefined}
           @pointerdown=${this.handlesScrollIntent ? this.handlePointerDown : undefined}
@@ -636,7 +640,7 @@ export class ChatView extends LitElement {
   }
 
   private get handlesScrollIntent(): boolean {
-    return this.behaviors.followTail || this.behaviors.rememberPosition || this.behaviors.anchorPrepends;
+    return this.behaviors.followTail || this.behaviors.rememberPosition || this.behaviors.anchorPrepends || this.behaviors.anchorEnhancements;
   }
 
   private scrollContentChanged(changed: Map<string, unknown>): boolean {
