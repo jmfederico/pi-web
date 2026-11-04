@@ -188,7 +188,12 @@ export class ContentRendererHost extends LitElement {
     const displayedPreview = this.previewActive ? this.preview : undefined;
     if (displayedPreview !== this.displayedPreview) {
       this.displayedPreview = displayedPreview;
-      this.dispatchEvent(new CustomEvent("content-layout-changed", { bubbles: true, composed: true }));
+      // Newly mounted renderer elements still have a Lit update queued. A
+      // synchronous geometry read here can clamp scrolling against their empty
+      // DOM before their source appears, even if the final height is unchanged.
+      queueMicrotask(() => {
+        if (this.isConnected) this.dispatchEvent(new CustomEvent("content-layout-changed", { bubbles: true, composed: true }));
+      });
     }
     if (!this.previewActive) {
       this.cancelPreview();

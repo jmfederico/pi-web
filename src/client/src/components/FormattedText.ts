@@ -38,6 +38,7 @@ export class FormattedText extends LitElement {
   private displayedText = "";
   private replacing = false;
   private layoutChanged = false;
+  private preserveDeferredLayout = false;
   private labelsDirty = true;
   private readonly copyStates = new WeakMap<HTMLButtonElement, "idle" | "copied" | "failed">();
 
@@ -51,6 +52,9 @@ export class FormattedText extends LitElement {
     // Retain stable source controls and completed previews while prose streams.
     // New identities/replacements must never show the previous content.
     this.replacing = !this.text.startsWith(this.displayedText) || changes.has("intentKey") || changes.has("machineId") || changes.has("workspaceContext");
+    // Initial source conversion can change wrapping dramatically. Ordinary
+    // streaming appends must not drag a reader toward the growing message tail.
+    this.preserveDeferredLayout = this.content === undefined || this.replacing || !changes.has("text");
   }
 
   override connectedCallback(): void {
@@ -102,11 +106,22 @@ export class FormattedText extends LitElement {
     }
     if (this.layoutChanged) {
       this.layoutChanged = false;
-      this.dispatchEvent(new CustomEvent("content-layout-changed", { bubbles: true, composed: true }));
+      // Let newly mounted content hosts render their source before listeners
+      // measure the transcript; measuring empty child DOM can clamp scrolling.
+      queueMicrotask(() => {
+        if (this.isConnected) this.dispatchEvent(new CustomEvent("content-layout-changed", { bubbles: true, composed: true }));
+      });
+    }
+  }
+
+  private notifyDeferredLayoutChanging(): void {
+    if (this.preserveDeferredLayout) {
+      this.dispatchEvent(new CustomEvent("content-layout-changing", { detail: this, bubbles: true, composed: true }));
     }
   }
 
   private formatMarkdown(): void {
+    this.notifyDeferredLayoutChanging();
     try {
       this.markup = toSafeMarkdownHtml(this.text, this.workspaceContext, this.intentKey, this.imagesEnabled, this.codeBlocks);
       if (this.codeBlocks.previews && this.contentRendering !== undefined) {
@@ -132,6 +147,7 @@ export class FormattedText extends LitElement {
   }
 
   private enhanceMarkdown(): void {
+    this.notifyDeferredLayoutChanging();
     this.labelsDirty = true;
     try {
       this.layoutChanged = true;

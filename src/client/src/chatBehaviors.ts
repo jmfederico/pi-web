@@ -6,6 +6,7 @@ export interface ChatBehaviors {
   readonly followTail: boolean;
   readonly automaticHistory: boolean;
   readonly anchorPrepends: boolean;
+  readonly anchorEnhancements: boolean;
   readonly loadImages: boolean;
   readonly codeBlocks: CodeBlockPolicy;
   readonly rememberDisclosures: boolean;
@@ -17,6 +18,7 @@ export const DEFAULT_CHAT_BEHAVIORS: ChatBehaviors = Object.freeze({
   followTail: true,
   automaticHistory: true,
   anchorPrepends: true,
+  anchorEnhancements: true,
   loadImages: true,
   codeBlocks: Object.freeze({ ...PLAIN_CODE_BLOCK_POLICY, presentation: "code", overflow: "scroll", copy: true, previews: true }),
   rememberDisclosures: true,
