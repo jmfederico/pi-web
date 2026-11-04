@@ -107,6 +107,7 @@ services:
     volumes: *pi-web-dev-init-volumes
 
   sessiond:
+    restart: unless-stopped
     build: *pi-web-dev-build
     image: ${PI_WEB_DEV_IMAGE:-pi-web:dev}
     command: ["pi-web-npm", "run", "start:sessiond"]
@@ -130,6 +131,7 @@ services:
       start_period: 5s
 
   web:
+    restart: unless-stopped
     build: *pi-web-dev-build
     image: ${PI_WEB_DEV_IMAGE:-pi-web:dev}
     command: ["pi-web-npm", "run", "dev:ui"]
