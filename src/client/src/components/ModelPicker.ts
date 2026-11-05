@@ -180,7 +180,7 @@ export class ModelPicker extends LitElement {
             <span>${messages.rich("overrideNotice", { path: ".pi/settings.json", code: (parts) => html`<code dir="ltr">${parts}</code>` })}</span>
           </div>
         ` : nothing}
-        ${this.renderAvailabilityScope()}
+        ${this.mode === "all" ? this.renderAvailabilityScope() : nothing}
         <div class="search-row ui-dialog-search-row">
           <input class="search ui-dialog-search" aria-label=${messages.t("searchModels")} placeholder=${messages.t("search")} .value=${this.query} @input=${(event: Event) => { this.handleSearchInput(event); }}>
           ${this.mode === "all" ? this.renderToggleAllButton() : nothing}

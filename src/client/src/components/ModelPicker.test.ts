@@ -390,7 +390,7 @@ describe("model-picker explicit availability scope", () => {
     picker.onSetDefault = onSetDefault;
     await settleRenderedDialog(picker);
 
-    expect(availabilityCheckbox(picker).checked).toBe(true);
+    expect(picker.shadowRoot?.querySelector(".availability-scope")).toBeNull();
     const pick = requiredElement(picker.shadowRoot?.querySelector<HTMLButtonElement>(".default-row .ui-selection-option"), "enabled model");
     expect(pick.disabled).toBe(false);
     pick.click();
@@ -420,6 +420,14 @@ describe("model-picker explicit availability scope", () => {
     expect(catalogRows(picker).every((row) => rowCheckbox(row).checked)).toBe(true);
     expect(rowCheckbox(catalogRow(picker, "openai/gpt-4o")).disabled).toBe(false);
     expect(toggleAllButton(picker).disabled).toBe(false);
+
+    scopeToggle(picker, "Enabled").click();
+    await settleRenderedDialog(picker);
+    expect(picker.shadowRoot?.querySelector(".availability-scope")).toBeNull();
+    scopeToggle(picker, "All models").click();
+    await settleRenderedDialog(picker);
+    expect(availabilityCheckbox(picker).checked).toBe(false);
+    expect(onSetScope).not.toHaveBeenCalled();
   });
 
   it("waits for confirmed scope in both directions and guards overlapping requests", async () => {
@@ -427,6 +435,8 @@ describe("model-picker explicit availability scope", () => {
     const onSetScope = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
     const onToggleEnabled = vi.fn();
     const picker = await mountPicker({ scope: "manual", selectedValue: "openai/gpt-5", onSetScope, onToggleEnabled });
+    scopeToggle(picker, "All models").click();
+    await settleRenderedDialog(picker);
     const checkbox = availabilityCheckbox(picker);
     checkbox.click();
     checkbox.click();
@@ -466,6 +476,8 @@ describe("model-picker explicit availability scope", () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const onSetScope = vi.fn(() => Promise.reject(new Error("Save failed")));
     const picker = await mountPicker({ scope, onSetScope });
+    scopeToggle(picker, "All models").click();
+    await settleRenderedDialog(picker);
     availabilityCheckbox(picker).click();
     await settleRenderedDialog(picker);
 
@@ -499,11 +511,13 @@ describe("model-picker explicit availability scope", () => {
       scope: "all", onSetScope,
       catalog: defaultCatalog().map((row) => ({ ...row, enabled: true, editable: false })),
     });
+    expect(enabledRows(picker).every((row) => !row.disabled)).toBe(true);
+    scopeToggle(picker, "All models").click();
+    await settleRenderedDialog(picker);
     expect(availabilityCheckbox(picker).checked).toBe(true);
     expect(availabilityCheckbox(picker).disabled).toBe(true);
     availabilityCheckbox(picker).click();
     expect(onSetScope).not.toHaveBeenCalled();
-    expect(enabledRows(picker).every((row) => !row.disabled)).toBe(true);
   });
 
   it("does not infer scope from fully enabled older-server rows", async () => {
@@ -513,9 +527,11 @@ describe("model-picker explicit availability scope", () => {
       selectedValue: "openai/gpt-5", onSetScope, onToggleEnabled,
       catalog: defaultCatalog().map((row) => ({ ...row, enabled: true })),
     });
-    expect(picker.shadowRoot?.querySelector(".availability-scope input")).toBeNull();
+    expect(picker.shadowRoot?.querySelector(".availability-scope")).toBeNull();
     scopeToggle(picker, "All models").click();
     await settleRenderedDialog(picker);
+    expect(picker.shadowRoot?.querySelector(".availability-scope")).not.toBeNull();
+    expect(picker.shadowRoot?.querySelector(".availability-scope input")).toBeNull();
     membershipButton(catalogRow(picker, "openai/gpt-4o")).click();
     await settleRenderedDialog(picker);
     expect(onToggleEnabled).toHaveBeenCalledWith("openai", "gpt-4o", false);

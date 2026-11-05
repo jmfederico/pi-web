@@ -9,6 +9,9 @@ test("scope stays above search and separate from the scrollable model targets", 
   const checkbox = page.getByRole("checkbox", { name: "Enable all models", exact: true });
   const search = page.getByRole("textbox", { name: "Search models" });
   await expect(search).toBeFocused();
+  await expect(checkbox).toHaveCount(0);
+  await expect(page.locator(".availability-scope")).toHaveCount(0);
+  const enabledSearchBox = await search.boundingBox();
   await page.getByRole("button", { name: "All models", exact: true }).click();
   await expect(checkbox).not.toBeChecked();
   const rows = page.locator(".catalog-row");
@@ -20,7 +23,8 @@ test("scope stays above search and separate from the scrollable model targets", 
   const searchBox = await search.boundingBox();
   const listBox = await page.locator(".options").boundingBox();
   const viewport = page.viewportSize();
-  if (scopeBox === null || searchBox === null || listBox === null || viewport === null) throw new Error("Missing picker geometry");
+  if (scopeBox === null || searchBox === null || enabledSearchBox === null || listBox === null || viewport === null) throw new Error("Missing picker geometry");
+  expect(enabledSearchBox.y).toBeLessThan(searchBox.y);
   expect(scopeBox.x).toBeGreaterThanOrEqual(0);
   expect(scopeBox.x + scopeBox.width).toBeLessThanOrEqual(viewport.width);
   expect(scopeBox.y + scopeBox.height).toBeLessThanOrEqual(searchBox.y);
@@ -46,13 +50,18 @@ test("scope stays above search and separate from the scrollable model targets", 
   await expect(page.locator(".toggle-all")).toBeDisabled();
 
   await page.getByRole("button", { name: "Enabled", exact: true }).click();
-  await expect(checkbox).toBeChecked();
+  await expect(checkbox).toHaveCount(0);
+  await expect(page.locator(".availability-scope")).toHaveCount(0);
   await page.getByRole("button", { name: "Use model-1 as default for new sessions", exact: true }).click();
   await page.getByRole("button", { name: "model-1 fixture-provider", exact: true }).click();
   await expect(page.locator("body")).toHaveAttribute("data-picked", "fixture-provider/model-1");
+  await page.getByRole("button", { name: "All models", exact: true }).click();
+  await expect(checkbox).toBeChecked();
+  expect(await page.evaluate(() => window.modelPickerFixture.requests)).toEqual(["all"]);
 });
 
 test("native label activation and keyboard retry preserve confirmed state on failure", async ({ page }) => {
+  await page.getByRole("button", { name: "All models", exact: true }).click();
   const checkbox = page.getByRole("checkbox", { name: "Enable all models", exact: true });
   const label = page.locator(".availability-scope label");
   if (test.info().project.name === "touch") await label.tap();
