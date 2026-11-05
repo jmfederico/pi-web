@@ -7,5 +7,6 @@ export const MANUAL_CHAT_BEHAVIORS: ChatBehaviors = Object.freeze({
   followTail: false,
   automaticHistory: false,
   anchorPrepends: false,
+  anchorEnhancements: false,
   rememberDisclosures: false,
 });

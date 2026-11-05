@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, realpath, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,7 +13,7 @@ let env: NodeJS.ProcessEnv;
 const hostFacts = "PI_WEB_DOCKER_HOST_PROFILE=linux-native-docker\nHOSTEXEC_MODE=nsenter\nPI_WEB_DOCKER_SOCKET_SOURCE=/var/run/docker.sock\n";
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), "pi-web-ubuntu-config-"));
+  root = await realpath(await mkdtemp(join(tmpdir(), "pi-web-ubuntu-config-")));
   const bin = join(root, "bin");
   await mkdir(bin);
   await writeFile(join(bin, "docker"), '#!/bin/sh\nprintf "%s\\n" "$@" >> "$COMMAND_LOG"\n');
@@ -31,7 +31,8 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-describe.skipIf(process.platform === "win32")("Ubuntu Docker configuration", () => {
+// Each case runs several shell controller processes; allow for slow process spawning under full-suite load.
+describe.skipIf(process.platform === "win32")("Ubuntu Docker configuration", { timeout: 20_000 }, () => {
   it("persists new installer inputs and preserves user hooks, environment, and local Compose", async () => {
     const assets = join(root, "assets");
     const install = join(root, "install");

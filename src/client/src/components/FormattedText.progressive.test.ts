@@ -65,11 +65,15 @@ it("paints escaped source before Markdown, renderer inspection, and plugin execu
 it.each([false, true])("keeps formatted content without a raw tail between streaming updates (previews: %s)", async (previews) => {
   const view = new FormattedText();
   if (previews) view.contentRendering = createContentRenderingService(() => []);
+  const changing = vi.fn();
+  view.addEventListener("content-layout-changing", changing);
   view.text = "A **streaming** paragraph";
   document.body.append(view);
   await settleDeferredContent(view);
   const paragraph = view.renderRoot.querySelector("p");
   expect(paragraph?.textContent).toBe("A streaming paragraph");
+  expect(changing).toHaveBeenCalled();
+  changing.mockClear();
 
   for (const chunk of [" with", " more", " words"]) {
     const previousText = view.renderRoot.querySelector("p")?.textContent;
@@ -79,6 +83,7 @@ it.each([false, true])("keeps formatted content without a raw tail between strea
     expect(view.renderRoot.querySelector<HTMLElement>(".pending-source")?.hidden).toBe(true);
     await settleDeferredContent(view);
   }
+  expect(changing).not.toHaveBeenCalled();
   expect(view.renderRoot.querySelector("p")?.textContent).toBe("A streaming paragraph with more words");
   expect(view.renderRoot.querySelector<HTMLElement>(".pending-source")?.hidden).toBe(true);
 });

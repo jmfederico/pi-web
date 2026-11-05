@@ -88,7 +88,7 @@ function fixture(behaviors: ChatBehaviors = DEFAULT_CHAT_BEHAVIORS) {
   const host = {
     getScroller: vi.fn(() => scroller),
     getAnchors: vi.fn(() => state.anchors),
-    getSessionId: () => state.sessionId,
+    getScopeKey: () => state.sessionId,
     getBehaviors: () => state.behaviors,
     hasMore: () => state.hasMore,
     isHistoryReady: () => state.ready,
@@ -120,6 +120,98 @@ afterEach(() => {
   localStorage.clear();
 });
 
+describe("deferred content layout", () => {
+  function source(f: ReturnType<typeof fixture>, contentTop: number, initialHeight: number) {
+    const element = document.createElement("div");
+    const geometry = { height: initialHeight };
+    element.getBoundingClientRect = () => new DOMRect(0, 100 + contentTop - f.state.top, 600, geometry.height);
+    document.body.append(element);
+    return { element, geometry };
+  }
+
+  it("preserves the bottom-edge reading position through a shrink even when the browser clamps scrollTop", () => {
+    const f = fixture();
+    f.state.top = 600;
+    const block = source(f, 100, 800);
+    f.flows.onContentLayoutChanging(block.element);
+    block.geometry.height = 300;
+    f.state.height -= 500;
+    f.state.top = 200; // Browser clamps to the reduced scroll range before commit.
+    f.flows.onViewportResize();
+    f.frames.flush();
+    expect(f.state.top).toBe(100);
+    expect(f.writeTop).toHaveBeenCalledOnce();
+    expect(f.flows.followingLive).toBe(false);
+  });
+
+  it("coalesces repeated changes to a source and independent blocks above the reading point", () => {
+    const f = fixture();
+    f.state.top = 500;
+    const first = source(f, 0, 200);
+    const second = source(f, 200, 400);
+    f.flows.onContentLayoutChanging(first.element);
+    first.geometry.height = 250;
+    f.flows.onContentLayoutChanging(first.element);
+    f.flows.onContentLayoutChanging(second.element);
+    second.geometry.height = 500;
+    f.state.height += 150;
+    f.flows.onContentLayoutChanged();
+    f.frames.flush();
+    expect(f.state.top).toBe(650);
+    expect(f.writeTop).toHaveBeenCalledOnce();
+  });
+
+  it("does not compensate blocks starting within the viewport", () => {
+    const f = fixture();
+    const block = source(f, f.state.top + 50, 200);
+    f.flows.onContentLayoutChanging(block.element);
+    block.geometry.height = 100;
+    f.flows.onContentLayoutChanged();
+    f.frames.flush();
+    expect(f.writeTop).not.toHaveBeenCalled();
+  });
+
+  it("discards enhancement compensation when its capability is disabled", () => {
+    const f = fixture();
+    const block = source(f, 0, 800);
+    f.flows.onContentLayoutChanging(block.element);
+    block.geometry.height = 400;
+    f.flows.onContentLayoutChanged();
+    f.state.behaviors = { ...f.state.behaviors, anchorEnhancements: false };
+    f.flows.configure();
+    f.frames.flush();
+    expect(f.writeTop).not.toHaveBeenCalled();
+  });
+
+  it("lets explicit navigation discard a pending layout adjustment", () => {
+    const f = fixture();
+    const block = source(f, 0, 800);
+    f.flows.onContentLayoutChanging(block.element);
+    block.geometry.height = 400;
+    f.flows.onContentLayoutChanged();
+    f.flows.jumpToTop();
+    f.frames.flush();
+    expect(f.state.top).toBe(0);
+    expect(f.writeTop).toHaveBeenCalledOnce();
+  });
+
+  it("leaves following the live tail to the existing tail transaction", () => {
+    const f = fixture();
+    f.start();
+    f.frames.flush();
+    f.writeTop.mockClear();
+    const block = source(f, 0, 800);
+    f.flows.onContentLayoutChanging(block.element);
+    block.geometry.height = 1200;
+    f.state.height += 400;
+    f.flows.onContentLayoutChanged();
+    f.frames.flush();
+    expect(f.state.top).toBe(1100);
+    expect(f.writeTop).toHaveBeenCalledOnce();
+    expect(f.flows.followingLive).toBe(true);
+  });
+});
+
 describe("ChatScrollFlows composition", () => {
   it("does no geometry, storage, or scheduled work when all flows are disabled", () => {
     const f = fixture(MANUAL_CHAT_BEHAVIORS);
@@ -127,13 +219,14 @@ describe("ChatScrollFlows composition", () => {
     f.flows.configure();
     f.flows.onScroll();
     f.flows.onUpIntent();
+    f.flows.onContentLayoutChanging(document.createElement("div"));
     f.flows.onContentLayoutChanged();
     f.flows.onViewportResize();
     f.flows.savePosition();
     f.flows.restorePosition();
     f.flows.beforeRender({ sessionChanged: false, prepend: true });
     f.update({ historyChanged: true, openedForm: true });
-    f.flows.beforeRender({ sessionChanged: true, previousSessionId: "s1", prepend: false });
+    f.flows.beforeRender({ sessionChanged: true, previousScopeKey: "s1", prepend: false });
     f.update({ sessionChanged: true });
     f.flows.dispose();
     f.frames.flush();
@@ -243,7 +336,7 @@ describe("ChatScrollFlows composition", () => {
     f.flows.onScroll();
     f.storage.seed("s2", { mode: "anchor", anchorId: "new", offset: 10 });
     f.state.sessionId = "s2";
-    f.flows.beforeRender({ sessionChanged: true, previousSessionId: "s1", prepend: false });
+    f.flows.beforeRender({ sessionChanged: true, previousScopeKey: "s1", prepend: false });
     expect(f.storage.values.get(chatScrollStorageKey("s1"))).toBe(JSON.stringify({ mode: "anchor", anchorId: "old", offset: -10 }));
     expect(f.saves.pending).toBe(0);
     f.state.top = 0;
@@ -263,7 +356,7 @@ describe("ChatScrollFlows composition", () => {
     f.state.anchors = [f.element(100, "previous")];
     f.start();
     f.state.sessionId = "s2";
-    f.flows.beforeRender({ sessionChanged: true, previousSessionId: "s1", prepend: false });
+    f.flows.beforeRender({ sessionChanged: true, previousScopeKey: "s1", prepend: false });
     f.state.anchors = [f.element(300, "next")];
     f.update({ sessionChanged: true });
     f.frames.flush();
@@ -433,7 +526,7 @@ describe("position flow", () => {
     route.start();
     route.frames.flush();
     route.state.sessionId = "s2";
-    route.flows.beforeRender({ sessionChanged: true, previousSessionId: "s1", prepend: false });
+    route.flows.beforeRender({ sessionChanged: true, previousScopeKey: "s1", prepend: false });
     expect(route.storage.values.get(chatScrollStorageKey("s1"))).toBe(JSON.stringify(saved));
     expect(route.storage.setItem).not.toHaveBeenCalled();
   });
@@ -617,6 +710,23 @@ describe("tail and forms", () => {
     expect(f.host.getOpenForm).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps form alignment as the single destination through coalesced stream and resize notifications", () => {
+    const f = fixture({ ...MANUAL_CHAT_BEHAVIORS, followTail: true });
+    f.start(); f.frames.flush();
+    f.writeTop.mockClear();
+    f.state.openForm = f.element(500);
+    f.update({ openedForm: "dialog" });
+    f.state.height += 300;
+    f.update();
+    f.flows.onViewportResize();
+    f.flows.onContentLayoutChanged();
+    f.frames.flush();
+    expect(f.state.top).toBe(500);
+    expect(f.writeTop).toHaveBeenCalledOnce();
+    expect(f.host.getOpenForm).toHaveBeenLastCalledWith("dialog");
+    expect(f.flows.followingLive).toBe(false);
+  });
+
   it("a remembered position takes priority over an already open form", () => {
     const f = fixture();
     f.storage.seed("s1", { mode: "anchor", anchorId: "selected", offset: 0 });
@@ -705,7 +815,7 @@ describe("automatic history", () => {
     expect(f.host.requestEarlier).toHaveBeenCalledOnce();
     f.state.sessionId = "s2";
     f.state.loading = false;
-    f.flows.beforeRender({ sessionChanged: true, previousSessionId: "s1", prepend: false });
+    f.flows.beforeRender({ sessionChanged: true, previousScopeKey: "s1", prepend: false });
     f.update({ sessionChanged: true });
     f.frames.flush();
     expect(f.host.requestEarlier).toHaveBeenCalledTimes(2);
@@ -803,6 +913,31 @@ describe("prepend and cleanup", () => {
     f.frames.flush();
     expect(f.state.top).toBe(300);
     expect(f.host.requestEarlier).not.toHaveBeenCalled();
+    expect(f.frames.pending).toBe(0);
+  });
+
+  it("preserves the first reading anchor across multiple prepends before one viewport commit", () => {
+    const f = fixture({ ...MANUAL_CHAT_BEHAVIORS, anchorPrepends: true });
+    f.state.top = 200;
+    f.state.anchors = [f.element(200, "reading")];
+    f.start();
+    f.frames.flush();
+
+    f.flows.beforeRender({ sessionChanged: false, prepend: true });
+    f.state.height += 100;
+    f.state.anchors = [f.element(300, "reading")];
+    f.update({ historyChanged: true });
+    // Another render arrives before children/layout settle. Its visible offset
+    // is not a new reading choice and must not replace the original snapshot.
+    f.flows.beforeRender({ sessionChanged: false, prepend: true });
+    f.state.height += 1150; // 150 above the reader; 1000 at the live tail.
+    f.state.anchors = [f.element(450, "reading")];
+    f.update({ historyChanged: true, openedForm: true });
+    f.flows.onViewportResize();
+    f.frames.flush();
+
+    expect(f.state.top).toBe(450);
+    expect(f.writeTop).toHaveBeenCalledOnce();
     expect(f.frames.pending).toBe(0);
   });
 

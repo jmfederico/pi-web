@@ -173,7 +173,7 @@ describe("plugin-defined transcript message actions", () => {
     expect(buttons(view).map((button) => button.getAttribute("aria-label"))).toEqual([
       "Clone session from this message", "Go back to this message",
     ]);
-    expect(card?.parentElement?.querySelectorAll(".msg-action")).toHaveLength(2);
+    expect(card?.closest("article")?.querySelectorAll(".msg-action")).toHaveLength(2);
     button(view, "Go back to this message").click();
     await settle(view);
     button(view, "Clone session from this message").click();

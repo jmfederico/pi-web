@@ -1,5 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -10,7 +10,7 @@ const controller = resolve("docker/pi-web-docker");
 const posixIt = it.skipIf(process.platform === "win32");
 
 async function fixture(run: (root: string, env: NodeJS.ProcessEnv, calls: string) => Promise<void>) {
-  const root = await mkdtemp(join(tmpdir(), "pi-web-docker-diagnostics-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "pi-web-docker-diagnostics-")));
   try {
     const bin = join(root, "bin");
     const data = join(root, "data");
@@ -56,7 +56,8 @@ esac
   }
 }
 
-describe("Docker controller build and diagnostics", () => {
+// Each case runs several shell controller processes; allow for slow process spawning under full-suite load.
+describe("Docker controller build and diagnostics", { timeout: 20_000 }, () => {
   posixIt("builds and validates without pulling Git or deploying, loading local Compose last", async () => {
     await fixture(async (root, env, calls) => {
       await execFile(controller, ["build"], { env });

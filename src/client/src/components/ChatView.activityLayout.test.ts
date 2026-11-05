@@ -2,13 +2,14 @@
 import { afterEach, expect, it } from "vitest";
 import { ChatView } from "./ChatView";
 import type { ChatPart } from "../chatTypes";
+import type { FormattedText } from "./FormattedText";
 
 afterEach(() => {
   document.body.replaceChildren();
   localStorage.clear();
 });
 
-it("composes full-width activity sections and consecutive inset content without losing part order", async () => {
+it("preserves part order and disclosure state when interleaving activity and ordinary content", async () => {
   const view = new ChatView();
   const parts: ChatPart[] = [
     { type: "thinking", text: "Plan" },
@@ -27,12 +28,9 @@ it("composes full-width activity sections and consecutive inset content without 
   await view.updateComplete;
   const message = view.renderRoot.querySelector(".group-msg");
   if (message === null) throw new Error("Activity message was not rendered");
-  const runs = [...message.children].filter((element) => element.querySelector(".part") !== null);
-  expect(runs.map((element) => element.className)).toEqual([
-    "transcript-section", "transcript-content", "transcript-section", "transcript-section", "transcript-section", "transcript-section",
+  expect([...message.querySelectorAll<FormattedText>("formatted-text")].map((element) => element.text)).toEqual([
+    "Plan", "Context", "More context", "Continue",
   ]);
-  expect(runs.map((element) => element.querySelectorAll(".part").length)).toEqual([1, 2, 1, 1, 1, 1]);
-  expect(runs[1]?.querySelectorAll("formatted-text")).toHaveLength(2);
   expect(message.querySelectorAll(".thinking")).toHaveLength(2);
   const thinking = message.querySelector<HTMLDetailsElement>(".thinking");
   if (thinking === null) throw new Error("Thinking disclosure was not rendered");

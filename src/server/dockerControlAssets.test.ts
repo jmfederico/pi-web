@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { copyFile, chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -24,14 +24,17 @@ interface FakeDocker {
 }
 
 beforeEach(async () => {
-  tempDir = await mkdtemp(join(tmpdir(), "pi-web-docker-test-"));
+  // Fake Docker sockets live under this root; macOS's long per-user TMPDIR exceeds the Unix socket path limit.
+  const base = process.platform === "win32" ? tmpdir() : "/tmp";
+  tempDir = await realpath(await mkdtemp(join(base, "pi-web-docker-test-")));
 });
 
 afterEach(async () => {
   await rm(tempDir, { recursive: true, force: true });
 });
 
-describe("Docker command assets", () => {
+// Each case runs several shell controller processes; allow for slow process spawning under full-suite load.
+describe("Docker command assets", { timeout: 20_000 }, () => {
   // The Docker control shell scripts intentionally support Linux and macOS hosts.
   // Keep Windows CI on static/syntax coverage instead of executing POSIX host-path and socket flows there.
   const dockerCommandIt = it.skipIf(process.platform === "win32");

@@ -43,7 +43,7 @@ describe("ChatView conversation-first questions", () => {
     expect(card.open).toBe(true);
     expect(card.draftSessionId).toBe("remote-a:session-1");
     expect(card.closest(".event-group")).toBeNull();
-    expect(card.parentElement?.getAttribute("data-scroll-anchor-id")).toBe('m:["ask-entry","tool","message"]');
+    expect(card.closest("article")?.getAttribute("data-scroll-anchor-id")).toBe('m:["ask-entry","tool","message"]');
     expect(card.shadowRoot?.querySelector("form")).not.toBeNull();
     expect(view.shadowRoot?.querySelectorAll("ask-user-card")).toHaveLength(1);
   });
@@ -51,7 +51,7 @@ describe("ChatView conversation-first questions", () => {
   it("omits scroll anchors for question cards without durable entry identity", async () => {
     const view = await mountView(normalizeMessages(questionHistory).map((message) => ({ ...message, entryId: "" })));
     const card = await questionCard(view);
-    expect(card.parentElement?.hasAttribute("data-scroll-anchor-id")).toBe(false);
+    expect(card.closest("article")?.hasAttribute("data-scroll-anchor-id")).toBe(false);
     expect(view.renderRoot.querySelector("[data-scroll-anchor-id]")).toBeNull();
   });
 

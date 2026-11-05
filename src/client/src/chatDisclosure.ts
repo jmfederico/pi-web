@@ -1,3 +1,5 @@
+import { machineSessionKey } from "./machineKeys";
+
 export interface ChatDisclosureSnapshot {
   open: string[];
   closedDefaultOpen: string[];
@@ -39,10 +41,12 @@ export class ChatDisclosureController {
 
   constructor(private readonly storage: ChatDisclosureStorage = browserChatDisclosureStorage) {}
 
-  syncSession(sessionId: string): void {
-    if (this.sessionId === sessionId) return;
-    this.sessionId = sessionId;
-    const snapshot = sessionId === "" ? undefined : this.storage.read(sessionId);
+  syncSession(sessionId: string, machineId = "local"): void {
+    // Keep existing local bookmarks; remote machines get a distinct namespace.
+    const scope = sessionId === "" || machineId === "local" ? sessionId : machineSessionKey(machineId, sessionId);
+    if (this.sessionId === scope) return;
+    this.sessionId = scope;
+    const snapshot = scope === "" ? undefined : this.storage.read(scope);
     this.openGroupKeys = new Set(snapshot?.open ?? []);
     this.closedDefaultOpenGroupKeys = new Set(snapshot?.closedDefaultOpen ?? []);
   }

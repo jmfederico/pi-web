@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, realpath, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -143,7 +143,7 @@ function launcherContract(shell) {
 }
 
 async function createInstallation(shell, options = {}) {
-  const root = await mkdtemp(join(tmpdir(), "pi-web launcher-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "pi-web launcher-")));
   roots.push(root);
   const dist = join(root, "package", "dist");
   const bin = join(root, "bin");

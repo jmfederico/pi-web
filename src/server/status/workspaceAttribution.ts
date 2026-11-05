@@ -9,6 +9,11 @@ export interface CwdAttribution {
   workspaceId: string;
 }
 
+/** An established workspace of an open project. */
+export interface KnownWorkspace extends CwdAttribution {
+  path: string;
+}
+
 /**
  * Resolves active working directories to the workspace and project that own
  * them, so status roll-up happens where projects and workspaces are known.
@@ -82,6 +87,11 @@ export class CachedWorkspaceAttribution implements WorkspaceAttribution {
       if (owner !== undefined) attributions.set(cwd, owner.attribution);
     }
     return attributions;
+  }
+
+  /** Every established workspace with its canonical path, without starting discovery. */
+  async knownWorkspaces(): Promise<readonly KnownWorkspace[]> {
+    return (await this.topology()).map((workspace) => ({ path: workspace.path, ...workspace.attribution }));
   }
 
   invalidate(): void {

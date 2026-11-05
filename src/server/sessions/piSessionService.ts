@@ -430,6 +430,13 @@ export interface PiSessionManagerGateway {
    */
   resolveSessionFile(cwd: string, sessionId: string): Promise<ResolvedSessionFile | undefined>;
   /**
+   * Locate a session file by id within the session folders that list the
+   * given workspace paths, matching file names only (no transcript or
+   * full-directory header reads). Gateways without it fall back to
+   * `resolveSessionFile` per path.
+   */
+  findSessionFile?(sessionId: string, cwds: readonly string[]): Promise<ResolvedSessionFile | undefined>;
+  /**
    * Drop any cached listing summary for a session file that was rewritten in
    * place (detach clears the header while keeping the inode): file identity
    * and size checks cannot detect such rewrites, so the scanner memo must be
@@ -1606,6 +1613,31 @@ export class PiSessionService implements SessionRouteService {
     return [...unarchivedSessions, ...archivedSessions];
   }
 
+  /**
+   * Find a session's working directory from its id alone, for links that do not
+   * name a workspace. Only places PI WEB already shows are searched: hosted
+   * runtimes, the archive index, and the session folders of `workspaceCwds`.
+   * Read-only: no runtime is opened.
+   */
+  async findSession(sessionId: string, workspaceCwds: readonly string[]): Promise<{ id: string; cwd: string } | undefined> {
+    const active = this.active.get(sessionId);
+    if (active !== undefined) return { id: sessionId, cwd: active.runtime.cwd };
+    const archived = await this.archiveStore.get(sessionId);
+    if (archived !== undefined) return { id: sessionId, cwd: archived.cwd };
+    const file = this.sessionManager.findSessionFile === undefined
+      ? await this.findSessionFileInEachWorkspace(sessionId, workspaceCwds)
+      : await this.sessionManager.findSessionFile(sessionId, workspaceCwds);
+    return file === undefined ? undefined : { id: file.id, cwd: file.cwd };
+  }
+
+  private async findSessionFileInEachWorkspace(sessionId: string, workspaceCwds: readonly string[]): Promise<ResolvedSessionFile | undefined> {
+    for (const cwd of workspaceCwds) {
+      const file = await this.sessionManager.resolveSessionFile(cwd, sessionId);
+      if (file !== undefined) return file;
+    }
+    return undefined;
+  }
+
   /** Read-only plugin catalog: do not open runtimes or reconcile unread/activity state. */
   async listCatalogSessions(cwd: string, signal?: AbortSignal): Promise<readonly Omit<PluginSessionSnapshot, "pinned">[]> {
     signal?.throwIfAborted();
@@ -2056,15 +2088,42 @@ export class PiSessionService implements SessionRouteService {
   }
 
   private async deliverAskOutcome(session: PiAgentSession, outcome: AskUserOutcome): Promise<ClientSessionStatus> {
-    // Pi persists/displays the structured message and wakes an idle agent, or
-    // queues it behind in-flight work. Ordinary entry-mutation protection still
-    // applies, but there is no answer-specific stale/duplicate gate.
-    await this.runSessionEntryMutation(session, "deliver answers to your questions", () => session.sendCustomMessage(
+    // For an idle session Pi's delivery promise spans the whole agent run.
+    // Acknowledge acceptance instead: message_start for this reply, or a resolved
+    // delivery when Pi queues it. This is not a durable-persistence receipt.
+    let accepted = false;
+    let acknowledge!: () => void;
+    const acceptance = new Promise<void>((resolve) => { acknowledge = resolve; });
+    const unsubscribe = session.subscribe((event) => {
+      if (!isRecord(event) || event["type"] !== "message_start") return;
+      const message = event["message"];
+      if (!isRecord(message) || message["role"] !== "custom" || message["customType"] !== ASK_USER_ANSWERS_CUSTOM_TYPE) return;
+      // Pi preserves details by reference. An ask can be answered repeatedly,
+      // even with identical data, so its askId alone cannot identify this send.
+      if (message["details"] !== outcome) return;
+      accepted = true;
+      acknowledge();
+    });
+    // Keep entry-mutation protection for the full run, not just acknowledgment.
+    const delivery = this.runSessionEntryMutation(session, "deliver answers to your questions", () => session.sendCustomMessage(
       { customType: ASK_USER_ANSWERS_CUSTOM_TYPE, content: renderAskUserAnswersText(outcome), display: true, details: outcome },
       { triggerTurn: true, deliverAs: "followUp" },
     ));
-    this.publishStatus(session);
-    return this.statusFromSession(session);
+    void delivery.catch((error: unknown) => {
+      if (!accepted) return; // Pre-acceptance failures still reject the request.
+      this.subsessionStoppedParents.add(session);
+      const message = error instanceof Error ? error.message : String(error);
+      this.publishActivity(session, { kind: "error" }, "error", message);
+      this.events.publish(session.sessionId, { type: "session.error", message });
+      if (this.isCurrentActiveSession(session)) this.updateSubsessionTracking(session);
+    });
+    try {
+      await Promise.race([delivery, acceptance]);
+      this.publishStatus(session);
+      return this.statusFromSession(session);
+    } finally {
+      unsubscribe();
+    }
   }
 
   /**
