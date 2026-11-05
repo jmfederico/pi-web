@@ -86,6 +86,7 @@ import { sessionServiceDependencies } from "./sessiond/sessionServiceDependencie
 import { PiSessionEventConnections } from "./sessions/piSessionEventConnections.js";
 import { bindCompanionBackend } from "./sessions/companionBackend.js";
 import { registerWorkspaceCatalogRoutes } from "./sessiond/workspaceCatalogRoutes.js";
+import { registerSessionLocationRoutes } from "./sessiond/sessionLocationRoutes.js";
 import { registerPluginBackendChannelRoutes } from "./sessiond/pluginBackendChannelRoutes.js";
 import { installPluginBackendChannelWebSocketPayloadLimit } from "./webSocketBridge.js";
 import { registerPluginBackendResourceRoutes } from "./sessiond/pluginBackendResourceRoutes.js";
@@ -503,6 +504,7 @@ function registerSessionDaemonRoutes({ eventHub, machineStatus, statusAttributio
   registerAuthRoutes(app, auth);
   registerMcpAuthRoutes(app, sessions);
   registerSessionRoutes(app, sessions, eventHub);
+  registerSessionLocationRoutes(app, { sessions, workspaces: statusAttribution });
   registerWorkspaceCatalogRoutes(app, {
     projects,
     workspaces: workspaceProviders,

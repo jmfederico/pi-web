@@ -104,6 +104,7 @@
             <a href="#plugins">Can I use local plugins?</a>
             <a href="#worktree-list-out-of-date">A worktree I created is missing</a>
             <a href="#navigation-order">How do I arrange navigation lists?</a>
+            <a href="#session-links">How do I link to a session?</a>
             <a href="#session-notices">Where are persistent session warnings?</a>
             <a href="#chat-images">How do chat images load?</a>
             <a href="#chat-updates">Chat updates stopped</a>
@@ -351,6 +352,21 @@
                 <strong>Move pin up</strong> and <strong>Move pin down</strong> to arrange pinned parents, or
                 <strong>Unpin session</strong> to return a tree to the recent list. Nested sessions cannot be pinned
                 independently; archived sessions remain in the archive.
+              </p>
+            </article>
+
+            <article id="session-links" class="faq-item">
+              <h2>How do I link to a session?</h2>
+              <p>
+                Add <code>?session=&lt;session ID&gt;</code> to your PI WEB address. Pi gives agent shell commands
+                their own ID as <code>PI_SESSION_ID</code>, so you can ask an agent to include
+                <code>https://pi.example.com/?session=${PI_SESSION_ID}</code> in an email or notification.
+              </p>
+              <p>
+                When the link opens, PI WEB finds the project and workspace that list the session and redirects to the
+                full session link. It checks this machine first, then connected machines; add
+                <code>&amp;machine=&lt;machine ID&gt;</code> to check only one. Only sessions you could open from a
+                workspace's session list are found; for others, the link reports that the session was not found.
               </p>
             </article>
 

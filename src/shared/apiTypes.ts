@@ -483,6 +483,17 @@ export interface SessionRef {
   cwd: string;
 }
 
+/**
+ * The project and workspace that list a session, answered from its id alone so
+ * links that carry only `?session=<id>` can redirect to the full route. A
+ * session no open project lists is a 404 rather than a location.
+ */
+export interface SessionLocation {
+  sessionId: string;
+  projectId: string;
+  workspaceId: string;
+}
+
 export type ServerNoticeSeverity = "info" | "warning" | "error";
 
 /** Browser-visibility selectors for one server notice. */

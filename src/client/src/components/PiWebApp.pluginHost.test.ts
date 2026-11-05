@@ -1528,6 +1528,39 @@ describe("PiWebApp plugin host", () => {
     if (scenario === "machine load failure") expect(appState(app).error).not.toContain("not found");
   });
 
+  it.each([
+    ["in a project", { status: 200, body: { sessionId: "s1", projectId: "project-1", workspaceId: "workspace-1" } }],
+    ["unknown", { status: 404, body: { error: "Session not found" } }],
+  ] as const)("expands a session-only link when the session is %s", async (scenario, location) => {
+    const browser = installBrowserWindow("http://localhost/app?session=s1&view=chat");
+    const app = createDetachedApp();
+    await markPluginLoadingReady(app);
+    const json = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.endsWith("api/machines")) return json({ machines: [{ id: "local", name: "Local", kind: "local", createdAt: "now", updatedAt: "now" }] });
+      if (url.endsWith("api/machines/local/sessions/s1/location")) return json(location.body, location.status);
+      if (url.endsWith("api/machines/local/projects")) return json([]);
+      return Promise.reject(new Error(`unexpected request ${url}`));
+    }));
+    const restored: unknown[] = [];
+    Reflect.set(app, "restoreRouteFor", (route: unknown) => { restored.push(route); return Promise.resolve(); });
+    Reflect.set(app, "withChatScrollTransition", async (action: () => Promise<void>) => { await action(); });
+    Reflect.set(app, "refreshWorkspaceDeletionRuns", () => Promise.resolve());
+
+    await callAsyncAppMethod(app, "loadProjectsAndRestoreRoute");
+
+    if (scenario === "unknown") {
+      expect(browser.replaced).toEqual([]);
+      expect(restored).toEqual([expect.objectContaining({ projectId: undefined, sessionId: "s1" })]);
+      expect(callAppMethod(app, "sessionEmptyMessage")).toBe("Session s1 was not found in any open project.");
+      return;
+    }
+    expect(browser.pushed).toEqual([]);
+    expect(Object.fromEntries(browser.url.searchParams)).toEqual({ project: "project-1", workspace: "workspace-1", session: "s1", view: "chat" });
+    expect(restored).toEqual([expect.objectContaining({ projectId: "project-1", workspaceId: "workspace-1", sessionId: "s1", view: "chat" })]);
+  });
+
   it("keeps an unavailable machine route explicit instead of resolving it locally", async () => {
     const browser = installBrowserWindow("http://localhost/app?machine=removed-machine&project=project-1&workspace=workspace-1&view=chat");
     const app = createDetachedApp();
