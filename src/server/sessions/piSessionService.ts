@@ -5230,10 +5230,11 @@ export class PiSessionService implements SessionRouteService {
     if (eventType === "message_start") { this.publishActivity(session, { kind: "messageStarted" }, "active"); return; }
     if (eventType === "message_end") { this.publishActivity(session, { kind: "messageComplete" }, "idle"); return; }
     if (eventType === "message_update") { this.publishActivity(session, { kind: "receivingResponse" }, "active"); return; }
-    if (eventType === "tool_execution_start") { this.publishActivity(session, { kind: "runningTool" }, "active", getString(event, "toolName")); return; }
-    // Streamed output belongs to the tool that is already running: the generic
-    // fallback below would replace "running tool" with this event's raw name.
-    if (eventType === "tool_execution_update") { this.publishActivity(session, { kind: "runningTool" }, "active", getString(event, "toolName")); return; }
+    // Streamed output belongs to the running tool, not the generic event fallback.
+    if (eventType === "tool_execution_start" || eventType === "tool_execution_update") {
+      this.publishActivity(session, { kind: "runningTool" }, "active", getString(event, "toolName"));
+      return;
+    }
     if (eventType === "tool_execution_end") {
       const isError = getBoolean(event, "isError") === true;
       this.publishActivity(session, isError ? { kind: "toolFailed" } : { kind: "toolComplete" }, isError ? "error" : "idle", getString(event, "toolName"));
