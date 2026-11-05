@@ -52,6 +52,15 @@ describe("CachedWorkspaceAttribution", () => {
     expect(resolved.get("/srv/dev/project-1/src")?.workspaceId).toBe("project-1-workspace-0");
   });
 
+  it("lists established workspaces with their canonical paths", async () => {
+    const attribution = new CachedWorkspaceAttribution(dependencies({ "project-1": ["/srv/dev/project-1", "/srv/dev/project-1/nested/"] }));
+
+    await expect(attribution.knownWorkspaces()).resolves.toEqual(expect.arrayContaining([
+      { path: resolve("/srv/dev/project-1"), projectId: "project-1", workspaceId: "project-1-workspace-0" },
+      { path: resolve("/srv/dev/project-1/nested"), projectId: "project-1", workspaceId: "project-1-workspace-1" },
+    ]));
+  });
+
   it("does not attribute a sibling path that only shares a prefix", async () => {
     const attribution = new CachedWorkspaceAttribution(dependencies({ "project-1": ["/srv/dev/wt1"] }));
 
