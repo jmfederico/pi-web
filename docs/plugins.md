@@ -834,6 +834,24 @@ Theme and pair declarations require `id` and `name`, and accept optional `descri
 
 Keep paths inside the browser-public root, without leading slashes, backslashes, empty segments, `.` or `..` segments. Everything in `browserRoot` is public; ship only intended assets. The gateway supplies qualified theme IDs such as `ocean-themes:ocean-dark` and default/enforced policy. Initial delivery contains only the default selection, or Classic while a legacy runtime default awaits browser activation. `GET api/theme?themeId=…&auto=…` supplies another selection on demand, and General settings use `GET api/themes` for the complete enabled picker inventory. Metadata responses support private HTTP caching with ETag revalidation. It supplies revision-path stylesheet URLs so relative CSS fonts and images use the same immutable asset revision. Keep those assets under the same root, and bundle CSS imports before shipping. Theme-only changes need a browser reload, not a session-daemon restart.
 
+#### Loading-screen colours
+
+Add an optional `loadingScreen` object to each declarative theme:
+
+```json
+"loadingScreen": {
+  "background": "#071923",
+  "foreground": "#e4f5ff",
+  "logo": "#60d7ee"
+}
+```
+
+All three values are required when the object is present. Use opaque `#RGB` or `#RRGGBB` colours; other CSS values are rejected. Choose readable foreground/background contrast for startup errors and a clearly visible logo colour. The activity line uses the logo colour too.
+
+These colours appear in the initial HTML before JavaScript runs, without another browser request. The loader follows the gateway's delivered default (Classic when a legacy runtime default is unavailable), not a browser-local theme choice. Auto follows the device scheme using each pair member's contribution. A theme without a contribution keeps system background/text colours and the default teal mark, or purple on development deployments. Stable deployments use the contributed logo colour. Development deployments keep the logo and activity line purple regardless of the theme; contributed background and foreground colours still apply. Forced-colour modes retain system colours.
+
+PI WEB owns the logo, layout, and sweeping activity-line animation; reduced-motion preferences keep the line static. Loading-screen contributions support colours only, not CSS rules, assets, or scripts.
+
 #### Migrating runtime themes
 
 Browser `activate().contributions.themes` and `themePairs` are deprecated but remain supported, with a browser-console deprecation warning. V5 runtime themes still use CSS stylesheet URLs; v4 themes retain their required `tokens: ThemeTokens` contract and cannot declare stylesheet contributions. Existing token palettes continue to work through semantic-property fallbacks, and switching away clears their overrides. Runtime themes require browser activation and cannot benefit from early static discovery.

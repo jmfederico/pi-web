@@ -6,11 +6,11 @@
       "id": "themes",
       "browserRoot": "assets",
       "themes": [
-        { "id": "pi-web-dark", "name": "PI WEB Dark", "description": "Dark PI WEB palette.", "order": 10, "colorScheme": "dark", "stylesheets": [{ "id": "palette", "path": "pi-web-dark.css" }] },
-        { "id": "pi-web-light", "name": "PI WEB Light", "description": "Light PI WEB palette.", "order": 20, "colorScheme": "light", "stylesheets": [{ "id": "palette", "path": "pi-web-light.css" }] },
-        { "id": "classic", "name": "PI WEB Classic", "description": "The original PI WEB dark palette.", "order": 30, "colorScheme": "dark", "stylesheets": [{ "id": "palette", "path": "classic.css" }] },
-        { "id": "paper", "name": "Paper", "description": "White and neutral grays with restrained status colors.", "order": 40, "colorScheme": "light", "stylesheets": [{ "id": "palette", "path": "paper.css" }] },
-        { "id": "graphite", "name": "Graphite", "description": "Charcoal and neutral grays with restrained status colors.", "order": 50, "colorScheme": "dark", "stylesheets": [{ "id": "palette", "path": "graphite.css" }] }
+        { "id": "pi-web-dark", "name": "PI WEB Dark", "description": "Dark PI WEB palette.", "order": 10, "colorScheme": "dark", "loadingScreen": { "background": "#070912", "foreground": "#f7f4ff", "logo": "#00f0d8" }, "stylesheets": [{ "id": "palette", "path": "pi-web-dark.css" }] },
+        { "id": "pi-web-light", "name": "PI WEB Light", "description": "Light PI WEB palette.", "order": 20, "colorScheme": "light", "loadingScreen": { "background": "#f7f1e6", "foreground": "#15131b", "logo": "#008c82" }, "stylesheets": [{ "id": "palette", "path": "pi-web-light.css" }] },
+        { "id": "classic", "name": "PI WEB Classic", "description": "The original PI WEB dark palette.", "order": 30, "colorScheme": "dark", "loadingScreen": { "background": "#0d1117", "foreground": "#e6edf3", "logo": "#00f0d8" }, "stylesheets": [{ "id": "palette", "path": "classic.css" }] },
+        { "id": "paper", "name": "Paper", "description": "White and neutral grays with restrained status colors.", "order": 40, "colorScheme": "light", "loadingScreen": { "background": "#ffffff", "foreground": "#202020", "logo": "#303030" }, "stylesheets": [{ "id": "palette", "path": "paper.css" }] },
+        { "id": "graphite", "name": "Graphite", "description": "Charcoal and neutral grays with restrained status colors.", "order": 50, "colorScheme": "dark", "loadingScreen": { "background": "#181818", "foreground": "#e8e8e8", "logo": "#dedede" }, "stylesheets": [{ "id": "palette", "path": "graphite.css" }] }
       ],
       "themePairs": [
         { "id": "pi-web", "name": "PI WEB", "order": 10, "light": "pi-web-light", "dark": "pi-web-dark" },

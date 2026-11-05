@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 import { deploymentHtmlForFlavor } from "../../src/server/deploymentIdentity.js";
+import { injectThemeBootstrap } from "../../src/server/themeBootstrap.js";
+import type { PiWebThemeBootstrap } from "../../src/shared/themeCatalog.js";
 
 const deliveredCatalog = {
   themes: [
@@ -91,6 +93,54 @@ test("application initialization proceeds while the selected declarative palette
   await expect(page.locator("body")).toHaveCSS("background-color", "rgb(254, 254, 254)");
 });
 
+test.describe("loading-screen contributions before JavaScript", () => {
+  test.use({ javaScriptEnabled: false });
+
+  for (const [mode, flavor] of [["fixed", "stable"], ["auto", "stable"], ["missing-peer", "stable"], ["auto", "dev"]] as const) {
+    test(`renders ${mode} server colours without loading theme assets (${flavor})`, async ({ page }) => {
+      const bootstrap: PiWebThemeBootstrap = {
+        catalog: {
+          themes: [
+            { id: "pack:light", pluginId: "pack", name: "Light", colorScheme: "light", stylesheets: [],
+              loadingScreen: { background: "#f1f2f3", foreground: "#121314", logo: "#345678" } },
+            { id: "pack:dark", pluginId: "pack", name: "Dark", colorScheme: "dark", stylesheets: [],
+              ...(mode === "missing-peer" ? {} : { loadingScreen: { background: "#121314", foreground: "#f1f2f3", logo: "#abcdef" } }) },
+          ],
+          themePairs: [{ id: "pack:pair", pluginId: "pack", name: "Pair", light: "pack:light", dark: "pack:dark" }],
+          defaultTheme: { themeId: "pack:light", auto: mode !== "fixed" },
+        },
+        stylesheets: [],
+      };
+      const requests: string[] = [];
+      page.on("request", (request) => { requests.push(request.url()); });
+      await page.route("**/theme-startup.html", async (route) => {
+        const html = await readFile(new URL("../../src/client/index.html", import.meta.url), "utf8");
+        await route.fulfill({ contentType: "text/html", body: deploymentHtmlForFlavor(injectThemeBootstrap(html.replaceAll("%BASE_URL%", "./"), bootstrap), flavor) });
+      });
+      await page.emulateMedia({ colorScheme: "light" });
+      await page.goto("/theme-startup.html");
+      const loader = page.locator("#pi-web-startup");
+      await expect(loader).toHaveCSS("background-color", "rgb(241, 242, 243)");
+      await expect(loader).toHaveCSS("color", "rgb(18, 19, 20)");
+      // Development identity wins over theme colours, including in Auto mode.
+      await expect(loader.locator("svg")).toHaveCSS("fill", flavor === "dev" ? "rgb(163, 113, 247)" : "rgb(52, 86, 120)");
+      await expect(loader.locator(".pi-web-startup-activity")).toHaveCSS("color", await loader.locator("svg").evaluate((element) => getComputedStyle(element).fill));
+      await page.emulateMedia({ colorScheme: "dark" });
+      if (mode === "missing-peer") {
+        const system = await page.locator("body").evaluate((body) => ({ background: getComputedStyle(body).backgroundColor, foreground: getComputedStyle(body).color }));
+        await expect(loader).toHaveCSS("background-color", system.background);
+        await expect(loader).toHaveCSS("color", system.foreground);
+        await expect(loader.locator("svg")).toHaveCSS("fill", "rgb(0, 240, 216)");
+      } else {
+        await expect(loader).toHaveCSS("background-color", mode === "auto" ? "rgb(18, 19, 20)" : "rgb(241, 242, 243)");
+        await expect(loader.locator("svg")).toHaveCSS("fill", flavor === "dev" ? "rgb(163, 113, 247)" : mode === "auto" ? "rgb(171, 205, 239)" : "rgb(52, 86, 120)");
+      }
+      await expect(loader.locator(".pi-web-startup-activity")).toHaveCSS("color", await loader.locator("svg").evaluate((element) => getComputedStyle(element).fill));
+      expect(requests.filter((url) => /\/api\/theme|\.css(?:\?|$)/u.test(url))).toEqual([]);
+    });
+  }
+});
+
 // Serve the actual startup document without the application module. This makes
 // pre-application painting observable without a daemon or timing-based sleeps.
 for (const { colorScheme, flavor } of [
@@ -130,8 +180,10 @@ for (const { colorScheme, flavor } of [
     }, colorScheme === "light" ? "dark" : "light");
     await expect(loader).toHaveCSS("background-color", system.background);
     await expect(loader).toHaveCSS("color", system.text);
-    expect(await loader.locator("svg").evaluate((element) => getComputedStyle(element).animationName)).not.toBe("none");
-    await page.emulateMedia({ reducedMotion: "reduce" });
     await expect(loader.locator("svg")).toHaveCSS("animation-name", "none");
+    const activity = loader.locator(".pi-web-startup-activity");
+    expect(await activity.evaluate((element) => getComputedStyle(element, "::after").animationName)).not.toBe("none");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    expect(await activity.evaluate((element) => getComputedStyle(element, "::after").animationName)).toBe("none");
   });
 }
