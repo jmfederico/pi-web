@@ -77,7 +77,7 @@ function toOption(param: Static<typeof AskUserOptionParams>): AskUserQuestionOpt
 
 function postedText(ask: AskUserRequest): string {
   const count = ask.questions.length;
-  return `Posted ${count.toString()} question${count === 1 ? "" : "s"} to the user as ask ${ask.askId}. Ending this run; the answers arrive as a follow-up message that wakes you, naming every question the user left unanswered. Do not repost these questions.`;
+  return `Posted ${count.toString()} question${count === 1 ? "" : "s"} to the user as ask ${ask.askId}. Ending this run; the answers arrive as a follow-up message that wakes you, naming every question the user left unanswered.`;
 }
 
 /**
@@ -99,10 +99,12 @@ export function createAskUserToolDefinition(options: AskUserRequestOptions = {})
     // Nested tools cannot terminate the outer agent run.
     exposure: "model-only",
     label: "Ask user",
-    description: "Post a set of questions to the user as a browser form and end this run. Answers arrive later as a follow-up message; the user may leave any question unanswered.",
-    promptSnippet: "ask_user: post a question set to the user; ends the run, answers return as a follow-up",
+    description: "Ask the user questions through a browser form and end the run. Answers arrive as a follow-up message; the user may leave questions unanswered.",
+    promptSnippet: "ask_user: request answers, decisions, or approvals; ends the run, answers return as a follow-up",
     promptGuidelines: [
-      "When you need decisions from the user, post them together with ask_user instead of asking in prose one at a time. It ends the run and the answers, including the questions the user left unanswered, come back as a follow-up message that wakes you. Call it alone and last, and do not repost the same questions or poll for answers.",
+      "Use ask_user for answers, decisions, and approvals. Group related questions in one call.",
+      "Call ask_user alone and last; it marks the session as needing attention and ends the run.",
+      "Answers return as a follow-up message identifying unanswered questions.",
     ],
     parameters: AskUserParams,
     // eslint-disable-next-line @typescript-eslint/require-await -- Tool execution is promise-shaped; validation failures reject before a successful result exists.
