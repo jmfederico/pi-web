@@ -548,7 +548,12 @@ export class PluginRegistry {
           svg,
           signal,
           lifetimeSignal: lifetimeController.signal,
-          localization: createPluginLocalization(this.options.localization ?? localization, declaration.sourcePluginId, registration.id, lifetimeController.signal),
+          localization: createPluginLocalization(
+            this.options.localization ?? localization, declaration.sourcePluginId, registration.id, lifetimeController.signal,
+            // Catalogs register before the host verifies plugin availability and are not re-evaluated when it
+            // changes, so they follow machine ownership only.
+            (selectedMachineId) => this.belongsToMachine(registration.id, registration.machineId, selectedMachineId, registration.sourcePluginId),
+          ),
           selection: this.selection.forPlugin(registration.id, lifetimeController.signal),
         })),
       );
@@ -1280,6 +1285,11 @@ export class PluginRegistry {
     // Portable gateway registrations still use selected-machine helpers, so
     // their lifecycle gate follows that effective machine rather than local.
     if (!this.isContributionEnabled(pluginId, machineId ?? selectedMachineId)) return false;
+    return this.belongsToMachine(pluginId, machineId, selectedMachineId, sourcePluginId);
+  }
+
+  /** Machine ownership alone, without the host's asynchronous lifecycle gate. */
+  private belongsToMachine(pluginId: string, machineId: string | undefined, selectedMachineId: string, sourcePluginId: string | undefined): boolean {
     if (machineId === undefined) return !this.isGatewayPluginHiddenForMachine(pluginId, selectedMachineId);
     return machineId === selectedMachineId && !this.isRemotePluginHiddenByGateway(sourcePluginId, machineId);
   }

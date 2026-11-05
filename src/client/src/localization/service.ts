@@ -11,9 +11,16 @@ import { loadCatalog, type CatalogLoad } from "./catalogLoader.js";
 export { message } from "../../../shared/localization.js";
 export type * from "../../../shared/localization.js";
 
+/** Decides whether a catalog applies while the given machine is selected. */
+export type CatalogMachineScope = (machineId: string) => boolean;
+
 interface RegisteredCatalog extends TranslationContribution {
+  appliesTo: CatalogMachineScope;
   loaded?: CatalogLoad;
 }
+
+const LOCAL_MACHINE_ID = "local";
+const everyMachine: CatalogMachineScope = () => true;
 
 interface SelectedMessage { message: string; locale: string }
 interface RegisteredSource {
@@ -109,6 +116,7 @@ export class LocalizationService {
   private preferencesRevision = 0;
   private pending: Promise<void> = Promise.resolve();
   private resolvedLanguage = "en";
+  private machineId = LOCAL_MACHINE_ID;
 
   constructor(options: LocalizationOptions = {}) {
     this.current = normalizePreferences(options.preferences ?? this.defaults);
@@ -149,7 +157,7 @@ export class LocalizationService {
   get ready(): Promise<void> { return this.pending; }
   /** Installed catalog languages, without loading catalogs or exposing development pseudo modes. */
   get availableLanguages(): readonly string[] {
-    return [...new Set(["en", ...[...this.contributions.values()].map((item) => item.locale)])]
+    return [...new Set(["en", ...this.machineCatalogs().map((item) => item.locale)])]
       .filter((locale) => locale !== "en-XA" && locale !== "ar-XB").sort();
   }
   private get isPseudo(): boolean { return this.current.language === "en-XA" || this.current.language === "ar-XB"; }
@@ -262,10 +270,22 @@ export class LocalizationService {
     };
   }
 
-  /** Contributions may target any namespace; registration order and load timing do not determine precedence. */
-  registerCatalog(contribution: TranslationContribution): () => void {
+  /**
+   * Select the machine whose catalogs apply. A machine's language pack must not
+   * translate the UI while another machine is selected.
+   */
+  setMachine(machineId: string): void {
+    this.machineId = machineId;
+    this.refresh();
+  }
+
+  /**
+   * Contributions may target any namespace; registration order and load timing do not determine precedence.
+   * `appliesTo` limits the catalog to selected machines; omitted, it applies on every machine.
+   */
+  registerCatalog(contribution: TranslationContribution, appliesTo: CatalogMachineScope = everyMachine): () => void {
     if (!contribution.id || this.contributions.has(contribution.id)) throw new Error(`Duplicate or empty catalog ID: ${contribution.id}`);
-    const registered: RegisteredCatalog = { ...contribution, locale: canonicalLocale(contribution.locale) };
+    const registered: RegisteredCatalog = { ...contribution, locale: canonicalLocale(contribution.locale), appliesTo };
     this.contributions.set(registered.id, registered);
     this.refresh();
     return () => {
@@ -276,9 +296,13 @@ export class LocalizationService {
     };
   }
 
+  private machineCatalogs(): RegisteredCatalog[] {
+    return [...this.contributions.values()].filter((item) => item.appliesTo(this.machineId));
+  }
+
   private matchingCatalogs(): RegisteredCatalog[] {
     const chain = this.isPseudo ? [] : localeChain(this.current.language).filter((locale) => locale !== "en");
-    return [...this.contributions.values()]
+    return this.machineCatalogs()
       .filter((item) => chain.includes(item.locale))
       .sort((a, b) => chain.indexOf(a.locale) - chain.indexOf(b.locale) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   }

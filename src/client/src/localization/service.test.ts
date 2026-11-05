@@ -156,6 +156,24 @@ describe("localization", () => {
     expect(diagnostics.filter(({ code }) => code === "missing")).toHaveLength(1);
   });
 
+  it("applies a machine-scoped pack only while its machine is selected", async () => {
+    const { service, messages } = setup("fr");
+    const load = vi.fn(() => Promise.resolve({ cancel: "Annuler" }));
+    service.registerCatalog({ id: "remote-pack", namespace: "test", locale: "fr", load }, (machineId) => machineId === "remote");
+    await service.ready;
+    expect(messages.t("cancel")).toBe("Cancel");
+    expect(service.availableLanguages).toEqual(["en"]);
+    expect(load).not.toHaveBeenCalled();
+    service.setMachine("remote");
+    await service.ready;
+    expect(messages.t("cancel")).toBe("Annuler");
+    expect(service.availableLanguages).toEqual(["en", "fr"]);
+    expect(service.language).toBe("fr");
+    service.setMachine("local");
+    expect(messages.t("cancel")).toBe("Cancel");
+    expect(service.language).toBe("en");
+  });
+
   it("supports packs registered before their target namespace", async () => {
     const service = new LocalizationService({ preferences: { language: "fr", formatLocale: "fr" } });
     service.registerCatalog({ id: "pack", namespace: "later", locale: "fr", load: () => Promise.resolve({ cancel: "Annuler" }) });

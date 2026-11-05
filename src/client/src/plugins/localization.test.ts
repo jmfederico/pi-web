@@ -71,6 +71,37 @@ describe("plugin localization", () => {
     } finally { await registry.dispose(); }
   });
 
+  it("keeps a remote language pack on its machine while gateway packs apply everywhere", async () => {
+    const service = new LocalizationService({ preferences: { language: "fr", formatLocale: "en" } });
+    const messages = service.registerMessages("core.test", definitions);
+    // The host verifies plugin availability only after a batch activates; catalogs must not depend on that gate.
+    let verified = false;
+    const registry = new PluginRegistry({ localization: service, isContributionEnabled: () => verified });
+    const pack = async (id: string, cancel: string, machineId?: string) => {
+      verified = false;
+      await registry.register({ id, sourcePluginId: id, ...(machineId === undefined ? {} : { machineId }), plugin: {
+        apiVersion: 5, name: id, activate(context) {
+          context.localization?.registerCatalog({ id: "fr", namespace: "core.test", locale: "fr", load: () => Promise.resolve({ cancel }) });
+          return { contributions: {} };
+        },
+      } });
+      verified = true;
+      await service.ready;
+    };
+    try {
+      await pack("gateway-pack", "Annuler");
+      expect(messages.t("cancel")).toBe("Annuler");
+      await pack("remote-pack", "Annuler (distant)", "remote");
+      expect(messages.t("cancel")).toBe("Annuler");
+      service.setMachine("remote");
+      await service.ready;
+      expect(messages.t("cancel")).toBe("Annuler (distant)");
+      service.setMachine("other");
+      await service.ready;
+      expect(messages.t("cancel")).toBe("Annuler");
+    } finally { await registry.dispose(); }
+  });
+
   it("lets queued detached renders read source messages without retaining activation registrations", async () => {
     const service = new LocalizationService({ preferences: { language: "fr", formatLocale: "en" } });
     const { api, lifetime } = activation(service);
