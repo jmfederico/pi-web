@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { defaultPiWebConfigPath, defaultPiWebDataDir, examplePiWebConfig } from "./config.js";
 import { piWebDockerCommand, type PiWebDockerMode } from "./docker/piWebDockerCommandPlan.js";
 import { ownEnvironmentValue } from "./environment.js";
-import { PI_WEB_PI_PACKAGE_DIR_ENV } from "./piRuntime.js";
+import { PI_WEB_PI_PACKAGE_DIR_ENV, stablePiPackageSelection } from "./piRuntime.js";
 import { runPiWebUpdate } from "./piWebUpdate.js";
 import { runWorkspaceNotificationCli } from "./workspaceNotificationCli.js";
 import { runPluginRecoveryCli, type SessionDaemonRestartPlan } from "./pluginRecoveryCli.js";
@@ -308,7 +308,9 @@ function describeServiceShell(): string {
 export function nativeServiceEnvironment(configPath: string | undefined, env: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const environment: Record<string, string> = configPath === undefined ? {} : { PI_WEB_CONFIG: configPath };
   const piPackageDir = ownEnvironmentValue(env, PI_WEB_PI_PACKAGE_DIR_ENV);
-  if (piPackageDir !== undefined && piPackageDir !== "") environment[PI_WEB_PI_PACKAGE_DIR_ENV] = piPackageDir;
+  if (piPackageDir !== undefined && piPackageDir !== "") {
+    environment[PI_WEB_PI_PACKAGE_DIR_ENV] = stablePiPackageSelection(piPackageDir);
+  }
   const runtime = ownEnvironmentValue(env, "PI_WEB_RUNTIME");
   if (runtime !== undefined && runtime !== "") environment["PI_WEB_RUNTIME"] = runtime;
   return environment;
@@ -727,6 +729,10 @@ async function install(args: string[]): Promise<void> {
 
   console.log(`\nPI WEB ${options.mode} services are installed and starting.`);
   console.log(`Config: ${configPath}`);
+  const piSelection = ownEnvironmentValue(candidate.input.environment, PI_WEB_PI_PACKAGE_DIR_ENV);
+  console.log(piSelection === undefined
+    ? "Pi: found from the service PATH at each start"
+    : `Pi: ${PI_WEB_PI_PACKAGE_DIR_ENV}=${piSelection}`);
   if (options.mode === "dev") {
     console.log("Open: http://127.0.0.1:8505");
   } else {

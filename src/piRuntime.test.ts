@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 import { afterEach, describe, expect, it } from "vitest";
-import { PI_WEB_PI_PACKAGE_DIR_ENV, selectPiRuntimePackageDir } from "./piRuntime.js";
+import { PI_WEB_PI_PACKAGE_DIR_ENV, selectPiRuntimePackageDir, stablePiPackageSelection } from "./piRuntime.js";
 
 const exec = promisify(execFile);
 const sdkName = "@earendil-works/pi-coding-agent";
@@ -124,7 +124,7 @@ describe("Pi package selection", () => {
     expect(await selectPiRuntimePackageDir({
       env: { PATH: [join(directory, "absent"), join(agent, "bin")].join(delimiter) },
       resolveLocalSdk: missingLocalSdk,
-    })).toBe(join(agent, "install", "releases", "2.1.3", "node_modules", sdkName));
+    })).toBe(await realpath(join(agent, "install", "releases", "2.1.3", "node_modules", sdkName)));
   });
 
   it("follows a linked managed launcher from a PATH overlay", async () => {
@@ -138,14 +138,27 @@ describe("Pi package selection", () => {
     })).toBe(await realpath(join(agent, "install", "releases", "1.0.0", "node_modules", sdkName)));
   });
 
-  it.each(["missing", "empty"])("treats a managed install without a usable current-version as unrelated", async (kind) => {
+  it("treats a launcher without current-version as an unsupported PATH Pi", async () => {
     const directory = await workspace();
     const agent = await managedInstallerFixture(directory);
-    if (kind === "empty") await writeFile(join(agent, "install", "current-version"), "\n");
-    else await rm(join(agent, "install", "current-version"));
+    await rm(join(agent, "install", "current-version"));
     await expect(selectPiRuntimePackageDir({
       env: { PATH: join(agent, "bin") }, resolveLocalSdk: missingLocalSdk,
     })).rejects.toThrow("does not expose a Pi npm SDK package");
+  });
+
+  it.each([
+    ["an empty version", "\n"],
+    ["a version outside releases/", "../escape\n"],
+    ["a release without the SDK", "9.9.9\n"],
+  ])("names current-version when it holds %s", async (_case, contents) => {
+    const directory = await workspace();
+    const agent = await managedInstallerFixture(directory);
+    const versionFile = join(agent, "install", "current-version");
+    await writeFile(versionFile, contents);
+    await expect(selectPiRuntimePackageDir({
+      env: { PATH: join(agent, "bin") }, resolveLocalSdk: missingLocalSdk,
+    })).rejects.toThrow(versionFile);
   });
 
   it("keeps ordinary npm resolution ahead of a managed-installer launcher on PATH", async () => {
@@ -168,6 +181,33 @@ describe("Pi package selection", () => {
     await expect(selectPiRuntimePackageDir({
       env: { PATH: [bin, join(agent, "bin")].join(delimiter) }, resolveLocalSdk: missingLocalSdk,
     })).rejects.toThrow("PI WEB will not select a different Pi");
+  });
+
+  it("follows current-version on each selection from an explicit managed install root", async () => {
+    const directory = await workspace();
+    const agent = await managedInstallerFixture(directory, "1.0.0");
+    const installRoot = join(agent, "install");
+    const select = () => selectPiRuntimePackageDir({
+      env: { [PI_WEB_PI_PACKAGE_DIR_ENV]: installRoot },
+      resolveLocalSdk: () => { throw new Error("Must not resolve locally"); },
+    });
+    expect(await select()).toBe(join(installRoot, "releases", "1.0.0", "node_modules", sdkName));
+    await packageFixture(join(installRoot, "releases", "2.0.0", "node_modules", sdkName), sdkName, "2.0.0");
+    await writeFile(join(installRoot, "current-version"), "2.0.0\n");
+    expect(await select()).toBe(join(installRoot, "releases", "2.0.0", "node_modules", sdkName));
+  });
+
+  it("explains an explicit managed release that pi update removed, without following current-version", async () => {
+    const directory = await workspace();
+    const agent = await managedInstallerFixture(directory, "2.0.0");
+    const installRoot = join(agent, "install");
+    const removed = join(installRoot, "releases", "1.0.0", "node_modules", sdkName);
+    const selection = selectPiRuntimePackageDir({
+      env: { [PI_WEB_PI_PACKAGE_DIR_ENV]: removed },
+      resolveLocalSdk: () => { throw new Error("Must not fall back"); },
+    });
+    await expect(selection).rejects.toThrow("managed Pi release \"1.0.0\", which is missing");
+    await expect(selection).rejects.toThrow(installRoot);
   });
 
   it("does not silently replace an unsupported PATH Pi with a later installation", async () => {
@@ -193,6 +233,24 @@ describe("Pi package selection", () => {
     await expect(selectPiRuntimePackageDir({
       env: { PATH: "" }, resolveLocalSdk: missingLocalSdk,
     })).rejects.toThrow("Standalone Pi binaries without an SDK package are not supported");
+  });
+});
+
+describe("stable Pi selection for services", () => {
+  it("replaces a managed release path with its install root", async () => {
+    const directory = await workspace();
+    const agent = await managedInstallerFixture(directory, "1.0.0");
+    const installRoot = join(agent, "install");
+    expect(stablePiPackageSelection(join(installRoot, "releases", "1.0.0", "node_modules", sdkName)))
+      .toBe(installRoot);
+  });
+
+  it("keeps npm package roots and release-shaped paths without current-version unchanged", async () => {
+    const directory = await workspace();
+    const npmRoot = await packageFixture(join(directory, "lib", "node_modules", sdkName));
+    const lookalike = await packageFixture(join(directory, "srv", "releases", "2024", "node_modules", sdkName));
+    expect(stablePiPackageSelection(npmRoot)).toBe(npmRoot);
+    expect(stablePiPackageSelection(lookalike)).toBe(lookalike);
   });
 });
 

@@ -1,7 +1,7 @@
-import { constants } from "node:fs";
+import { constants, statSync } from "node:fs";
 import { access, readFile, realpath } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolve as resolveImport } from "import-meta-resolve";
 
@@ -37,25 +37,92 @@ async function findSdkAncestor(file: string): Promise<string | undefined> {
 }
 
 /**
- * Mirror the managed Pi installer's launcher layout. The managed `pi` command
- * is a plain shell script at `<agent dir>/bin/pi`, not a symlink into a
- * package tree, so ancestry probing cannot find the SDK. Instead of parsing
- * the launcher script, probe the documented managed-install layout beside it;
- * a real SDK package in that layout is the only way the probe can succeed.
+ * Pi's managed installer keeps each release under
+ * `<install root>/releases/<version>/node_modules/<SDK>` and names the active
+ * one in `<install root>/current-version`; its `pi` launcher reads the same
+ * file on every run. PI WEB follows that file the same way, with only the
+ * checks needed to build a safe path from it.
  */
-async function managedInstallerSdk(agentDirectory: string): Promise<string | undefined> {
-  const installDirectory = join(agentDirectory, "install");
+const MANAGED_CURRENT_VERSION = "current-version";
+
+function managedReleaseSdkDir(installRoot: string, version: string): string {
+  return join(installRoot, "releases", version, "node_modules", SDK_PACKAGE);
+}
+
+/** The managed install root owning a release SDK path, judged by path shape only. */
+function managedInstallRootFromPath(packageDir: string): string | undefined {
+  const sdk = resolve(packageDir);
+  const sdkSegments = SDK_PACKAGE.split("/");
+  let directory = sdk;
+  for (const segment of [...sdkSegments].reverse()) {
+    if (basename(directory) !== segment) return undefined;
+    directory = dirname(directory);
+  }
+  if (basename(directory) !== "node_modules") return undefined;
+  const releaseDir = dirname(directory);
+  const releasesDir = dirname(releaseDir);
+  if (basename(releasesDir) !== "releases") return undefined;
+  const installRoot = dirname(releasesDir);
+  return managedReleaseSdkDir(installRoot, basename(releaseDir)) === sdk ? installRoot : undefined;
+}
+
+/**
+ * Resolve the SDK named by a managed install's `current-version`. Returns
+ * undefined when the directory has no `current-version` file, so callers can
+ * treat it as not being a managed install. A present but unusable file is an
+ * error that names the file and the expected SDK path.
+ */
+async function managedInstallSdk(installRoot: string): Promise<string | undefined> {
+  const versionFile = join(installRoot, MANAGED_CURRENT_VERSION);
   let version: string;
   try {
-    version = (await readFile(join(installDirectory, "current-version"), "utf8")).trim();
+    version = (await readFile(versionFile, "utf8")).trim();
   } catch (error) {
     if (error instanceof Error && "code" in error
-      && (error.code === "ENOENT" || error.code === "ENOTDIR")) return undefined;
+      && (error.code === "ENOENT" || error.code === "ENOTDIR" || error.code === "EISDIR")) return undefined;
     throw error;
   }
-  if (version === "") return undefined;
-  const candidate = join(installDirectory, "releases", version, "node_modules", SDK_PACKAGE);
-  return await isSdkPackage(candidate) ? candidate : undefined;
+  // The version becomes one path segment; reject anything that could leave releases/.
+  if (version === "" || version === "." || version === ".." || /[/\\\0]/u.test(version)) {
+    throw new Error(`Managed Pi version file ${versionFile} contains ${JSON.stringify(version)}, which is not a release directory name.`);
+  }
+  const candidate = managedReleaseSdkDir(installRoot, version);
+  if (!await isSdkPackage(candidate)) {
+    throw new Error(`Managed Pi version file ${versionFile} selects ${JSON.stringify(version)}, but ${candidate} has no package.json named ${SDK_PACKAGE}.`);
+  }
+  return candidate;
+}
+
+/**
+ * The value native services should keep for a selected Pi package directory.
+ * A managed Pi release path is replaced by its install root, so each service
+ * start follows `current-version` instead of a release that `pi update` may
+ * delete. Any other value is kept unchanged.
+ */
+export function stablePiPackageSelection(packageDir: string): string {
+  const installRoot = managedInstallRootFromPath(packageDir);
+  if (installRoot === undefined) return packageDir;
+  try {
+    return statSync(join(installRoot, MANAGED_CURRENT_VERSION)).isFile() ? installRoot : packageDir;
+  } catch (error) {
+    if (error instanceof Error && "code" in error
+      && (error.code === "ENOENT" || error.code === "ENOTDIR")) return packageDir;
+    throw error;
+  }
+}
+
+async function explicitPiPackageDir(explicit: string): Promise<string> {
+  if (explicit.trim() === "") throw new Error("The value is empty.");
+  // Preserve a supplied symlink: a package manager may retarget it on upgrade.
+  const directory = resolve(explicit);
+  if (await isSdkPackage(directory)) return directory;
+  const managed = await managedInstallSdk(directory);
+  if (managed !== undefined) return managed;
+  const installRoot = managedInstallRootFromPath(directory);
+  if (installRoot !== undefined) {
+    throw new Error(`It names managed Pi release ${JSON.stringify(basename(dirname(dirname(dirname(directory)))))}, which is missing; \`pi update\` removes old releases. Re-run \`/pi-web install\` from Pi, or set it to the managed install root ${installRoot}.`);
+  }
+  throw new Error(`Expected a package.json named ${SDK_PACKAGE}, or a managed Pi install root containing ${MANAGED_CURRENT_VERSION}.`);
 }
 
 /** Prefer an explicit Pi host, then ordinary npm resolution, then the Pi command. */
@@ -65,13 +132,10 @@ export async function selectPiRuntimePackageDir(options: PiRuntimeSelectionOptio
   const explicit = env[PI_WEB_PI_PACKAGE_DIR_ENV];
   if (explicit !== undefined) {
     try {
-      if (explicit.trim() === "") throw new Error("The package directory is empty.");
-      // Preserve a supplied symlink: a package manager may retarget it on upgrade.
-      const directory = resolve(explicit);
-      if (!await isSdkPackage(directory)) throw new Error(`Expected a package.json named ${SDK_PACKAGE}.`);
-      return directory;
+      return await explicitPiPackageDir(explicit);
     } catch (cause) {
-      throw new Error(`Invalid ${PI_WEB_PI_PACKAGE_DIR_ENV}=${JSON.stringify(explicit)}. Point it to the hosting Pi npm SDK package root, not a standalone binary.`, { cause });
+      const reason = cause instanceof Error ? ` ${cause.message}` : "";
+      throw new Error(`Invalid ${PI_WEB_PI_PACKAGE_DIR_ENV}=${JSON.stringify(explicit)}.${reason} Point it to the hosting Pi npm SDK package root or managed install root, not a standalone binary.`, { cause });
     }
   }
 
@@ -99,20 +163,19 @@ export async function selectPiRuntimePackageDir(options: PiRuntimeSelectionOptio
     const resolved = await realpath(executable);
     const sdk = await findSdkAncestor(resolved);
     if (sdk !== undefined) return sdk;
-    if (platform !== "win32") {
-      // The managed launcher lives at `<agent dir>/bin/pi`; the SDK selection
-      // needs the agent directory one level above the launcher's directory.
-      const managed = await managedInstallerSdk(dirname(dirname(resolved)));
-      if (managed !== undefined) return managed;
-    }
     if (platform === "win32") {
       // npm's Windows command shim is a regular file beside node_modules, not
       // a symlink into the SDK. Use the shim's ordinary Node search paths.
-      const requireFromShim = createRequire(await realpath(executable));
+      const requireFromShim = createRequire(resolved);
       for (const moduleDirectory of requireFromShim.resolve.paths(SDK_PACKAGE) ?? []) {
         const candidate = join(moduleDirectory, SDK_PACKAGE);
         if (await isSdkPackage(candidate)) return candidate;
       }
+    } else {
+      // The managed installer's `pi` is a shell script at `<agent dir>/bin/pi`
+      // that runs the release named by `<agent dir>/install/current-version`.
+      const managed = await managedInstallSdk(join(dirname(dirname(resolved)), "install"));
+      if (managed !== undefined) return managed;
     }
     throw new Error(`The pi command at ${JSON.stringify(executable)} does not expose a Pi npm SDK package. Run /pi-web from Pi or set ${PI_WEB_PI_PACKAGE_DIR_ENV} to that installation's SDK package root. PI WEB will not select a different Pi from later on PATH.`);
   }

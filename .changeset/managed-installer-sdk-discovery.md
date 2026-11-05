@@ -2,4 +2,4 @@
 "@jmfederico/pi-web": patch
 ---
 
-Find the Pi SDK through the managed installer's launcher script, so PI WEB starts without `PI_WEB_PI_PACKAGE_DIR` when Pi is installed with the managed installer instead of npm.
+Support Pi installed with the managed installer (`pi.dev/install.sh`). PI WEB now finds that Pi's SDK from the `pi` command on `PATH`. Services installed with `/pi-web install` from a managed Pi keep working after `pi update`, because they follow the install's current version instead of one release. Services installed earlier from a managed Pi need `/pi-web install` again.
