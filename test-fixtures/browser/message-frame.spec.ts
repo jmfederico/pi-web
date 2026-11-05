@@ -7,6 +7,19 @@ async function box(locator: Locator) {
   return result;
 }
 
+async function bottomOffset(locator: Locator, reference: Locator) {
+  const referenceElement = await reference.elementHandle();
+  try {
+    // Disclosure layout can adjust scroll between separate boundingBox calls.
+    // Sample both edges in one callback so they share the same scroll offset.
+    return await locator.evaluate((element, anchor) => {
+      return Math.abs(element.getBoundingClientRect().bottom - anchor.getBoundingClientRect().bottom);
+    }, referenceElement);
+  } finally {
+    await referenceElement.dispose();
+  }
+}
+
 for (const visualEffects of [true, false]) {
   test(`grouped reasoning shares the message corner without a header row (effects: ${String(visualEffects)})`, async ({ page }, testInfo) => {
     await page.goto("/overlays.html");
@@ -41,7 +54,7 @@ for (const visualEffects of [true, false]) {
       const triggerBox = await box(trigger);
       // The reasoning starts at the message edge, not after an empty action row.
       expect(Math.abs(reasoningBox.y - messageBox.y)).toBeLessThanOrEqual(1);
-      expect(Math.abs(triggerBox.y + triggerBox.height - reasoningBox.y - reasoningBox.height)).toBeLessThanOrEqual(1);
+      expect(await bottomOffset(trigger, reasoning)).toBeLessThanOrEqual(1);
       expect(Math.abs(triggerBox.x + triggerBox.width - messageBox.x - messageBox.width)).toBeLessThanOrEqual(1);
 
       if (testInfo.project.name === "touch") await trigger.tap();
@@ -62,9 +75,9 @@ for (const visualEffects of [true, false]) {
     await expect(reasoning).toHaveJSProperty("open", true);
     await expect(group.locator(".group-msg.tool pi-message-actions-menu")).toHaveCount(0);
     const reply = chat.locator("article.assistant");
-    const replyContent = await box(reply.locator(".chat-message-content"));
-    const replyTrigger = await box(reply.getByRole("button", { name: "Message actions", exact: true }));
-    expect(Math.abs(replyTrigger.y + replyTrigger.height - replyContent.y - replyContent.height)).toBeLessThanOrEqual(1);
+    const replyContent = reply.locator(".chat-message-content");
+    const replyTrigger = reply.getByRole("button", { name: "Message actions", exact: true });
+    expect(await bottomOffset(replyTrigger, replyContent)).toBeLessThanOrEqual(1);
     const screenshot = testInfo.outputPath("message-frames.png");
     await chat.screenshot({ path: screenshot });
     await testInfo.attach("message-frames", { path: screenshot, contentType: "image/png" });
