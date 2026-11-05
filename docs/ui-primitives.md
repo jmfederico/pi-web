@@ -113,21 +113,33 @@ The statistics footer is non-interactive: it extends into the shell's reserved b
 
 Composer control purposes and default-action states have [supported hooks](theme-styling-contract.md#composer-controls) on the existing toolbar groups and native buttons; no extra wrapper is needed. The editor keeps a two-line text minimum even when empty or containing one line. Vertical padding belongs to the editor frame, outside the scroller, so long drafts retain top and bottom clearance at the 220px height cap.
 
+### Message frames
+
+`components/chat/MessageFrame.ts` provides the shared Lit rendering helper for message content, actions, and metadata. `theme/base/messageFrameStyles.ts` owns its layout. It introduces no shadow root or state: transcript templates supply the heading, action menu, body, and metadata region.
+
+Choose action placement explicitly:
+
+- `corner`: ordinary conversation messages and user/assistant messages inside activity groups. The accessible role label is visually hidden; actions overlay the content's bottom-inline-end corner without a separate header row.
+- `header`: messages with a visible label, including system notices and tool-image output. Source-only rows can omit the body; bundle headings can omit actions.
+
+Metadata follows the content area, outside the action anchor. Each content area isolates its local controls so they cannot paint over the activity group's sticky heading. Disabling visual effects does not change action placement. Headerless tool executions and question records retain their own surfaces without a message frame.
+
+The frame exposes the supported `.chat-message-*` content/header/body hooks only when rendering a conversation bubble; activity messages do not become conversation bubbles by sharing the layout. Consumers own content padding and may set `--message-frame-header-padding` and `--message-frame-meta-padding`. These frame details are internal, not plugin theme compatibility hooks.
+
 ### Activity-group layout contract
 
 Activity groups and their `.group-msg` wrappers have no padding. In `chatTranscriptTemplates.ts`, `renderGroupedParts` assigns each visible part one of two explicit layouts:
 
 - `.transcript-section`: thinking, tool executions, tool-call/result surfaces, and inline question forms/records. Sections fill the available width with no exterior padding or margin. Each surface owns its heading and internal body padding, including when collapsed.
-- `.transcript-content`: consecutive ordinary text, skill descriptions/disclosures, and images. A content run owns 8px vertical and 12px horizontal padding. Message headers use the same content inset; adjacent content wrappers do not double their vertical spacing.
+- `.transcript-content`: consecutive ordinary text, skill descriptions/disclosures, and images. A content run owns 8px vertical and 12px horizontal padding. Visible message headers use the same content inset; adjacent content wrappers do not double their vertical spacing.
 
-For mixed messages, alternate sections and content runs rather than padding the whole message and making sections escape it with negative margins. Empty displayed text does not create a content wrapper. Keep ordinary conversation-message layout separate from this activity-group contract.
+For mixed messages, alternate sections and content runs inside the message frame body (or directly inside a headerless message) rather than padding the whole message and making sections escape it with negative margins. Empty displayed text does not create a content wrapper. Keep ordinary conversation-message layout separate from this activity-group contract.
 
 ```html
-<section class="group-msg ui-transcript-surface">
-  <div class="transcript-section"><!-- full-width thinking/tool/form surface --></div>
-  <div class="transcript-content"><!-- inset ordinary content --></div>
-  <div class="transcript-section"><!-- next full-width surface --></div>
-</section>
+<!-- Inside a message frame body, or directly in a headerless group message: -->
+<div class="transcript-section"><!-- full-width thinking/tool/form surface --></div>
+<div class="transcript-content"><!-- inset ordinary content --></div>
+<div class="transcript-section"><!-- next full-width surface --></div>
 ```
 
 The chat consumer owns these layout classes and message separators; `uiTranscriptStyles` owns surface and disclosure styling. New activity parts must choose their layout in `renderGroupedParts`, not add message-type padding exceptions. Verify expanded and collapsed sections, section-to-section boundaries, and mixed content in a real browser.
@@ -148,7 +160,7 @@ Also prefer consistent visibility and behavior across input types. Avoid pointer
 
 - Primitives own control sizing, padding, borders, hover, focus, selected, disabled, and danger treatments. Change those centrally rather than copying them into each screen.
 - Consumers own layout and domain content: labels, counts, tree indentation, popup placement, and callbacks. Preserve semantic classes used by controllers and tests alongside primitive classes.
-- Standalone buttons default to 44px targets. Secondary toolbars, popup items, and compact buttons use 32px targets. Small transcript actions use 28px targets with 14px icons, matching the chat corner arrows. Message headers use a single always-visible ellipsis trigger for every input type. Clicking it reveals a single-row icon strip to its left; overflow scrolls horizontally rather than wrapping. `pi-message-actions-menu` owns native popover dismissal and placement; consumers supply accessible icon buttons. Conversation controls overlay the bottom-right corner without reserving a text column or header row. The closed trigger has no background. Expanded controls use an opaque background matching the transcript surface and a subtle inset shadow for contrast; expanded message information follows the message body. Respect reduced-motion preferences when revealing the strip. Control dimensions do not change with pointer type. Compact file/tree rows remain 32px, with matching 16px indentation in Files and Git.
+- Standalone buttons default to 44px targets. Secondary toolbars, popup items, and compact buttons use 32px targets. Small transcript actions use 28px targets with 14px icons, matching the chat corner arrows. Message headers use a single always-visible ellipsis trigger for every input type. Clicking it reveals a single-row icon strip to its left; overflow scrolls horizontally rather than wrapping. `pi-message-actions-menu` owns native popover dismissal and placement; consumers supply accessible icon buttons. Corner-placement message frames overlay controls at the bottom-inline-end without reserving a text column or header row, both in ordinary conversations and inside activity groups. The closed trigger has no background. Expanded controls use an opaque background matching the transcript surface and a subtle inset shadow for contrast; expanded message information follows the message body. Respect reduced-motion preferences when revealing the strip. Control dimensions do not change with pointer type. Compact file/tree rows remain 32px, with matching 16px indentation in Files and Git.
 - Toolbars (`.ui-toolbar`) own a 1px bottom separator by default. Use `ui-toolbar--borderless` for embedded control strips or footer toolbars whose containing surface already owns the boundary. Tab strips (`.ui-tabs`) keep their existing consumer-owned boundaries.
 - Use shared separators, not repeated outlines or exterior gaps between related controls. A group followed by empty bar space needs a trailing boundary; use `ui-toolbar-group--bounded` rather than a one-off button border. Its separator shares the next group's leading border when the gap collapses. Do not add a trailing separator where the bar edge already bounds the group. Keep meaningful separation between unrelated groups.
 - Keep the subsession disclosure as a muted, specialized tree control (24px for every pointer type), not a toolbar button. Its size does not depend on touch capability. Expansion changes the chevron, not the text color; preserve hover and keyboard-focus feedback.

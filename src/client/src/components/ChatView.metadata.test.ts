@@ -11,9 +11,10 @@ const message = {
 
 afterEach(() => { document.body.replaceChildren(); localStorage.clear(); });
 
-it("keeps the same Info button and focus while showing and hiding a separate metadata region", async () => {
+it.each(["conversation", "grouped"] as const)("keeps the same Info button and focus while toggling metadata below %s content", async (layout) => {
   const view = new ChatView();
-  view.messages = [message];
+  view.messages = [layout === "conversation" ? message : { ...message, parts: [{ type: "thinking", text: "Plan" }] }];
+  view.isSendingPrompt = layout === "grouped";
   document.body.append(view);
   await view.updateComplete;
   const button = view.shadowRoot?.querySelector<HTMLButtonElement>('button[aria-label="Message information"]');
@@ -33,8 +34,8 @@ it("keeps the same Info button and focus while showing and hiding a separate met
   expect(button.querySelector("svg")).not.toBeNull();
   expect(region.hidden).toBe(false);
   expect(region.textContent).toContain("example/model");
-  const content = view.shadowRoot?.querySelector(".conversation-content");
-  if (!content) throw new Error("Expected conversation content");
+  const content = view.shadowRoot?.querySelector(".message-frame-content");
+  if (!content) throw new Error("Expected message content");
   expect(content.nextElementSibling).toBe(region);
 
   button.click();
