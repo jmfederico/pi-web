@@ -8,7 +8,7 @@ import { customElement, property, query, state } from "lit/decorators.js";
 import { guard } from "lit/directives/guard.js";
 import { markdownWorkspaceContext, type MarkdownWorkspaceContext, type WorkspaceFileOpenRequest } from "../formatting/workspaceLinks";
 import { DEFAULT_CHAT_BEHAVIORS, type ChatBehaviors } from "../chatBehaviors";
-import { configApi, projectsApi, effectiveWorkspaceAttachmentsFolder, effectiveWorkspaceUploadFolder, sessionsApi, workspacesApi, workspaceEffectiveAttachmentsFolder, workspaceEffectiveUploadFolder, type AskUserSubmission, type CommandOption, type ExtensionDialogAnswer, type Machine, type MachineHealth, type PiWebConfigValues, type PiWebShortcutConfig, type Project, type SessionCleanupExecuteResponse, type SessionCleanupPreviewResponse, type SessionCleanupRequest, type SessionInfo, type SessionModel, type SessionModelCatalogEntry, type SessionModelScopeMode, type SessionTreeForkResult, type SessionTreeNavigateResult, type SessionTreeSummaryChoice, type TerminalCommandRun, type Workspace } from "../api";
+import { configApi, projectsApi, effectiveWorkspaceAttachmentsFolder, effectiveWorkspaceUploadFolder, sessionsApi, workspacesApi, workspaceEffectiveAttachmentsFolder, workspaceEffectiveUploadFolder, type AskUserSubmission, type CommandOption, type ExtensionDialogAnswer, type Machine, type MachineHealth, type PiWebConfigValues, type PiWebShortcutConfig, type Project, type SessionCleanupExecuteResponse, type SessionCleanupPreviewResponse, type SessionCleanupRequest, type SessionInfo, type SessionLocation, type SessionModel, type SessionModelCatalogEntry, type SessionModelScopeMode, type SessionTreeForkResult, type SessionTreeNavigateResult, type SessionTreeSummaryChoice, type TerminalCommandRun, type Workspace } from "../api";
 import type { AppAction } from "../actions";
 import { initialAppState, type AppState, type ModelDialogOrigin } from "../appState";
 import { browserErrorContext, browserErrorScopeKey, BrowserErrorReporter, clearBrowserError, machineBrowserErrorScope, visibleBrowserErrors, workspaceBrowserErrorScope, type BrowserError, type BrowserErrorScope } from "../browserErrors";
@@ -38,6 +38,7 @@ import { selectedMachineId, type NavigationDestinationOptions, type NavigationFr
 import { machineSessionKey } from "../machineKeys";
 import { appendPromptChipText, samePromptChipTarget, type PromptChipTarget, type StagedPromptChip } from "../promptChips";
 import { HttpRequestError } from "../api/http";
+import { isSessionOnlyRoute, resolveSessionLink, sessionLinkMachineOrder, type SessionLinkResolution } from "../sessionLinkResolution";
 import { sessionCleanupRequestKey } from "../sessionCleanupUi";
 import { sessionCleanupMessages } from "../sessionCleanupMessages";
 import { selectedNotificationView } from "../sessionNotifications";
@@ -809,11 +810,13 @@ export class PiWebApp extends LitElement {
 
   private async loadProjectsAndRestoreRoute() {
     this.restoreSettingsRoute();
-    const route = readRoute();
-    if (!await this.machines.loadMachines(route.machineId)) {
-      this.setContentError(route, this.state.error);
+    const requestedRoute = readRoute();
+    if (!await this.machines.loadMachines(requestedRoute.machineId)) {
+      this.setContentError(requestedRoute, this.state.error);
       return;
     }
+    const sessionLinkError = await this.expandSessionOnlyRoute(requestedRoute);
+    const route = readRoute();
     if (!this.routeLocationMatchesUrl(route)) {
       await this.projects.loadProjects();
       await this.withChatScrollTransition(async () => { await this.restoreRoute(false); });
@@ -831,12 +834,46 @@ export class PiWebApp extends LitElement {
       return;
     }
     await this.withChatScrollTransition(() => this.restoreRouteFor(route, false));
+    if (sessionLinkError !== undefined && this.routeLocationMatchesUrl(route)) this.setContentError(route, sessionLinkError);
     if (this.shouldDeferRemoteRouteRestore(route, initialRouteMachineHealth)) this.deferRemoteRouteRestore(route);
     else {
       this.clearPendingRemoteRouteRestore();
       this.rememberCurrentMachineNavigation();
     }
     await this.refreshWorkspaceDeletionRuns();
+  }
+
+  /**
+   * Redirects a session-only link (`?session=<id>`) to the full route of the
+   * machine, project, and workspace that list the session, replacing the
+   * history entry before the normal route restore reads it. The short link is
+   * only an entry point; returns the explanation to show when no open project
+   * lists the session.
+   */
+  private async expandSessionOnlyRoute(route: ParsedAppRoute): Promise<WorkspaceSelectionError | undefined> {
+    if (!isSessionOnlyRoute(route)) return undefined;
+    const sessionId = route.sessionId;
+    this.sessionLinkLookup = sessionId;
+    this.requestUpdate();
+    let resolution: SessionLinkResolution;
+    try {
+      resolution = await resolveSessionLink(sessionId, sessionLinkMachineOrder(this.state.machines, route.machineId), locateSessionOnMachine);
+    } finally {
+      this.sessionLinkLookup = undefined;
+      this.requestUpdate();
+    }
+    // The user may have navigated elsewhere while machines were asked.
+    if (!this.routeLocationMatchesUrl(route)) return undefined;
+    const machineName = (machineId: string) => this.state.machines.find((machine) => machine.id === machineId)?.name ?? machineId;
+    switch (resolution.kind) {
+      case "workspace":
+        writeRoute({ ...route, machineId: resolution.machineId, projectId: resolution.projectId, workspaceId: resolution.workspaceId }, { replace: true });
+        return undefined;
+      case "not-found": {
+        const machines = resolution.uncheckedMachineIds.map(machineName).join(", ");
+        return () => routeFeedback.t("sessionNotFound", { id: sessionId, machines, hasUnchecked: machines === "" ? "no" : "yes" });
+      }
+    }
   }
 
   private handleBrowserResumeSignal(): void {
@@ -2673,6 +2710,8 @@ export class PiWebApp extends LitElement {
   }
 
   private contentLoadOutcome: { destination: string; error: WorkspaceSelectionError } | undefined;
+  /** Session id of a session-only link being matched to its owner, shown while machines answer. */
+  private sessionLinkLookup: string | undefined;
 
   private contentDestination(route: ParsedAppRoute): string {
     return JSON.stringify([route.machineId ?? "local", route.projectId, route.workspaceId, route.sessionId]);
@@ -2706,6 +2745,7 @@ export class PiWebApp extends LitElement {
   }
 
   private sessionEmptyMessage(): string {
+    if (this.sessionLinkLookup !== undefined) return routeFeedback.t("findingSession", { id: this.sessionLinkLookup });
     const error = this.contentError();
     if (error !== "") return error;
     if (this.state.isLoadingProjects) return routeFeedback.t("loadingProjects");
@@ -4555,6 +4595,19 @@ function navigationRouteValue(route: ParsedAppRoute, scope: NavigationScope): st
     case "tool": return route.tool;
     case "view": return route.view;
     default: return undefined;
+  }
+}
+
+/** Bounds how long one unreachable machine can delay a session-only link. */
+const SESSION_LINK_LOOKUP_TIMEOUT_MS = 10_000;
+
+/** A 404 means the machine does not know the session (or predates session lookups). */
+async function locateSessionOnMachine(sessionId: string, machineId: string, signal: AbortSignal): Promise<SessionLocation | undefined> {
+  try {
+    return await sessionsApi.sessionLocation(sessionId, machineId, { signal, timeoutMs: SESSION_LINK_LOOKUP_TIMEOUT_MS });
+  } catch (error) {
+    if (error instanceof HttpRequestError && error.status === 404) return undefined;
+    throw error;
   }
 }
 

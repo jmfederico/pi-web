@@ -430,6 +430,13 @@ export interface PiSessionManagerGateway {
    */
   resolveSessionFile(cwd: string, sessionId: string): Promise<ResolvedSessionFile | undefined>;
   /**
+   * Locate a session file by id within the session folders that list the
+   * given workspace paths, matching file names only (no transcript or
+   * full-directory header reads). Gateways without it fall back to
+   * `resolveSessionFile` per path.
+   */
+  findSessionFile?(sessionId: string, cwds: readonly string[]): Promise<ResolvedSessionFile | undefined>;
+  /**
    * Drop any cached listing summary for a session file that was rewritten in
    * place (detach clears the header while keeping the inode): file identity
    * and size checks cannot detect such rewrites, so the scanner memo must be
@@ -1604,6 +1611,31 @@ export class PiSessionService implements SessionRouteService {
       .filter(isDefined)
       .sort((a, b) => Date.parse(b.modified) - Date.parse(a.modified));
     return [...unarchivedSessions, ...archivedSessions];
+  }
+
+  /**
+   * Find a session's working directory from its id alone, for links that do not
+   * name a workspace. Only places PI WEB already shows are searched: hosted
+   * runtimes, the archive index, and the session folders of `workspaceCwds`.
+   * Read-only: no runtime is opened.
+   */
+  async findSession(sessionId: string, workspaceCwds: readonly string[]): Promise<{ id: string; cwd: string } | undefined> {
+    const active = this.active.get(sessionId);
+    if (active !== undefined) return { id: sessionId, cwd: active.runtime.cwd };
+    const archived = await this.archiveStore.get(sessionId);
+    if (archived !== undefined) return { id: sessionId, cwd: archived.cwd };
+    const file = this.sessionManager.findSessionFile === undefined
+      ? await this.findSessionFileInEachWorkspace(sessionId, workspaceCwds)
+      : await this.sessionManager.findSessionFile(sessionId, workspaceCwds);
+    return file === undefined ? undefined : { id: file.id, cwd: file.cwd };
+  }
+
+  private async findSessionFileInEachWorkspace(sessionId: string, workspaceCwds: readonly string[]): Promise<ResolvedSessionFile | undefined> {
+    for (const cwd of workspaceCwds) {
+      const file = await this.sessionManager.resolveSessionFile(cwd, sessionId);
+      if (file !== undefined) return file;
+    }
+    return undefined;
   }
 
   /** Read-only plugin catalog: do not open runtimes or reconcile unread/activity state. */

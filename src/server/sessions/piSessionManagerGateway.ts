@@ -111,6 +111,16 @@ class SettingsAwarePiSessionManagerGateway implements PiSessionManagerGateway {
     return resolveSessionFileInDir(resolution.sessionDir, cwd, sessionId, readSessionHeaderSummary);
   }
 
+  findSessionFile(sessionId: string, cwds: readonly string[]): Promise<ResolvedSessionFile | undefined> {
+    // Group by session folder: several workspaces can share one configured folder.
+    const cwdsByDir = new Map<string, string[]>();
+    for (const cwd of cwds) {
+      const sessionDir = this.resolver.resolve(cwd).sessionDir;
+      cwdsByDir.set(sessionDir, [...(cwdsByDir.get(sessionDir) ?? []), cwd]);
+    }
+    return findSessionFileByName(cwdsByDir, sessionId, readSessionHeaderSummary);
+  }
+
   invalidateSessionFile(sessionFile: string): void {
     // Detach is the only flow that rewrites a session file in place (keeping
     // the inode), and the summary memo cannot detect such rewrites from
@@ -371,6 +381,34 @@ export async function resolveSessionFileInDir(
     if (header.id === sessionId) {
       return { id: header.id, cwd: canonicalizeStoredCwd(header.cwd), path: sessionFile };
     }
+  }
+  return undefined;
+}
+
+/**
+ * Locate a session by id within the session folders of known workspaces,
+ * given as each folder with the workspace paths whose sessions it holds. Only
+ * files whose SDK-style name embeds the id are considered, so the cost is one
+ * listing per folder plus a header read per candidate; unlike
+ * `resolveSessionFileInDir`, a hand-renamed file is not found. The header
+ * decides: the candidate must hold the id and belong to one of the folder's
+ * workspaces, exactly as the workspace session list requires.
+ */
+export async function findSessionFileByName(
+  cwdsBySessionDir: ReadonlyMap<string, readonly string[]>,
+  sessionId: string,
+  readHeader: SessionHeaderReader,
+): Promise<ResolvedSessionFile | undefined> {
+  if (sessionId === "") return undefined;
+  const listed = await Promise.all([...cwdsBySessionDir].map(async ([dir, cwds]) => (await listSessionFiles(dir))
+    .filter((sessionFile) => fileNameMatchesSessionId(basename(sessionFile), sessionId))
+    .map((sessionFile) => ({ sessionFile, cwds }))));
+  const candidates = listed.flat().sort((a, b) => byNewestEmbeddedTimestamp(a.sessionFile, b.sessionFile));
+  for (const { sessionFile, cwds } of candidates) {
+    const header = await readHeader(sessionFile);
+    const headerCwd = header?.cwd;
+    if (header?.id !== sessionId || headerCwd === undefined || !cwds.some((cwd) => cwdPathsEqual(cwd, headerCwd))) continue;
+    return { id: header.id, cwd: canonicalizeStoredCwd(headerCwd), path: sessionFile };
   }
   return undefined;
 }
