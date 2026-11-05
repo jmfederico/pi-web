@@ -1123,10 +1123,12 @@ export interface SessionModelCatalogEntry {
  */
 export interface SessionModelCatalogResponse {
   models: SessionModelCatalogEntry[];
+  /** Canonical selection mode, independent of row membership. Optional for compatibility with older servers. */
+  scope?: "all" | "manual";
 }
 
-/** Canonical model-scope presets exposed by the model picker's bulk toggle. */
-export type SessionModelScopeMode = "all" | "current";
+/** All removes the selection; manual snapshots available models; current selects only the current model. */
+export type SessionModelScopeMode = "all" | "manual" | "current";
 
 // Domain type is owned by pi and re-exported from the shared thinking-levels
 // module. Wire/data fields below intentionally use `string` so an unknown level

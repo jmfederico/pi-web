@@ -86,7 +86,9 @@ export function modelScopeId(model: { provider: string; id: string }): string {
  * session has one, otherwise the configured `enabledModels` patterns resolved
  * against the runtime catalog — with no-match patterns kept in the list so an
  * edit cannot silently drop a pattern that currently matches nothing —
- * otherwise `null`, pi's "everything enabled" state (no scope).
+ * otherwise `null`, pi's "everything enabled" state (no scope). An explicit
+ * empty list remains a manual selection even though pi's live cycling scope
+ * falls back to all available models.
  */
 export async function resolveEnabledModelIds(input: {
   settingsManager: Pick<SettingsManager, "getEnabledModels">;
@@ -95,7 +97,8 @@ export async function resolveEnabledModelIds(input: {
 }): Promise<readonly string[] | null> {
   if (input.scopedModels.length > 0) return input.scopedModels.map((scoped) => modelScopeId(scoped.model));
   const patterns = input.settingsManager.getEnabledModels();
-  if (patterns === undefined || patterns.length === 0) return null;
+  if (patterns === undefined) return null;
+  if (patterns.length === 0) return [];
   const resolved = await resolveModelScopeWithDiagnostics([...patterns], input.modelRuntime);
   const ids = resolved.scopedModels.map((scoped) => modelScopeId(scoped.model));
   for (const diagnostic of resolved.diagnostics) {
@@ -125,15 +128,18 @@ export function applyEnabledModelToggle(
 }
 
 /**
- * pi's persist normalization (`onPersist`): "everything enabled" collapses to
- * `undefined` (no scope). The comparison is exact — a list that covers the
- * whole catalog but also carries stale patterns stays a list, so those
- * patterns survive the edit.
+ * Persist normalization: "everything enabled" (the null state) collapses to
+ * `undefined` (no scope). A concrete list is always persisted as-is, even when
+ * it happens to cover the whole *current* catalog: the catalog churns between
+ * edits (models are added and removed upstream on every refresh), so treating
+ * accidental full coverage as "all enabled" silently deletes the user's
+ * selection and enables every model a later refresh discovers. Explicit
+ * "expose every model" intent reaches us as `null` via the scope endpoint and
+ * still collapses.
  */
-export function persistedEnabledModelPatterns(enabledIds: readonly string[] | null, availableIds: readonly string[]): string[] | undefined {
+export function persistedEnabledModelPatterns(enabledIds: readonly string[] | null): string[] | undefined {
   if (enabledIds === null) return undefined;
-  const allEnabled = enabledIds.length === availableIds.length && enabledIds.every((id) => availableIds.includes(id));
-  return allEnabled ? undefined : [...enabledIds];
+  return [...enabledIds];
 }
 
 /**

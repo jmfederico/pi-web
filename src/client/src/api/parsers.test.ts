@@ -780,7 +780,19 @@ describe("API parsers", () => {
     });
   });
 
+  it.each(["all", "manual"] as const)("preserves the catalog's explicit %s scope independently of row membership", (scope) => {
+    const models = [{ provider: "p", id: "m", enabled: true }];
+    expect(parseSessionModelCatalogResponse({ models, scope })).toEqual({ models, scope });
+    expect(parseSessionModelCatalogResponse({ models: [], scope })).toEqual({ models: [], scope });
+  });
+
+  it("leaves an older server's availability mode unknown instead of inferring it from checked rows", () => {
+    const models = [{ provider: "p", id: "m", enabled: true }];
+    expect(parseSessionModelCatalogResponse({ models })).toEqual({ models });
+  });
+
   it("rejects malformed model catalog entries", () => {
+    expect(() => parseSessionModelCatalogResponse({ models: [], scope: true })).toThrow("Invalid model catalog scope");
     expect(() => parseSessionModelCatalogResponse({ models: [{ id: "m", enabled: true }] })).toThrow("Expected string field: provider");
     expect(() => parseSessionModelCatalogResponse({ models: [{ provider: "p", enabled: true }] })).toThrow("Expected string field: id");
     expect(() => parseSessionModelCatalogResponse({ models: [{ provider: "p", id: "m", enabled: "yes" }] })).toThrow("Expected boolean field: enabled");

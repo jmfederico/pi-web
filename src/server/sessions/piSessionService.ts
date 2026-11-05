@@ -85,6 +85,7 @@ import type {
   SessionNotificationDismissRequest,
   SessionNotificationInboxSnapshot,
   SessionModelScopeMode,
+  SessionModelCatalogResponse,
   SessionUnreadAcknowledgeRequest,
   SessionUnreadCatalogSnapshot,
   SessionWarning,
@@ -1989,7 +1990,9 @@ export class PiSessionService implements SessionRouteService {
 
   /**
    * The models a session may pick from: its synchronized scoped set when
-   * model-scoped, otherwise the runtime's available snapshot. Refreshes the
+   * model-scoped, otherwise the runtime's available snapshot. An explicit
+   * selection with no available matches stays empty despite the SDK fallback.
+   * Refreshes the
    * shared runtime catalog first so callers see newly configured providers and
    * models. The refresh stays local (`allowNetwork: false`); network refreshes
    * belong to the bounded background catalog refresher, not this request path.
@@ -1998,6 +2001,8 @@ export class PiSessionService implements SessionRouteService {
     await session.modelRuntime.refresh({ allowNetwork: false });
     const available = session.modelRuntime.getAvailableSnapshot();
     await this.synchronizeSessionModelScope(session, available);
+    const enabledIds = (await this.modelScopeSnapshot(session)).enabledIds;
+    if (enabledIds !== null && !available.some((model) => enabledIds.includes(modelScopeId(model)))) return [];
     return session.scopedModels.length > 0
       ? session.scopedModels.map((scoped) => scoped.model)
       : available;
@@ -2009,13 +2014,16 @@ export class PiSessionService implements SessionRouteService {
    * natural catalog index for stable picker placement. The enabled state comes
    * from the keyed scope snapshot rather than a session-local SettingsManager.
    */
-  private async enabledModelCatalog(session: PiAgentSession): Promise<EnabledModelCatalogEntry<AgentModel>[]> {
+  private async enabledModelCatalog(session: PiAgentSession): Promise<SessionModelCatalogResponse> {
     await session.modelRuntime.refresh({ allowNetwork: false });
     const available = session.modelRuntime.getAvailableSnapshot();
     await this.synchronizeSessionModelScope(session, available);
     const context = this.modelScopeContext(session);
     const enabledIds = (await this.modelScopeSnapshot(session, context)).enabledIds;
-    return catalogWithEnabledFirst(available, enabledIds);
+    return {
+      models: catalogWithEnabledFirst(available, enabledIds).map((entry) => catalogEntryToClientModel(entry, context.editable)),
+      scope: enabledIds === null ? "all" : "manual",
+    };
   }
 
   private runModelScopeMutation<T>(operation: () => Promise<T>): Promise<T> {
@@ -2030,12 +2038,12 @@ export class PiSessionService implements SessionRouteService {
     available: readonly AgentModel[],
     enabledIds: readonly string[] | null,
   ): void {
-    const availableIds = available.map(modelScopeId);
-    const persisted = persistedEnabledModelPatterns(enabledIds, availableIds);
+    const persisted = persistedEnabledModelPatterns(enabledIds);
     const nextState: ModelScopeSnapshot = {
-      // Pi normalizes a scope covering the complete current catalog to an
-      // omitted setting, which is the global canonical all-enabled state.
-      enabledIds: persisted === undefined ? null : enabledIds === null ? [] : [...enabledIds],
+      // The explicit all-enabled intent (`null`) collapses to the omitted
+      // setting; a concrete list is persisted verbatim so catalog churn cannot
+      // silently widen the selection.
+      enabledIds: persisted === undefined || enabledIds === null ? null : [...enabledIds],
       revision: ++this.modelScopeRevision,
     };
     session.settingsManager.setEnabledModels(persisted);
@@ -2968,10 +2976,9 @@ export class PiSessionService implements SessionRouteService {
     return models.map(modelToClientModel);
   }
 
-  async modelCatalog(ref: PiSessionRef): Promise<ClientSessionModelCatalogEntry[]> {
+  async modelCatalog(ref: PiSessionRef): Promise<SessionModelCatalogResponse> {
     const session = await this.getOrOpen(ref);
-    const scope = this.modelScopeContext(session);
-    return (await this.enabledModelCatalog(session)).map((entry) => catalogEntryToClientModel(entry, scope.editable));
+    return this.enabledModelCatalog(session);
   }
 
   /**
@@ -2979,7 +2986,7 @@ export class PiSessionService implements SessionRouteService {
    * workspace `.pi/settings.json` override remains authoritative for that
    * workspace and is intentionally read-only in this picker.
    */
-  async setModelEnabled(ref: PiSessionRef, provider: string, modelId: string, enabled: boolean): Promise<ClientSessionModelCatalogEntry[]> {
+  async setModelEnabled(ref: PiSessionRef, provider: string, modelId: string, enabled: boolean): Promise<SessionModelCatalogResponse> {
     await this.assertWritable(ref);
     const session = await this.getOrOpen(ref);
     return this.runModelScopeMutation(async () => {
@@ -2998,14 +3005,13 @@ export class PiSessionService implements SessionRouteService {
       const nextIds = applyEnabledModelToggle(currentIds, availableIds, targetId, enabled);
       this.assertTreeNavigationInactive(session, "change enabled models");
       if (nextIds !== currentIds) this.applyEnabledModelScope(session, available, nextIds);
-      // Respond from a fresh post-edit read so the response is exactly what
-      // GET models/catalog returns after the edit, including pi's normalizations.
-      return (await this.enabledModelCatalog(session)).map((entry) => catalogEntryToClientModel(entry));
+      // Keep mode and rows together in the same canonical post-edit snapshot.
+      return this.enabledModelCatalog(session);
     });
   }
 
-  /** Atomically expose every model or narrow the global enabled scope to the current model. */
-  async setModelScope(ref: PiSessionRef, mode: SessionModelScopeMode): Promise<ClientSessionModelCatalogEntry[]> {
+  /** Atomically clear the selection, snapshot available models, or retain only the current model. */
+  async setModelScope(ref: PiSessionRef, mode: SessionModelScopeMode): Promise<SessionModelCatalogResponse> {
     await this.assertWritable(ref);
     const session = await this.getOrOpen(ref);
     return this.runModelScopeMutation(async () => {
@@ -3015,7 +3021,7 @@ export class PiSessionService implements SessionRouteService {
       await session.modelRuntime.refresh({ allowNetwork: false });
       const available = session.modelRuntime.getAvailableSnapshot();
       const availableIds = available.map(modelScopeId);
-      let nextIds: readonly string[] | null = null;
+      let nextIds: readonly string[] | null = mode === "manual" ? availableIds : null;
       if (mode === "current") {
         const current = session.model;
         if (current === undefined || !availableIds.includes(modelScopeId(current))) {
@@ -3025,7 +3031,7 @@ export class PiSessionService implements SessionRouteService {
       }
       this.assertTreeNavigationInactive(session, "change enabled models");
       this.applyEnabledModelScope(session, available, nextIds);
-      return (await this.enabledModelCatalog(session)).map((entry) => catalogEntryToClientModel(entry));
+      return this.enabledModelCatalog(session);
     });
   }
 
@@ -3048,9 +3054,11 @@ export class PiSessionService implements SessionRouteService {
     await this.assertWritable(ref);
     const session = await this.getOrOpen(ref);
     const result = await this.runModelScopeMutation(async () => {
-      await session.modelRuntime.refresh({ allowNetwork: false });
-      await this.synchronizeSessionModelScope(session, session.modelRuntime.getAvailableSnapshot());
-      return this.runSessionEntryMutation(session, "change models", () => session.cycleModel(direction));
+      const candidates = await this.sessionModelCandidates(session);
+      return this.runSessionEntryMutation(session, "change models", () => {
+        if (candidates.length === 0) throw new Error("No enabled models available");
+        return session.cycleModel(direction);
+      });
     });
     if (result === undefined) throw new Error(session.scopedModels.length > 0 ? "Only one model in scope" : "Only one model available");
     this.publishActivity(session, { kind: "model", value: result.model.id }, "idle", result.model.provider);

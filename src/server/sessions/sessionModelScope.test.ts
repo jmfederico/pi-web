@@ -195,11 +195,14 @@ describe("resolveEnabledModelIds", () => {
       modelRuntime,
       scopedModels: [],
     })).resolves.toBeNull();
+  });
+
+  it("retains an explicit empty manual selection independently of the live cycling scope", async () => {
     await expect(resolveEnabledModelIds({
       settingsManager: SettingsManager.inMemory({ enabledModels: [] }),
       modelRuntime,
       scopedModels: [],
-    })).resolves.toBeNull();
+    })).resolves.toEqual([]);
   });
 
   it("resolves configured patterns against the runtime catalog when no live scope exists", async () => {
@@ -252,20 +255,24 @@ describe("applyEnabledModelToggle", () => {
 });
 
 describe("persistedEnabledModelPatterns", () => {
-  const available = ["anthropic/a", "anthropic/b"];
-
-  it("normalizes the all-enabled state to undefined (no scope), like pi", () => {
-    expect(persistedEnabledModelPatterns(null, available)).toBeUndefined();
-    expect(persistedEnabledModelPatterns(["anthropic/a", "anthropic/b"], available)).toBeUndefined();
+  it("normalizes the explicit all-enabled state (null) to undefined (no scope)", () => {
+    expect(persistedEnabledModelPatterns(null)).toBeUndefined();
   });
 
   it("persists partial scopes as the explicit id list", () => {
-    expect(persistedEnabledModelPatterns(["anthropic/b"], available)).toEqual(["anthropic/b"]);
-    expect(persistedEnabledModelPatterns([], available)).toEqual([]);
+    expect(persistedEnabledModelPatterns(["anthropic/b"])).toEqual(["anthropic/b"]);
+    expect(persistedEnabledModelPatterns([])).toEqual([]);
+  });
+
+  it("keeps a list that covers the whole current catalog instead of collapsing it, so refresh churn cannot widen the selection", () => {
+    // Catalog churn: the disabled models were removed upstream, so the stored
+    // list happens to equal the catalog. Collapsing here would delete the
+    // setting and enable every model a later refresh discovers.
+    expect(persistedEnabledModelPatterns(["anthropic/a", "anthropic/b"])).toEqual(["anthropic/a", "anthropic/b"]);
   });
 
   it("keeps stale patterns riding along even when they make the list longer than the catalog", () => {
-    expect(persistedEnabledModelPatterns(["anthropic/a", "anthropic/b", "anthropic/gone"], available)).toEqual(["anthropic/a", "anthropic/b", "anthropic/gone"]);
+    expect(persistedEnabledModelPatterns(["anthropic/a", "anthropic/b", "anthropic/gone"])).toEqual(["anthropic/a", "anthropic/b", "anthropic/gone"]);
   });
 });
 
