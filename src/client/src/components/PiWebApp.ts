@@ -2058,6 +2058,7 @@ export class PiWebApp extends LitElement {
     this.connectRealtime();
     this.closeSessionCleanupDialog();
     this.setState({ piWebStatus: undefined });
+    localization.setMachine(selectedMachineId(next));
     void this.loadPluginsForSelectedMachine();
   }
 

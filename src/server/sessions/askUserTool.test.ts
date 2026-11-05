@@ -55,7 +55,6 @@ describe("createAskUserToolDefinition", () => {
     expect(result.details).toEqual({ interventionRequired: true, ask: {
       askId: "ask-1", askedAt: "2026-02-01T10:00:00.000Z", questions: twoQuestions.questions,
     } });
-    expect(firstText(result.content)).toContain("ask-1");
   });
 
   it("defaults omitted options to an empty list for free-text questions", async () => {

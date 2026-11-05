@@ -482,7 +482,7 @@ In **Settings → Session daemon**, these keys are saved on the selected machine
 
 An agent can call `request_human_intervention` with a short, self-contained `reason` to mark the session **Needs input** and end its run. The reason appears in the transcript as an **Input requested** card, so the request is visible even when the agent wrote nothing else. This tool is always available, independently of the spawning, messaging, and question-form settings. It also covers approvals and actions outside PI WEB; questions in text alone do not set the indicator.
 
-The static hollow ring appears on the session and rolls up to its workspace, project, and machine, including collapsed agent-subsession groups. Unread activity remains separate. Any new agent run clears the agent-requested state, whether started by you, another agent, or a system message. Merely queueing a message, reading the session, or navigating its transcript does not clear it. If the agent still needs help after resuming, it requests intervention again.
+The static hollow ring appears on the session and rolls up to its workspace, project, and machine, including collapsed agent-subsession groups. Unread activity remains separate. The state clears as soon as the conversation continues: a message from you, an agent reply or tool result, or answers to the question form. This includes a message you queued earlier that is delivered after the request. Passive entries, such as extension notices, `!command` output, and compaction or branch summaries, do not clear it; a run woken by another agent or a system message clears it once the agent replies. Merely queueing a message, reading the session, or navigating its transcript does not clear it. If the agent still needs help after resuming, it requests intervention again.
 
 Agent-requested intervention is saved with the session and survives daemon restarts. It is session execution state, not an outstanding question or a branch-specific form. Newly posted `ask_user` forms set the same state automatically. Pending extension dialogs also show **Needs input**, but retain their own answer, cancellation, and timeout lifecycle; runtime-only dialogs are not restored after a daemon restart.
 
@@ -496,7 +496,7 @@ Use **Settings → Session daemon → Allow agents to ask questions** to change 
 
 Agents can ask questions with choices or free-text answers. You may leave questions unanswered; partial submissions are confirmed before sending. Answering or skipping resumes the agent.
 
-Forms are saved in the conversation and survive restarts. Only a form at the end of the active conversation is open; answering, skipping, or sending another message closes it. Earlier forms remain expandable for read-only review. Returning the conversation to a question reopens it; archived conversations remain read-only.
+Forms are saved in the conversation and survive restarts. Only the latest form in the active conversation can be open, and the same rule that clears **Needs input** closes it: answering, skipping, a later message, or an agent reply. Passive entries after the form leave it open. Earlier forms remain expandable for read-only review. Returning the conversation to a question reopens it; archived conversations remain read-only.
 
 Restart the session daemon after changing `askUser` or after upgrading PI WEB to a version that introduces this tool. For the systemd user service, run `systemctl --user restart pi-web-sessiond`.
 
