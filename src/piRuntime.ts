@@ -121,7 +121,7 @@ async function explicitPiPackageDir(explicit: string): Promise<string> {
   if (managed !== undefined) return managed;
   const installRoot = managedInstallRootFromPath(directory);
   if (installRoot !== undefined) {
-    throw new Error(`Managed Pi release ${JSON.stringify(basename(dirname(dirname(dirname(directory)))))} is missing; \`pi update\` removes old releases. Re-run \`/pi-web install\` from Pi, or use the managed install root ${installRoot}.`);
+    throw new Error(`Managed Pi release ${JSON.stringify(basename(dirname(dirname(dirname(directory)))))} has no package.json named ${SDK_PACKAGE}; \`pi update\` removes old releases. Re-run \`/pi-web install\` from Pi, or use the managed install root ${installRoot}.`);
   }
   throw new Error(`Expected a Pi npm SDK package root (package.json named ${SDK_PACKAGE}) or a managed Pi install root (containing ${MANAGED_CURRENT_VERSION}), not a standalone binary.`);
 }
