@@ -30,6 +30,8 @@ async function packageFixture(directory: string, name = sdkName, version = "1.0.
 }
 
 const piName = process.platform === "win32" ? "pi.cmd" : "pi";
+// Pi's managed installer supports macOS and Linux only; Windows skips its PATH lookup.
+const managedInstallerPlatform = it.skipIf(process.platform === "win32");
 
 async function executableFixture(root: string, bin: string): Promise<void> {
   await mkdir(join(root, "bin"), { recursive: true });
@@ -118,7 +120,7 @@ describe("Pi package selection", () => {
     })).toBe(await realpath(host));
   });
 
-  it("resolves the SDK beside a managed-installer launcher script on PATH", async () => {
+  managedInstallerPlatform("resolves the SDK beside a managed-installer launcher script on PATH", async () => {
     const directory = await workspace();
     const agent = await managedInstallerFixture(directory, "2.1.3");
     expect(await selectPiRuntimePackageDir({
@@ -127,7 +129,7 @@ describe("Pi package selection", () => {
     })).toBe(await realpath(join(agent, "install", "releases", "2.1.3", "node_modules", sdkName)));
   });
 
-  it("follows a linked managed launcher from a PATH overlay", async () => {
+  managedInstallerPlatform("follows a linked managed launcher from a PATH overlay", async () => {
     const directory = await workspace();
     const agent = await managedInstallerFixture(directory);
     const bin = join(directory, "bin");
@@ -147,7 +149,7 @@ describe("Pi package selection", () => {
     })).rejects.toThrow("does not expose a Pi npm SDK package");
   });
 
-  it.each([
+  managedInstallerPlatform.each([
     ["an empty version", "\n"],
     ["a version outside releases/", "../escape\n"],
     ["a release without the SDK", "9.9.9\n"],
