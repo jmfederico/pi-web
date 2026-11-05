@@ -23,10 +23,22 @@ describe("later conversation entries close the question without needing an outco
     { role: "user", parts: [{ type: "text", text: "Continue without answers" }] },
     { role: "assistant", parts: [{ type: "thinking", text: "plan" }] },
     { role: "assistant", parts: [{ type: "text", text: "streamed reply" }] },
-    { role: "system", parts: [{ type: "text", text: "Child session completed" }] },
     { role: "tool", parts: [{ type: "toolResultBoundary", toolCallId: "earlier-call" }] },
+    { role: "system", parts: [{ type: "text", text: "Model response failed: overloaded", presentation: { kind: "modelError", detail: "overloaded" } }] },
   ])("closes on $role/$parts.0.type", (later) => {
     expect(openTranscriptQuestion([question, later], tail)).toBeUndefined();
+  });
+
+  it("stays open past passive entries until the conversation continues", () => {
+    const passive = normalizeMessages([
+      { role: "custom", customType: "extension.notice", content: "Build finished", display: true },
+      { role: "custom", customType: "extension.hidden", content: "state", display: false },
+      { role: "bashExecution", command: "ls", output: "", exitCode: 0 },
+      { role: "compactionSummary", summary: "Earlier work", tokensBefore: 1000 },
+    ]);
+    const messages = normalizeMessages([question, ...passive]);
+    expect(openTranscriptQuestion(messages, tail)).toBe(ask);
+    expect(openTranscriptQuestion([...messages, { role: "assistant", parts: [{ type: "text", text: "Reply" }] }], tail)).toBeUndefined();
   });
 
   it("opens only the newer question", () => {

@@ -60,7 +60,7 @@ describe("persisted session intervention", () => {
 
   it("uses the latest valid transition in file order rather than parent linkage", () => {
     const requested = { ...marker(true), id: "requested", parentId: "root" };
-    // A new execution clears the state even if it is on a different transcript branch.
+    // Continuing the conversation clears the state even on a different transcript branch.
     const resumed = { ...marker(false), id: "resumed", parentId: "other-branch" };
     const requestedAgain = { ...marker(true), id: "again", parentId: "requested" };
     expect(sessionInterventionRequired([])).toBe(false);

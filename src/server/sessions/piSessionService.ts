@@ -100,7 +100,7 @@ import { readSessionHeaderSummary } from "./sessionFileHeader.js";
 import type { WorkspaceActivityService } from "../activity/workspaceActivityService.js";
 import { createAskUserToolDefinition } from "./askUserTool.js";
 import { createRequestHumanInterventionToolDefinition } from "./requestHumanInterventionTool.js";
-import { requestsHumanIntervention, SESSION_INTERVENTION_CUSTOM_TYPE, sessionInterventionRequired } from "./sessionIntervention.js";
+import { continuesConversation, requestsHumanIntervention, SESSION_INTERVENTION_CUSTOM_TYPE, sessionInterventionRequired } from "./sessionIntervention.js";
 import { createAskUserOutcome, renderAskUserAnswersText, resolveAskUserRequest } from "./askUserDomain.js";
 import { PendingExtensionDialogStore, type ExtensionDialogCancelReason } from "./pendingExtensionDialogStore.js";
 import { ExtensionDialogWaiters, effectiveExtensionDialogTimeoutMs, extensionDialogCancelValue } from "./extensionDialogWaiters.js";
@@ -4930,7 +4930,6 @@ export class PiSessionService implements SessionRouteService {
       const message = getProperty(event, "message");
       const inbox = this.subsessionInbox(session.sessionId, session.sessionFile);
       if (eventType === "agent_start") {
-        this.setInterventionRequired(session, false);
         this.restoreSubsessionReceipts(session, false);
         this.subsessionStoppedParents.delete(session);
       }
@@ -4942,7 +4941,13 @@ export class PiSessionService implements SessionRouteService {
       // Regular message_end precedes persistence; boundary drafts instead emit
       // entry_appended. Only message entries contribute to the transcript count.
       const role = getString(message, "role");
-      if (eventType === "message_end" && requestsHumanIntervention(message)) this.setInterventionRequired(session, true);
+      if (eventType === "message_end") {
+        if (requestsHumanIntervention(message)) this.setInterventionRequired(session, true);
+        // The transcript alone decides, matching the client's open-question
+        // rule: a run woken by a passive notice keeps the request open until
+        // the agent replies, and steering delivered mid-run closes it.
+        else if (continuesConversation(message)) this.setInterventionRequired(session, false);
+      }
       if ((eventType === "message_end" && (role === "user" || role === "assistant" || role === "toolResult" || role === "system"))
         || (eventType === "entry_appended" && getString(entry, "type") === "message")) {
         this.runtimeMessageCounts.set(session, this.runtimeMessageCount(session) + 1);

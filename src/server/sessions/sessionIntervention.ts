@@ -1,3 +1,4 @@
+import { ASK_USER_ANSWERS_CUSTOM_TYPE } from "../../shared/apiTypes.js";
 import { isRecord } from "./sessionFileFormat.js";
 
 /** Session execution state, not a particular form's lifetime or selected branch. */
@@ -8,6 +9,20 @@ export function requestsHumanIntervention(message: unknown): boolean {
   if (!isRecord(message) || message["role"] !== "toolResult" || message["isError"] !== false) return false;
   const details = message["details"];
   return isRecord(details) && details["interventionRequired"] === true;
+}
+
+/**
+ * Whether a transcript message moves the conversation past an open request:
+ * a user, assistant, or tool-result message, or delivered question answers.
+ * Passive entries (other custom messages, shell output, summaries) do not.
+ * The client applies the same rule to the open question form; see
+ * `continuesConversation` in `src/client/src/chatQuestions.ts`.
+ */
+export function continuesConversation(message: unknown): boolean {
+  if (!isRecord(message)) return false;
+  const role = message["role"];
+  if (role === "user" || role === "assistant" || role === "toolResult") return true;
+  return role === "custom" && message["customType"] === ASK_USER_ANSWERS_CUSTOM_TYPE;
 }
 
 export function interventionStateFromEntry(entry: unknown): boolean | undefined {

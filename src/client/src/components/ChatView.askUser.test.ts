@@ -93,7 +93,6 @@ describe("ChatView conversation-first questions", () => {
   it.each<ChatLine>([
     textMessage("user", "Continue without answering"),
     textMessage("assistant", "A streamed continuation"),
-    textMessage("system", "Child session completed"),
   ])("closes in place on later $role text and retains full historical options and draft", async (later) => {
     const view = await mountView(normalizeMessages(questionHistory));
     const original = await questionCard(view);
