@@ -324,7 +324,7 @@ describe("PiSessionService model catalog", () => {
     }
   });
 
-  it("normalizes re-enabling everything back to no scope, live and on disk", async () => {
+  it("keeps re-enabling everything as an explicit pinned list instead of collapsing to no scope", async () => {
     const { service, ref, agentDir } = await startSessionWithSettings(undefined);
     try {
       const catalog = await service.modelCatalog(ref);
@@ -335,9 +335,18 @@ describe("PiSessionService model catalog", () => {
       const restored = await service.setModelEnabled(ref, target.provider, target.id, true);
 
       expect(restored.every((entry) => entry.enabled)).toBe(true);
-      // The response is the fresh post-edit read: no scope, so plain catalog order.
-      expect(catalogIds(restored)).toEqual(catalogIds(catalog));
-      await expectPersistedEnabledModels(agentDir, undefined);
+      // Toggle order appends the re-enabled model last, so compare as sets.
+      const expectedIds = [...catalogIds(catalog)].sort();
+      expect([...catalogIds(restored)].sort()).toEqual(expectedIds);
+      // The explicit list survives on disk: collapsing it here would enable
+      // every model a later catalog refresh discovers.
+      await vi.waitFor(async () => {
+        const persisted = await persistedEnabledModels(agentDir);
+        expect(persisted.found).toBe(true);
+        // Membership check avoids order coupling: toggling appends the re-enabled model last.
+        expect(persisted.value).toHaveLength(expectedIds.length);
+        for (const id of expectedIds) expect(persisted.value).toContain(id);
+      }, { timeout: 5_000 });
       expect(catalogIds((await service.availableModels(ref)).map((model) => ({ provider: model.provider ?? "", id: model.id ?? "" })))).toEqual(catalogIds(catalog));
     } finally {
       await service.dispose();
