@@ -195,11 +195,14 @@ describe("resolveEnabledModelIds", () => {
       modelRuntime,
       scopedModels: [],
     })).resolves.toBeNull();
+  });
+
+  it("retains an explicit empty manual selection independently of the live cycling scope", async () => {
     await expect(resolveEnabledModelIds({
       settingsManager: SettingsManager.inMemory({ enabledModels: [] }),
       modelRuntime,
       scopedModels: [],
-    })).resolves.toBeNull();
+    })).resolves.toEqual([]);
   });
 
   it("resolves configured patterns against the runtime catalog when no live scope exists", async () => {

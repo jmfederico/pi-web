@@ -1265,7 +1265,9 @@ function parseSessionModelCatalogEntry(value: unknown): SessionModelCatalogEntry
 
 export function parseSessionModelCatalogResponse(value: unknown): SessionModelCatalogResponse {
   const record = requireRecord(value);
-  return { models: arrayOf(parseSessionModelCatalogEntry)(record["models"]) };
+  const scope = record["scope"];
+  if (scope !== undefined && scope !== "all" && scope !== "manual") throw new Error("Invalid model catalog scope");
+  return { models: arrayOf(parseSessionModelCatalogEntry)(record["models"]), ...optionalField("scope", scope) };
 }
 
 function parseThinkingLevel(value: unknown): string {

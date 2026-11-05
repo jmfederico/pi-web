@@ -86,7 +86,9 @@ export function modelScopeId(model: { provider: string; id: string }): string {
  * session has one, otherwise the configured `enabledModels` patterns resolved
  * against the runtime catalog — with no-match patterns kept in the list so an
  * edit cannot silently drop a pattern that currently matches nothing —
- * otherwise `null`, pi's "everything enabled" state (no scope).
+ * otherwise `null`, pi's "everything enabled" state (no scope). An explicit
+ * empty list remains a manual selection even though pi's live cycling scope
+ * falls back to all available models.
  */
 export async function resolveEnabledModelIds(input: {
   settingsManager: Pick<SettingsManager, "getEnabledModels">;
@@ -95,7 +97,8 @@ export async function resolveEnabledModelIds(input: {
 }): Promise<readonly string[] | null> {
   if (input.scopedModels.length > 0) return input.scopedModels.map((scoped) => modelScopeId(scoped.model));
   const patterns = input.settingsManager.getEnabledModels();
-  if (patterns === undefined || patterns.length === 0) return null;
+  if (patterns === undefined) return null;
+  if (patterns.length === 0) return [];
   const resolved = await resolveModelScopeWithDiagnostics([...patterns], input.modelRuntime);
   const ids = resolved.scopedModels.map((scoped) => modelScopeId(scoped.model));
   for (const diagnostic of resolved.diagnostics) {
