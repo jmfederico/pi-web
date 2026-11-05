@@ -43,7 +43,7 @@ describe("ChatView conversation-first questions", () => {
     expect(card.open).toBe(true);
     expect(card.draftSessionId).toBe("remote-a:session-1");
     expect(card.closest(".event-group")).toBeNull();
-    expect(card.parentElement?.getAttribute("data-scroll-anchor-id")).toBe('m:["ask-entry","tool","message"]');
+    expect(card.closest("article")?.getAttribute("data-scroll-anchor-id")).toBe('m:["ask-entry","tool","message"]');
     expect(card.shadowRoot?.querySelector("form")).not.toBeNull();
     expect(view.shadowRoot?.querySelectorAll("ask-user-card")).toHaveLength(1);
   });
@@ -51,7 +51,7 @@ describe("ChatView conversation-first questions", () => {
   it("omits scroll anchors for question cards without durable entry identity", async () => {
     const view = await mountView(normalizeMessages(questionHistory).map((message) => ({ ...message, entryId: "" })));
     const card = await questionCard(view);
-    expect(card.parentElement?.hasAttribute("data-scroll-anchor-id")).toBe(false);
+    expect(card.closest("article")?.hasAttribute("data-scroll-anchor-id")).toBe(false);
     expect(view.renderRoot.querySelector("[data-scroll-anchor-id]")).toBeNull();
   });
 
@@ -162,6 +162,19 @@ it("keeps standalone historical response records readable when the original requ
   expect(card.shadowRoot?.textContent).toContain("VS Code");
   expect(card.shadowRoot?.textContent).toContain("Which region?");
   expect(card.shadowRoot?.querySelector("input, textarea, button, select")).toBeNull();
+});
+
+describe("ChatView intervention requests", () => {
+  it("shows a reloaded intervention request at the top level instead of collapsed activity", async () => {
+    const view = await mountView(normalizeMessages([
+      { role: "assistant", content: [{ type: "toolCall", id: "help-call", name: "request_human_intervention", arguments: { reason: "Approve the migration" } }] },
+      { role: "toolResult", toolName: "request_human_intervention", toolCallId: "help-call", isError: false,
+        content: [{ type: "text", text: "Needs human input: Approve the migration" }], details: { interventionRequired: true, reason: "Approve the migration" }, entryId: "help-entry" },
+    ]));
+    const request = requiredElement(view.shadowRoot?.querySelector(".intervention-request"), "intervention request");
+    expect(request.closest(".event-group")).toBeNull();
+    expect(request.textContent).toContain("Approve the migration");
+  });
 });
 
 async function mountView(messages: ChatLine[]): Promise<ChatView> {

@@ -21,6 +21,8 @@ export interface RunTerminalCommandOptions {
   metadata?: unknown;
   /** Private host-composition intent; never part of the browser Terminal protocol. */
   failureNotice?: RequiredTerminalCommandFailureNotice;
+  /** Private host-composition intent; called once when the command exits or is closed. */
+  onSettled?: () => void;
   cols?: number;
   rows?: number;
 }

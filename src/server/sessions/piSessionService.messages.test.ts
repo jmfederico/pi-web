@@ -24,6 +24,32 @@ describe("PiSessionService", () => {
       return { fake, service, events };
     }
 
+    it("publishes only displayed custom payloads across live and history paths", async () => {
+      const visible = { role: "custom", customType: "extension.card", display: true, content: "", details: { card: true } };
+      const hidden = { ...visible, display: false, content: "secret", details: { secret: true } };
+      const branch = [
+        { type: "custom_message", id: "visible", ...visible },
+        { type: "custom_message", id: "hidden", ...hidden },
+        { type: "custom", customType: "extension.storage", data: { secret: true } },
+      ];
+      const { fake, service, events } = messagesService(branch);
+      try {
+        expect((await service.messages(sessionRef("session-1"))).messages).toEqual([
+          { role: "custom", customType: visible.customType, content: "", details: visible.details, entryId: "visible" },
+        ]);
+        for (const message of [hidden, { ...hidden, display: undefined }, visible]) {
+          fake.emit({ type: "message_end", message });
+        }
+        for (const entry of branch) fake.emit({ type: "entry_appended", entry });
+        const payloads = events.sessionEvents.flatMap(({ event }) =>
+          (event.type === "message.end" || event.type === "message.append") && event.message !== undefined ? [event.message] : []);
+        expect(payloads).toEqual([
+          visible,
+          { role: "custom", customType: visible.customType, content: "", details: visible.details, entryId: "visible" },
+        ]);
+      } finally { await service.dispose(); }
+    });
+
     it("projects history and completed events, but leaves streaming deltas and reconnect partials original", async () => {
       const message = { role: "assistant", content: [{ type: "text", text: "<think></think>answer" }] };
       const branch = [{ type: "message", message }];

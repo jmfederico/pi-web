@@ -134,64 +134,17 @@ describe("config routes", () => {
     expect(parsePiWebConfigResponseBody(response.json()).config).toEqual(expectedConfig);
   });
 
-  it.each(["/api/config", "/api/machines/local/config"])("saves and resets session naming through %s", async (url) => {
-    const sessionNaming = { model: "provider/org/model", maxTokens: 64, thinkingLevel: "off" as const, timeoutMs: 2147483647 };
-    const saved = await app.inject({ method: "PUT", url, payload: { config: { sessionNaming } } });
-    expect(saved.statusCode).toBe(200);
-    expect(parsePiWebConfigResponseBody(saved.json()).config.sessionNaming).toEqual(sessionNaming);
-    expect(parsePiWebConfigResponseBody(saved.json()).effectiveConfig.sessionNaming).toEqual(sessionNaming);
-    const reset = await app.inject({ method: "PUT", url, payload: { config: { sessionNaming: {} } } });
-    expect(reset.statusCode).toBe(200);
-    expect(savedConfig.sessionNaming).toEqual({});
-  });
-
-  it("preserves session naming on unrelated selected-machine saves", async () => {
-    const sessionNaming = { model: "provider/model", maxTokens: 48, thinkingLevel: "high" as const, timeoutMs: 15000 };
-    savedConfig.sessionNaming = sessionNaming;
-    const response = await app.inject({ method: "PUT", url: "/api/machines/local/config", payload: { config: { spawnSessions: false } } });
-    expect(response.statusCode).toBe(200);
-    expect(response.json<PiWebConfigResponse>().config.sessionNaming).toEqual(sessionNaming);
-    expect(savedConfig.sessionNaming).toEqual(sessionNaming);
-  });
-
-  it.each(["/api/config", "/api/machines/local/config"])("validates session naming before writing through %s", async (url) => {
-    const response = await app.inject({ method: "PUT", url, payload: { config: { sessionNaming: { maxTokens: 0 } } } });
-    expect(response.statusCode).toBe(400);
-    expect(service.write).not.toHaveBeenCalled();
-  });
-
-  it.each(["", "ultra", null, false, 42, {}, []])("rejects invalid naming thinking level %j before writing and in remote responses", async (thinkingLevel) => {
-    const config = { sessionNaming: { thinkingLevel } };
-    for (const url of ["/api/config", "/api/machines/local/config"]) {
-      const result = await app.inject({ method: "PUT", url, payload: { config } });
-      expect(result.statusCode).toBe(400);
-      expect(result.json<{ error: string }>().error).toContain("sessionNaming.thinkingLevel");
-    }
-    expect(service.write).not.toHaveBeenCalled();
-    const response = responseFor({}, true);
-    for (const field of ["config", "effectiveConfig"]) {
-      expect(() => parsePiWebConfigResponseBody({ ...response, [field]: config })).toThrow("sessionNaming.thinkingLevel");
-    }
-  });
-
-  it.each([0, -1, 1.5, 2147483648, "10000", null, false, {}, []])("rejects invalid naming timeout %j before writing and in remote responses", async (timeoutMs) => {
-    const config = { sessionNaming: { timeoutMs } };
-    for (const url of ["/api/config", "/api/machines/local/config"]) {
-      const result = await app.inject({ method: "PUT", url, payload: { config } });
-      expect(result.statusCode).toBe(400);
-      expect(result.json<{ error: string }>().error).toContain("sessionNaming.timeoutMs");
-    }
-    expect(service.write).not.toHaveBeenCalled();
-    const response = responseFor({}, true);
-    for (const field of ["config", "effectiveConfig"]) {
-      expect(() => parsePiWebConfigResponseBody({ ...response, [field]: config })).toThrow("sessionNaming.timeoutMs");
-    }
-  });
-
-  it("rejects invalid session naming in remote config responses", () => {
-    const response = responseFor({}, true);
-    for (const field of ["config", "effectiveConfig"]) {
-      expect(() => parsePiWebConfigResponseBody({ ...response, [field]: { sessionNaming: { model: "/missing" } } })).toThrow("sessionNaming.model");
+  it.each(["/api/config", "/api/machines/local/config"])("rejects legacy core sessionNaming writes through %s without changing saved config", async (url) => {
+    const original = structuredClone(savedConfig);
+    for (const [method, payload] of [
+      ["PUT", { config: { sessionNaming: { model: "provider/model" } } }],
+      ["PATCH", { set: { sessionNaming: { model: "provider/model" } } }],
+      ["PATCH", { unset: ["/sessionNaming/model"] }],
+    ] as const) {
+      const response = await app.inject({ method, url, payload });
+      expect(response.statusCode).toBe(400);
+      expect(service.write).not.toHaveBeenCalled();
+      expect(savedConfig).toEqual(original);
     }
   });
 

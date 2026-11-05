@@ -418,6 +418,39 @@ describe("gateway session-file resolution by id", () => {
     expect(readPaths).toEqual([targetPath]);
   });
 
+  it("finds a session by id only in the session folders of the given workspaces", async () => {
+    const otherCwd = join(tempDir, "other-workspace");
+    const unknownCwd = join(tempDir, "unknown-folder");
+    const settingsCwd = join(tempDir, "settings-workspace");
+    await mkdir(join(settingsCwd, ".pi"), { recursive: true });
+    await writeFile(join(settingsCwd, ".pi", "settings.json"), `${JSON.stringify({ sessionDir: ".sessions" })}\n`, "utf8");
+    const defaultPath = await writeNamedSessionFile(defaultPiSessionDir(otherCwd, agentDir), "2026-01-01T00-00-00-000Z_default-id.jsonl", { id: "default-id", cwd: otherCwd });
+    const settingsPath = await writeNamedSessionFile(join(settingsCwd, ".sessions"), "2026-01-01T00-00-00-000Z_settings-id.jsonl", { id: "settings-id", cwd: settingsCwd });
+    // A folder no workspace names is never searched.
+    await writeNamedSessionFile(defaultPiSessionDir(unknownCwd, agentDir), "2026-01-01T00-00-00-000Z_unknown-id.jsonl", { id: "unknown-id", cwd: unknownCwd });
+    // Filename candidates are verified by header, and hand-renamed files are not searched.
+    await writeNamedSessionFile(defaultPiSessionDir(cwd, agentDir), "2026-01-02T00-00-00-000Z_copied-id.jsonl", { id: "another-id", cwd });
+    await writeNamedSessionFile(defaultPiSessionDir(cwd, agentDir), "renamed.jsonl", { id: "renamed-id", cwd });
+    const gateway = createPiSessionManagerGateway(piProfileOptions());
+    const workspaces = [cwd, otherCwd, settingsCwd];
+
+    await expect(gateway.findSessionFile?.("default-id", workspaces)).resolves.toEqual({ id: "default-id", cwd: otherCwd, path: defaultPath });
+    await expect(gateway.findSessionFile?.("settings-id", workspaces)).resolves.toEqual({ id: "settings-id", cwd: settingsCwd, path: settingsPath });
+    await expect(gateway.findSessionFile?.("unknown-id", workspaces)).resolves.toBeUndefined();
+    await expect(gateway.findSessionFile?.("copied-id", workspaces)).resolves.toBeUndefined();
+    await expect(gateway.findSessionFile?.("renamed-id", workspaces)).resolves.toBeUndefined();
+  });
+
+  it("finds a session in a shared session folder only for a workspace that lists it", async () => {
+    const sharedSessionDir = join(tempDir, "shared-sessions");
+    const otherCwd = join(tempDir, "other-workspace");
+    const sharedPath = await writeNamedSessionFile(sharedSessionDir, "2026-01-01T00-00-00-000Z_shared-id.jsonl", { id: "shared-id", cwd: otherCwd });
+    const gateway = createPiSessionManagerGateway(piProfileOptions({ PI_CODING_AGENT_SESSION_DIR: sharedSessionDir }));
+
+    await expect(gateway.findSessionFile?.("shared-id", [cwd])).resolves.toBeUndefined();
+    await expect(gateway.findSessionFile?.("shared-id", [cwd, otherCwd])).resolves.toEqual({ id: "shared-id", cwd: otherCwd, path: sharedPath });
+  });
+
   it("resolves through the session directory the gateway is configured with", async () => {
     const sharedSessionDir = join(tempDir, "shared-sessions");
     const targetPath = await writeNamedSessionFile(sharedSessionDir, "2026-01-01T00-00-00-000Z_configured-id.jsonl", { id: "configured-id", cwd });

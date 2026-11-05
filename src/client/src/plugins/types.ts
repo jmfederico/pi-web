@@ -92,6 +92,7 @@ export interface QualifiedStylesheetContribution extends StylesheetContribution 
 export interface PluginContributions {
   stylesheets?: StylesheetContribution[];
   contentRenderers?: import("../../../plugin-api").ContentRendererContributionV5[];
+  transcriptRenderers?: import("../../../plugin-api").TranscriptRendererContribution[];
   syntaxHighlighters?: import("../../../plugin-api").SyntaxHighlighterContribution[];
   filePreviewers?: import("../../../plugin-api").FilePreviewerContribution[];
   messageActions?: import("../../../plugin-api").MessageActionContribution[];

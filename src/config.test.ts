@@ -4,8 +4,6 @@ import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_ATTACHMENT_FOLDER, DEFAULT_EXTENSION_DIALOGS_TIMEOUT_MS, DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_UPLOADS_FOLDER, AGENT_SESSION_DIR_ENV_KEYS, agentSessionDirEnvOverride, askUserEnabled, detectDeprecatedAgentInputs, effectiveAgentConfig, environmentFactsEnabled, effectivePiWebConfig, loadPiWebConfig, maxUploadBytes, offlineModeEnabled, savePiWebConfig, sessionArchiveDirectory, sessionMessagesEnabled, spawnSessionsEnabled, subsessionsEnabled, applyPiWebConfigEnv, overlayPiWebConfig, piWebConfigSources, piWebConfigEnforcedSettings, resolveEffectivePiWebConfig } from "./config.js";
 
-import { KNOWN_THINKING_LEVELS } from "./shared/thinkingLevels.js";
-
 let tempDir: string;
 let configPath: string;
 
@@ -103,41 +101,6 @@ describe("sessionArchive config", () => {
     expect(sessionArchiveDirectory({ ...env, PI_WEB_SESSION_ARCHIVE_DIR: "" }, config, tempDir)).toBe(join(tempDir, "configured"));
     expect(sessionArchiveDirectory({}, { sessionArchive: { directory: tempDir } }, resolve(tempDir, "other"))).toBe(tempDir);
     expect(sessionArchiveDirectory(env, { sessionArchive: {} }, tempDir)).toBe(join(tempDir, "state", "archived-sessions"));
-  });
-});
-
-describe("sessionNaming config", () => {
-  it.each([{}, { model: "provider/model" }, { maxTokens: 24 }, { timeoutMs: 1 }, { timeoutMs: 10000 }, { timeoutMs: 2147483647 }, { model: "provider/org/model", maxTokens: Number.MAX_SAFE_INTEGER }, ...KNOWN_THINKING_LEVELS.map((thinkingLevel) => ({ thinkingLevel }))])("round-trips overrides %j without adding defaults", (sessionNaming) => {
-    savePiWebConfig({ sessionNaming }, testOptions());
-    expect(loadPiWebConfig(testOptions()).config.sessionNaming).toEqual(sessionNaming);
-    expect(effectivePiWebConfig(testOptions()).config.sessionNaming).toEqual(sessionNaming);
-  });
-
-  it("preserves overrides on unrelated saves and resets with an empty object", async () => {
-    const sessionNaming = { model: "provider/model", maxTokens: 80, thinkingLevel: "off" as const, timeoutMs: 15000 };
-    savePiWebConfig({ sessionNaming }, testOptions());
-    savePiWebConfig({ ...loadPiWebConfig(testOptions()).config, port: 9000 }, testOptions());
-    expect(loadPiWebConfig(testOptions()).config.sessionNaming).toEqual(sessionNaming);
-    savePiWebConfig({ ...loadPiWebConfig(testOptions()).config, sessionNaming: {} }, testOptions());
-    expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual({ port: 9000, sessionNaming: {} });
-    savePiWebConfig({}, testOptions());
-    expect(loadPiWebConfig(testOptions()).config).not.toHaveProperty("sessionNaming");
-    expect(effectivePiWebConfig(testOptions()).config).not.toHaveProperty("sessionNaming");
-  });
-
-  it.each([
-    null, [], "provider/model", { unknown: true },
-    ...["", "model", "/model", "provider/", " provider/model", "provider/model ", "provider /model", 42, null].map((model) => ({ model })),
-    ...[0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, "24", null].map((maxTokens) => ({ maxTokens })),
-    ...["", "ultra", "MINIMAL", " minimal ", null, false, 42, {}, []].map((thinkingLevel) => ({ thinkingLevel })),
-    ...[0, -1, 1.5, 2147483648, Number.MAX_SAFE_INTEGER, "10000", null, false, {}, []].map((timeoutMs) => ({ timeoutMs })),
-  ])("rejects invalid overrides %j when loading", async (sessionNaming) => {
-    await writeFile(configPath, JSON.stringify({ sessionNaming }), "utf8");
-    expect(() => loadPiWebConfig(testOptions())).toThrow("PI WEB config sessionNaming");
-  });
-
-  it.each([NaN, Infinity, -Infinity, 0, 2147483648])("rejects invalid timeout %s before saving", (timeoutMs) => {
-    expect(() => savePiWebConfig({ sessionNaming: { timeoutMs } }, testOptions())).toThrow("sessionNaming.timeoutMs");
   });
 });
 
@@ -682,9 +645,9 @@ describe("configuration layers", () => {
   });
 
   it("overlays namespaces but replaces ordinary object and array settings", () => {
-    const base = { basePaths: ["/base"], shortcuts: { one: "a" }, defaultTheme: { themeId: "themes:light", auto: true }, sessionNaming: { maxTokens: 10 }, defaultLocalization: { language: "de" }, plugins: { git: { enabled: false, settings: { value: { old: 1 }, keep: [1] } } } };
-    const result = overlayPiWebConfig(base, { basePaths: [], shortcuts: {}, sessionNaming: {}, defaultLocalization: {}, plugins: { git: { settings: { value: {} } } } });
-    expect(result).toMatchObject({ basePaths: [], shortcuts: {}, sessionNaming: { maxTokens: 10 }, defaultLocalization: { language: "de" }, plugins: { git: { enabled: false, settings: { value: {}, keep: [1] } } } });
+    const base = { basePaths: ["/base"], shortcuts: { one: "a" }, defaultTheme: { themeId: "themes:light", auto: true }, defaultLocalization: { language: "de" }, plugins: { git: { enabled: false, settings: { value: { old: 1 }, keep: [1] } } } };
+    const result = overlayPiWebConfig(base, { basePaths: [], shortcuts: {}, defaultLocalization: {}, plugins: { git: { settings: { value: {} } } } });
+    expect(result).toMatchObject({ basePaths: [], shortcuts: {}, defaultLocalization: { language: "de" }, plugins: { git: { enabled: false, settings: { value: {}, keep: [1] } } } });
     expect(base.plugins.git.settings.value).toEqual({ old: 1 });
   });
 });
@@ -716,7 +679,7 @@ describe("environment setting resolution", () => {
       defaultLocalization: { language: "de" }, defaultStreamingBehavior: "followUp" as const,
       quietMode: true, plugins: { git: { enabled: false, settings: { key: { value: 1 } } } },
       basePaths: [], pathAccess: { allowedPaths: ["/a,b"] }, uploads: {}, attachments: {},
-      maxUploadBytes: 100, sessionNaming: { timeoutMs: 10 }, sessionArchive: { directory: "archive" },
+      maxUploadBytes: 100, sessionArchive: { directory: "archive" },
       spawnSessions: false, sessionMessages: false, subsessions: false, askUser: false, environmentFacts: false, extensionDialogsTimeoutMs: 0,
     };
     const env = Object.fromEntries(Object.entries(config).map(([key, value]) => [
@@ -737,19 +700,17 @@ describe("environment setting resolution", () => {
   it("enforces only supplied fields in schema-declared settings containers", () => {
     const env = {
       PI_WEB_UPLOADS: "{}", PI_WEB_ATTACHMENTS: '{"defaultFolder":"forced"}',
-      PI_WEB_SESSION_NAMING: '{"model":"provider/forced"}', PI_WEB_SESSION_ARCHIVE: "{}",
+      PI_WEB_SESSION_ARCHIVE: "{}",
       PI_WEB_PATH_ACCESS: '{"allowedPaths":[]}',
     };
     expect(piWebConfigEnforcedSettings(env)).toEqual({
-      "/attachments/defaultFolder": "PI_WEB_ATTACHMENTS", "/sessionNaming/model": "PI_WEB_SESSION_NAMING", "/pathAccess/allowedPaths": "PI_WEB_PATH_ACCESS",
+      "/attachments/defaultFolder": "PI_WEB_ATTACHMENTS", "/pathAccess/allowedPaths": "PI_WEB_PATH_ACCESS",
     });
     expect(applyPiWebConfigEnv({
       uploads: { defaultFolder: "deployed" }, attachments: { defaultFolder: "saved" },
-      sessionNaming: { model: "provider/saved", maxTokens: 48, thinkingLevel: "minimal" },
       sessionArchive: { directory: "/archive" }, pathAccess: { allowedPaths: ["/saved"] },
     }, env)).toMatchObject({
       uploads: { defaultFolder: "deployed" }, attachments: { defaultFolder: "forced" },
-      sessionNaming: { model: "provider/forced", maxTokens: 48, thinkingLevel: "minimal" },
       sessionArchive: { directory: "/archive" }, pathAccess: { allowedPaths: [] },
     });
   });
@@ -790,5 +751,5 @@ describe("environment setting resolution", () => {
 });
 
 function testOptions(): { env: NodeJS.ProcessEnv } {
-  return { env: { PI_WEB_CONFIG: configPath } };
+  return { env: { PI_WEB_CONFIG: configPath, PI_CODING_AGENT_DIR: join(tempDir, "agent") } };
 }

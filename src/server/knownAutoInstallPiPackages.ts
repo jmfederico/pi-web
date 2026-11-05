@@ -26,6 +26,12 @@ export interface KnownAutoInstallablePiPackage {
 
 export const KNOWN_AUTO_INSTALLABLE_PI_PACKAGES: readonly KnownAutoInstallablePiPackage[] = [
   {
+    id: "@jmfederico/pi-session-naming",
+    label: "Session naming",
+    description: "Automatically name new conversations from their first prompt. Remove this package to use another naming extension.",
+    shippedPathSegments: ["dist", "pi-packages", "session-naming"],
+  },
+  {
     id: "@jmfederico/pi-relay",
     label: "Relays",
     description: "Tool-agnostic Relay method, opinionated runner profile, and human-gated preparation prompts for independent Pi session chains.",

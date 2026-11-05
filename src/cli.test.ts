@@ -52,6 +52,18 @@ describe("native service environment", () => {
     expect(nativeServiceEnvironment(undefined, { PI_WEB_PI_PACKAGE_DIR: "/existing/pi" }))
       .toEqual({ PI_WEB_PI_PACKAGE_DIR: "/existing/pi" });
   });
+
+  it("keeps a managed Pi install root instead of one release that pi update may remove", () => {
+    const installRoot = mkdtempSync(join(tmpdir(), "pi-web-managed-pi-"));
+    try {
+      writeFileSync(join(installRoot, "current-version"), "1.0.0\n");
+      const release = join(installRoot, "releases", "1.0.0", "node_modules", "@earendil-works", "pi-coding-agent");
+      expect(nativeServiceEnvironment(undefined, { PI_WEB_PI_PACKAGE_DIR: release }))
+        .toEqual({ PI_WEB_PI_PACKAGE_DIR: installRoot });
+    } finally {
+      rmSync(installRoot, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("version arguments", () => {

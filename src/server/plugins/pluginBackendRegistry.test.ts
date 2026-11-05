@@ -32,7 +32,7 @@ describe("PluginBackendRegistry", () => {
   it("dispatches v5 machine and project scopes without workspace resolution and rejects v3 scoped calls", async () => {
     const resolve = vi.fn(() => Promise.reject(new Error("Workspace resolution must not run")));
     const contribution = backendContribution("notes", ({ scope }) => scope.kind === "project" ? { kind: scope.kind, project: { ...scope.project } } : { kind: scope.kind });
-    const registry = new PluginBackendRegistry({ contributions: [contribution], workspaces: { resolve } });
+    const registry = new PluginBackendRegistry({ contributions: [contribution], workspaces: { lookup: resolve } });
     const base = { pluginId: "notes", moduleRevision: "notes-r1", operation: "notes.list", input: null };
     await expect(registry.request({ ...base, scope: "machine" })).resolves.toEqual({ kind: "machine" });
     await expect(registry.request({ ...base, scope: "project", project })).resolves.toEqual({ kind: "project", project: { id: project.id, name: project.name, path: project.path } });
@@ -40,7 +40,7 @@ describe("PluginBackendRegistry", () => {
     await expect(registry.request({ ...base, scope: "project", project, workspaceId: "spoof" })).rejects.toMatchObject({ code: "invalid-scope" });
     await expect(registry.request({ ...base, scope: "machine", moduleRevision: "stale" })).rejects.toMatchObject({ code: "stale-plugin-revision" });
     expect(resolve).not.toHaveBeenCalled();
-    const legacy = new PluginBackendRegistry({ contributions: [{ ...contribution, apiVersion: 3 }], workspaces: { resolve } });
+    const legacy = new PluginBackendRegistry({ contributions: [{ ...contribution, apiVersion: 3 }], workspaces: { lookup: resolve } });
     for (const scope of ["machine", "project"] as const) {
       await expect(legacy.request({ ...base, scope, ...(scope === "project" ? { project } : {}) })).rejects.toMatchObject({ code: "invalid-scope" });
     }
@@ -55,13 +55,13 @@ describe("PluginBackendRegistry", () => {
       expect(Object.isFrozen(scope)).toBe(true);
       return { receive() { /* no incoming frames */ }, close };
     });
-    const registry = new PluginBackendRegistry({ contributions: [contribution], workspaces: { resolve }, channelMaxPerPluginWorkspace: 1 });
+    const registry = new PluginBackendRegistry({ contributions: [contribution], workspaces: { lookup: resolve }, channelMaxPerPluginWorkspace: 1 });
     const base = { pluginId: "notes", moduleRevision: "notes-r1", operation: "notes.watch", input: null };
     const machine = await registry.openChannel({ ...base, scope: "machine" }, channelTransport().value);
     const selectedProject = await registry.openChannel({ ...base, scope: "project", project }, channelTransport().value);
     expect(registry.activeChannelCount()).toBe(2);
     await expect(registry.openChannel({ ...base, scope: "machine" }, channelTransport().value)).rejects.toMatchObject({ code: "admission-denied" });
-    const legacy = new PluginBackendRegistry({ contributions: [{ ...contribution, apiVersion: 3 }], workspaces: { resolve } });
+    const legacy = new PluginBackendRegistry({ contributions: [{ ...contribution, apiVersion: 3 }], workspaces: { lookup: resolve } });
     await expect(legacy.openChannel({ ...base, scope: "machine" }, channelTransport().value)).rejects.toMatchObject({ code: "invalid-scope" });
     await Promise.all([machine.close(), selectedProject.close()]);
     expect(registry.activeChannelCount()).toBe(0);
@@ -69,6 +69,33 @@ describe("PluginBackendRegistry", () => {
     expect(resolve).not.toHaveBeenCalled();
     await Promise.all([registry.closeAll(), legacy.closeAll()]);
   });
+  it("serves repeated terminal polls from known identity and rejects removed or unknown workspaces", async () => {
+    const probe = vi.fn(() => Promise.resolve<"claim">("claim"));
+    let listed = [{ key: "root", path: project.path, label: "root", isMain: true }];
+    const list = vi.fn(() => Promise.resolve(listed));
+    const workspaces = providerRegistry([providerContribution("git", { probe, list })]);
+    const workspaceId = (await workspaces.resolve(project)).workspaces[0]?.id;
+    const callback = vi.fn(() => []);
+    const registry = new PluginBackendRegistry({ contributions: [backendContribution("terminal", callback)], workspaces });
+    const request = { pluginId: "terminal", moduleRevision: "terminal-r1", project, workspaceId, operation: "terminal.list", input: null };
+    try {
+      for (let i = 0; i < 3; i += 1) await expect(registry.request(request)).resolves.toEqual([]);
+      await expect(registry.request({ ...request, workspaceId: "unknown" })).rejects.toMatchObject({ code: "workspace-not-found" });
+      expect(probe).toHaveBeenCalledOnce();
+      expect(list).toHaveBeenCalledOnce();
+      expect(callback).toHaveBeenCalledTimes(3);
+
+      listed = [{ key: "replacement", path: join(project.path, "replacement"), label: "replacement", isMain: true }];
+      await workspaces.resolve(project);
+      await expect(registry.request(request)).rejects.toMatchObject({ code: "workspace-not-found" });
+      expect(list).toHaveBeenCalledTimes(2);
+      expect(callback).toHaveBeenCalledTimes(3);
+    } finally {
+      await registry.closeAll();
+      await workspaces.closeAll();
+    }
+  });
+
   it("dispatches a non-provider plugin against a host-resolved provider workspace", async () => {
     let observed: ServerPluginPeerRequestContext | undefined;
     const workspaces = providerRegistry([providerContribution("git", {
@@ -186,7 +213,7 @@ describe("PluginBackendRegistry", () => {
     const invalidScope = new PluginBackendRegistry({
       contributions: [backendContribution("notes", () => null)],
       workspaces: {
-        resolve: () => Promise.resolve({
+        lookup: () => Promise.resolve({
           status: "folder",
           projectId: project.id,
           workspaces: [{
@@ -326,42 +353,21 @@ describe("PluginBackendRegistry", () => {
     await expect(registry.request(request)).rejects.toMatchObject({ code: "shutdown", statusCode: 503 });
   });
 
-  it("cancels workspace authority resolution before a direct callback starts", async () => {
-    const controller = new AbortController();
-    let resolveStarted: (() => void) | undefined;
-    const started = new Promise<void>((resolvePromise) => { resolveStarted = resolvePromise; });
-    let probeSignal: AbortSignal | undefined;
-    const workspaces = providerRegistry([providerContribution("git", {
-      probe: (_project, signal) => new Promise((_resolve, rejectPromise) => {
-        probeSignal = signal;
-        resolveStarted?.();
-        signal.addEventListener("abort", () => {
-          const reason: unknown = signal.reason;
-          rejectPromise(reason instanceof Error ? reason : new Error("probe aborted", { cause: reason }));
-        }, { once: true });
-      }),
-      list: () => Promise.resolve([]),
-    })]);
+  it("rejects an undiscovered workspace without starting discovery or invoking the backend", async () => {
+    const probe = vi.fn(() => Promise.resolve<"pass">("pass"));
+    const workspaces = providerRegistry([providerContribution("git", { probe, list: () => Promise.resolve([]) })]);
     const request = vi.fn(() => null);
-    const registry = new PluginBackendRegistry({
-      contributions: [backendContribution("notes", request)],
-      workspaces,
-    });
-    const pending = registry.request({
-      pluginId: "notes",
-      moduleRevision: "notes-r1",
-      project,
-      workspaceId: "unresolved",
-      operation: "notes.wait",
-      input: null,
-    }, controller.signal);
-
-    await started;
-    controller.abort(new DOMException("Browser disconnected", "AbortError"));
-
-    await expect(pending).rejects.toMatchObject({ code: "request-cancelled", statusCode: 499 });
-    expect(probeSignal?.aborted).toBe(true);
-    expect(request).not.toHaveBeenCalled();
+    const registry = new PluginBackendRegistry({ contributions: [backendContribution("notes", request)], workspaces });
+    try {
+      await expect(registry.request({
+        pluginId: "notes", moduleRevision: "notes-r1", project, workspaceId: "unresolved", operation: "notes.wait", input: null,
+      })).rejects.toMatchObject({ code: "resolution-failed" });
+      expect(probe).not.toHaveBeenCalled();
+      expect(request).not.toHaveBeenCalled();
+    } finally {
+      await registry.closeAll();
+      await workspaces.closeAll();
+    }
   });
 
   it("opens a scoped duplex channel, bounds callbacks, and cleans up exactly once", async () => {

@@ -115,6 +115,8 @@ describe("plugin delivery artifacts", () => {
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/skills/relay/SKILL.md");
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/skills/relay-runner/SKILL.md");
     expect(builtPackageFiles).toEqual(expect.arrayContaining([
+      "dist/pi-packages/session-naming/package.json",
+      "dist/pi-packages/session-naming/extensions/index.js",
       "dist/pi-packages/scheduled-tasks/package.json",
       "dist/pi-packages/scheduled-tasks/server-plugin.js",
       "dist/pi-packages/scheduled-tasks/browser/pi-web-plugin.js",
@@ -136,6 +138,24 @@ describe("plugin delivery artifacts", () => {
     if (!isRecord(builtRelaysPackage)) throw new Error("Built relays package metadata was not an object");
     expect(builtRelaysPackage["name"]).toBe("@jmfederico/pi-relay");
   });
+  it("loads the naming extension solely through its removable Pi package", async () => {
+    const source = join(repoRoot, "dist", "pi-packages", "session-naming");
+    // A compiled extension must not resolve a second physical Pi SDK alongside
+    // the selected host; runtime inference comes from the extension context.
+    const imports = (await Promise.all((await recursiveFiles(source)).filter((path) => path.endsWith(".js"))
+      .map(async (path) => moduleSpecifiers(await readFile(join(source, path), "utf8"))))).flat();
+    expect(imports.filter((specifier) => specifier.startsWith("@earendil-works/"))).toEqual([]);
+    const settings = SettingsManager.inMemory({ packages: [source] });
+    const loader = new DefaultResourceLoader({ cwd: tempDir, agentDir: tempDir, settingsManager: settings, noThemes: true, noPromptTemplates: true });
+    await loader.reload();
+    expect(loader.getExtensions().errors).toEqual([]);
+    expect(loader.getExtensions().extensions).toHaveLength(1);
+    expect(loader.getExtensions().extensions[0].handlers.has("before_agent_start")).toBe(true);
+    settings.setPackages([]);
+    await loader.reload();
+    expect(loader.getExtensions().extensions).toHaveLength(0);
+  });
+
   it("ships an optional disabled scheduler with standalone SQLite and cron dispatch", async () => {
     const source = join(repoRoot, "dist", "pi-packages", "scheduled-tasks");
     const metadata = JSON.parse(await readFile(join(source, "package.json"), "utf8"));

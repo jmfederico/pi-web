@@ -1,11 +1,17 @@
 import { isAbsolute, relative } from "node:path";
 import type { Project, WorkspaceListing } from "../types.js";
 import { canonicalizeStoredCwd } from "../workingDirectory.js";
+import type { WorkspaceProviderRegistry } from "../workspaces/workspaceProviderRegistry.js";
 
 /** The workspace and project a working directory belongs to. */
 export interface CwdAttribution {
   projectId: string;
   workspaceId: string;
+}
+
+/** An established workspace of an open project. */
+export interface KnownWorkspace extends CwdAttribution {
+  path: string;
 }
 
 /**
@@ -15,16 +21,12 @@ export interface CwdAttribution {
  */
 export interface WorkspaceAttribution {
   attribute(cwds: Iterable<string>): Promise<ReadonlyMap<string, CwdAttribution>>;
-  /** Drop the cached topology after a mutation this process performed. */
+  /** Drop the cached projection after discovery publication or a project mutation. */
   invalidate(): void;
 }
 
 interface WorkspaceAttributionProjectLister {
   list(): Promise<Project[]>;
-}
-
-interface WorkspaceAttributionWorkspaceLister {
-  list(project: Project): Promise<WorkspaceListing[]>;
 }
 
 interface WorkspaceAttributionLogger {
@@ -33,13 +35,12 @@ interface WorkspaceAttributionLogger {
 
 export interface WorkspaceAttributionDependencies {
   projects: WorkspaceAttributionProjectLister;
-  workspaces: WorkspaceAttributionWorkspaceLister;
+  workspaces: Pick<WorkspaceProviderRegistry, "lookup">;
   logger: WorkspaceAttributionLogger;
   /**
-   * Upper bound on how long a cached topology may be reused. Mutations this
-   * daemon performs call `invalidate()`; project add/close happens in the web
-   * process and worktrees can be created straight from a terminal, so those
-   * are picked up on the next expiry instead.
+   * Upper bound on reuse of the established workspace projection. Discovery
+   * publications and project mutations call `invalidate()`. Expiry reloads
+   * established records only; discovering external changes is owned elsewhere.
    */
   topologyTtlMs?: number;
   now?: () => number;
@@ -60,9 +61,9 @@ interface TopologyCacheEntry {
 }
 
 /**
- * Caches the project/workspace topology so status recomputation never triggers
- * one workspace provider listing per status change. Listing runs at most once
- * per cache window, and one in-flight load is shared by concurrent callers.
+ * Caches established project/workspace records for status attribution. Reads
+ * never trigger provider discovery. One in-flight projection load is shared
+ * by concurrent callers and reused until invalidation or cache expiry.
  */
 export class CachedWorkspaceAttribution implements WorkspaceAttribution {
   private readonly topologyTtlMs: number;
@@ -88,6 +89,11 @@ export class CachedWorkspaceAttribution implements WorkspaceAttribution {
     return attributions;
   }
 
+  /** Every established workspace with its canonical path, without starting discovery. */
+  async knownWorkspaces(): Promise<readonly KnownWorkspace[]> {
+    return (await this.topology()).map((workspace) => ({ path: workspace.path, ...workspace.attribution }));
+  }
+
   invalidate(): void {
     this.cache = undefined;
   }
@@ -101,7 +107,7 @@ export class CachedWorkspaceAttribution implements WorkspaceAttribution {
   }
 
   /**
-   * Never rejects: a listing failure is logged and leaves the affected project
+   * Never rejects: a lookup failure is logged and leaves the affected project
    * without workspaces for this window, so its cwds fall to the unattributed
    * bucket instead of failing the whole status projection.
    */
@@ -114,20 +120,20 @@ export class CachedWorkspaceAttribution implements WorkspaceAttribution {
       return [];
     }
 
-    const listed = await Promise.all(projects.map((project) => this.listWorkspaces(project)));
+    const listed = await Promise.all(projects.map((project) => this.lookupWorkspaces(project)));
     // Deepest first, so a cwd inside a nested workspace is attributed to that
     // workspace rather than to the workspace containing it.
     return listed.flat().sort((left, right) => right.depth - left.depth);
   }
 
-  private async listWorkspaces(project: Project): Promise<AttributedWorkspacePath[]> {
+  private async lookupWorkspaces(project: Project): Promise<AttributedWorkspacePath[]> {
     try {
-      const workspaces = await this.dependencies.workspaces.list(project);
-      return workspaces.map((workspace) => attributedWorkspacePath(workspace));
+      const resolution = await this.dependencies.workspaces.lookup(project);
+      return resolution?.workspaces.map((workspace) => attributedWorkspacePath(workspace)) ?? [];
     } catch (error) {
       this.dependencies.logger.warn(
         { err: error, projectId: project.id },
-        "workspace attribution could not list workspaces for a project",
+        "workspace attribution could not look up workspaces for a project",
       );
       return [];
     }

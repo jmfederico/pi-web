@@ -11,6 +11,7 @@ import { hasStatusUnread, renderActivityIndicator, statusActivityKind } from "./
 import { canRemoveMachine } from "./MachineList";
 import type { KeyboardNavigableSection } from "./navigationFocus";
 import { uiButtonStyles, uiMenuStyles } from "./ui/controlStyles";
+import { activityIndicatorStyles } from "../theme/base/activityIndicatorStyles";
 
 @customElement("machine-switcher")
 export class MachineSwitcher extends LitElement implements KeyboardNavigableSection {
@@ -328,7 +329,7 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
     void this.onRemove?.(machine);
   }
 
-  static override styles = [uiButtonStyles, uiMenuStyles, css`
+  static override styles = [uiButtonStyles, uiMenuStyles, activityIndicatorStyles, css`
     @layer pi-web-base {
     :host { min-width: 0; display: flex; container: machine-selector / inline-size; }
     .machine-switcher { flex: 1 1 auto; min-width: 0; display: flex; }
@@ -344,13 +345,8 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
     @container machine-selector (max-width: 220px) {
       .machine-switcher-kicker { display: none; }
     }
-    .activity-indicator { flex: 0 0 auto; display: inline-block; width: 7px; height: 7px; background: var(--pi-success); animation: pulse 1s ease-in-out infinite; }
-    .activity-indicator.session { border-radius: 50%; background: var(--pi-success); }
-    .activity-indicator.terminal { border-radius: 2px; background: var(--pi-accent); }
-    .activity-indicator.sending { border-radius: 50%; background: var(--pi-warning); }
-    .activity-indicator.unread { border-radius: 50%; background: var(--pi-accent); animation: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--pi-accent) 20%, transparent); }
-    .unread-ring { flex: 0 0 auto; box-sizing: border-box; display: inline-grid; place-items: center; width: 9px; height: 9px; border: 1.5px solid var(--pi-accent); border-radius: 50%; }
-    .unread-ring .activity-indicator { width: 5px; height: 5px; }
+    /* The machine selector keeps its gentler work pulse; static states stay shared. */
+    .activity-indicator { animation-name: machine-activity-pulse; }
     .machine-icon { flex: 0 0 auto; width: 16px; height: 16px; }
     .machine-icon.dimmed { filter: grayscale(1); opacity: .45; }
     .machine-option-main .machine-icon { width: 14px; height: 14px; }
@@ -365,7 +361,7 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
     .machine-option-actions { position: relative; align-self: stretch; }
     .machine-option-actions-toggle { height: 100%; }
     .machine-option.selected .machine-option-main { background: var(--pi-selection-bg); }
-    @keyframes pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+    @keyframes machine-activity-pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
     }
   `];
 }

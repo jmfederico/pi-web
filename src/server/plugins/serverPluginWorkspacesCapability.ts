@@ -15,7 +15,7 @@ import type { ServerPluginHostCapabilityContext, ServerPluginHostCapabilityFacto
 
 export interface CreateServerPluginWorkspacesCapabilityOptions {
   readonly projects: Pick<ProjectService, "requireProject">;
-  readonly workspaces: Pick<WorkspaceProviderRegistry, "resolve">;
+  readonly workspaces: Pick<WorkspaceProviderRegistry, "checkCurrent">;
 }
 
 /** Creates the late workspaces v1 factory against one settled provider topology. */
@@ -43,7 +43,7 @@ export function createServerPluginWorkspacesCapabilityFactory(
             const projectProjection = snapshotProject(project, requested.projectId, context.pluginId);
             let workspaces: readonly WorkspaceListing[];
             try {
-              const resolution = await options.workspaces.resolve(project, context.lifetimeSignal);
+              const resolution = await options.workspaces.checkCurrent(project, context.lifetimeSignal);
               if (resolution.projectId !== projectProjection.id) {
                 throw new Error("Workspace authority returned a mismatched project id");
               }

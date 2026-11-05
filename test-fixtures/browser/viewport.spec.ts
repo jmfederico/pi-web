@@ -1,42 +1,85 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
-for (const width of [700, 1366]) {
-  test(`keeps the composer visible and panel scrolling independent at width ${String(width)}`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 900 });
-    await page.goto("/viewport.html");
-    const shell = page.locator("viewport-shell");
-    const composer = page.getByRole("textbox", { name: "Message" });
-    await composer.focus();
+// Scroll offsets may round while rectangles retain fractional CSS pixels.
+const ROUNDING_TOLERANCE_PX = 1;
 
-    // A deterministic visualViewport input exercises our geometry in each engine;
-    // physical iPad keyboard/trackpad behavior still requires device validation.
-    async function setVisibleHeight(height: number) {
-      await page.evaluate((value) => {
-        const viewport = window.visualViewport;
-        if (!viewport) throw new Error("Missing visual viewport");
-        Object.defineProperty(viewport, "height", { configurable: true, value });
-        viewport.dispatchEvent(new Event("resize"));
-      }, height);
-      await expect.poll(async () => (await shell.boundingBox())?.height).toBe(height);
-    }
-
-    for (const height of [850, 500, 900]) {
-      await setVisibleHeight(height);
-      const header = await page.getByText("Navigation", { exact: true }).boundingBox();
-      const editor = await composer.boundingBox();
-      const status = await page.getByText("Ready", { exact: true }).boundingBox();
-      expect(header?.y).toBe(0);
-      expect(editor).not.toBeNull();
-      expect(status).not.toBeNull();
-      if (!editor || !status) throw new Error("Missing shell controls");
-      expect(editor.y + editor.height).toBeLessThanOrEqual(height);
-      expect(status.y + status.height).toBeLessThanOrEqual(height);
-      await expect(composer).toBeFocused();
-
-      const panel = page.locator("conversation-layout");
-      await panel.evaluate((element) => { element.scrollTop = 150; });
-      await expect.poll(() => panel.evaluate((element) => element.scrollTop)).toBe(150);
-      expect(await page.evaluate(() => window.scrollY)).toBe(0);
-    }
-  });
+async function geometry(page: Page) {
+  return page.evaluate(() => window.viewportFixture.geometry());
 }
+
+async function wheel(page: Page, delta: number): Promise<void> {
+  const before = await geometry(page);
+  const viewport = page.locator("chat-view .chat");
+  await viewport.hover();
+  // WebKit animates wheel input beyond its first scroll event and two RAFs.
+  // Arm before dispatch; Firefox's synthetic wheel path does not emit scrollend.
+  const animatedWheel = page.context().browser()?.browserType().name() === "webkit";
+  if (animatedWheel) {
+    await viewport.evaluate((element) => {
+      element.removeAttribute("data-wheel-ended");
+      element.addEventListener("scrollend", () => { element.setAttribute("data-wheel-ended", "true"); }, { once: true });
+    });
+  }
+  await page.mouse.wheel(0, delta);
+  await expect.poll(async () => (await geometry(page)).top).not.toBe(before.top);
+  if (animatedWheel) await expect(viewport).toHaveAttribute("data-wheel-ended", "true");
+  await page.evaluate(() => window.viewportFixture.settled());
+}
+
+function expectSameAnchor(before: Awaited<ReturnType<typeof geometry>>, after: Awaited<ReturnType<typeof geometry>>): void {
+  expect(after.anchorId).toBe(before.anchorId);
+  if (after.anchorOffset === undefined || before.anchorOffset === undefined) throw new Error("Missing reading anchor geometry");
+  expect(Math.abs(after.anchorOffset - before.anchorOffset)).toBeLessThanOrEqual(ROUNDING_TOLERANCE_PX);
+}
+
+test.beforeEach(async ({ page }) => {
+  await page.goto("/viewport.html");
+  await expect(page.locator("body")).toHaveAttribute("data-ready", "true");
+});
+
+test("consecutive prepends and simultaneous tail growth preserve the first reading anchor", async ({ page }) => {
+  await wheel(page, -900);
+  const before = await geometry(page);
+  expect(before.top).toBeGreaterThan(0);
+  expect(before.top).toBeLessThan(before.maxTop - 100);
+  await page.evaluate(() => window.viewportFixture.prependAndGrow());
+  const after = await geometry(page);
+  expect(after.maxTop).toBeGreaterThan(before.maxTop);
+  expect(after.top).toBeGreaterThan(before.top);
+  expectSameAnchor(before, after);
+});
+
+test("delayed saved anchors restore until actual wheel input retires them", async ({ page }) => {
+  // Both key formats are real persisted bookmarks, not controller-private state.
+  for (const machine of ["local", "remote-fixture"] as const) {
+    await page.evaluate((id) => window.viewportFixture.mount(id), machine);
+    expect((await geometry(page)).historyRequests).toBe(1);
+    await page.evaluate(() => window.viewportFixture.revealSaved());
+    expect(Math.abs(((await geometry(page)).savedOffset ?? NaN) + 17)).toBeLessThanOrEqual(ROUNDING_TOLERANCE_PX);
+
+    await page.evaluate((id) => window.viewportFixture.mount(id), machine);
+    expect((await geometry(page)).historyRequests).toBe(1);
+    await wheel(page, 400);
+    const reading = await geometry(page);
+    await page.evaluate(() => window.viewportFixture.revealSaved());
+    const after = await geometry(page);
+    expectSameAnchor(reading, after);
+    expect(Math.abs((after.savedOffset ?? NaN) + 17)).toBeGreaterThan(ROUNDING_TOLERANCE_PX);
+  }
+});
+
+test("opening a taller-than-viewport form aligns its start only while following", async ({ page }) => {
+  const following = await geometry(page);
+  expect(following.top).toBeCloseTo(following.maxTop, 0);
+  await page.evaluate(() => window.viewportFixture.openForm());
+  const aligned = await geometry(page);
+  expect(aligned.formHeight).toBeGreaterThan(aligned.height);
+  expect(Math.abs(aligned.formOffset ?? NaN)).toBeLessThanOrEqual(ROUNDING_TOLERANCE_PX);
+  expect(aligned.top).toBeLessThan(aligned.maxTop - 100);
+
+  await page.evaluate(() => window.viewportFixture.mount());
+  await wheel(page, -900);
+  const reading = await geometry(page);
+  await page.evaluate(() => window.viewportFixture.openForm());
+  expectSameAnchor(reading, await geometry(page));
+});

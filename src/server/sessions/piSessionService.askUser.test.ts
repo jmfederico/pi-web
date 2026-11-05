@@ -46,6 +46,13 @@ function askService(branch: unknown[] = [{ type: "message", message: {
   return { service, events, fake, branch, gateway };
 }
 
+function deferred() {
+  let resolve!: () => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
 function questionEvents(events: CapturingSessionEventHub) {
   return events.sessionEvents.filter(({ event }) => event.type.startsWith("ask."));
 }
@@ -54,9 +61,9 @@ describe("ask_user registration", () => {
   it("offers the stateless tool when enabled, including to restricted children", () => {
     for (const delegationEnabled of [true, false]) {
       expect(createPiWebCustomToolDefinitions("/workspace", delegationEnabled, undefined, undefined, true).map((tool) => tool.name))
-        .toEqual(["edit", "ask_user"]);
+        .toEqual(["edit", "request_human_intervention", "ask_user"]);
     }
-    expect(createPiWebCustomToolDefinitions("/workspace", true).map((tool) => tool.name)).toEqual(["edit"]);
+    expect(createPiWebCustomToolDefinitions("/workspace", true).map((tool) => tool.name)).toEqual(["edit", "request_human_intervention"]);
   });
 });
 
@@ -217,6 +224,119 @@ describe("PiSessionService durable question replies", () => {
   });
 });
 
+describe("question reply acknowledgment", () => {
+  it.each(["submit", "skip"] as const)("acknowledges %s before the triggered run finishes", async (action) => {
+    const { service, fake, events } = askService();
+    const run = deferred();
+    const send = vi.spyOn(fake.session, "sendCustomMessage").mockImplementation((message) => {
+      fake.session.isStreaming = true;
+      fake.emit({ type: "message_start", message: { role: "custom", ...message } });
+      return run.promise;
+    });
+    try {
+      const acknowledged = vi.fn();
+      const response = (action === "submit"
+        ? service.submitAsk(sessionRef(SESSION_ID), "ask-1", { answers: [] })
+        : service.cancelAsk(sessionRef(SESSION_ID), "ask-1")).then(acknowledged);
+      await vi.waitFor(() => { expect(acknowledged).toHaveBeenCalledWith(expect.objectContaining({ sessionId: SESSION_ID })); });
+      expect(send).toHaveBeenCalledOnce();
+      expect(fake.session.isStreaming).toBe(true);
+      // A failure after acknowledgment must remain visible, without rejecting
+      // the already accepted request or leaving an unhandled run rejection.
+      run.reject(new Error("Run failed after accepting answers"));
+      await vi.waitFor(() => { expect(events.sessionEvents).toContainEqual({
+        sessionId: SESSION_ID, event: { type: "session.error", message: "Run failed after accepting answers" },
+      }); });
+      await response;
+    } finally { run.resolve(); await service.dispose(); }
+  });
+
+  it("rejects a delivery failure before acceptance and removes its listener", async () => {
+    const { service, fake, events } = askService();
+    try {
+      await service.status(sessionRef(SESSION_ID));
+      const subscribe = fake.session.subscribe.bind(fake.session);
+      const unsubscribe = vi.fn();
+      vi.spyOn(fake.session, "subscribe").mockImplementation((listener) => {
+        const dispose = subscribe(listener);
+        return () => { unsubscribe(); dispose(); };
+      });
+      vi.spyOn(fake.session, "sendCustomMessage").mockRejectedValue(new Error("Delivery rejected"));
+      await expect(service.submitAsk(sessionRef(SESSION_ID), "ask-1", { answers: [] })).rejects.toThrow("Delivery rejected");
+      expect(events.sessionEvents.filter(({ event }) => event.type === "session.error")).toEqual([]);
+      expect(unsubscribe).toHaveBeenCalledOnce();
+    } finally { await service.dispose(); }
+  });
+
+  it("acknowledges queued delivery without waiting for a message event and removes its listener", async () => {
+    const { service, fake } = askService();
+    try {
+      await service.status(sessionRef(SESSION_ID));
+      fake.session.isStreaming = true;
+      const subscribe = fake.session.subscribe.bind(fake.session);
+      const unsubscribe = vi.fn();
+      vi.spyOn(fake.session, "subscribe").mockImplementation((listener) => {
+        const dispose = subscribe(listener);
+        return () => { unsubscribe(); dispose(); };
+      });
+      await expect(service.submitAsk(sessionRef(SESSION_ID), "ask-1", { answers: [] })).resolves.toMatchObject({ sessionId: SESSION_ID });
+      expect(fake.calls.sendCustomMessage).toHaveLength(1);
+      expect(unsubscribe).toHaveBeenCalledOnce();
+    } finally { await service.dispose(); }
+  });
+
+  it("releases the acknowledgment listener but protects the session tree until the run settles", async () => {
+    const { service, fake } = askService();
+    const run = deferred();
+    try {
+      await service.status(sessionRef(SESSION_ID));
+      const subscribe = fake.session.subscribe.bind(fake.session);
+      const unsubscribe = vi.fn();
+      vi.spyOn(fake.session, "subscribe").mockImplementation((listener) => {
+        const dispose = subscribe(listener);
+        return () => { unsubscribe(); dispose(); };
+      });
+      fake.session.navigateTree = () => Promise.resolve({ cancelled: false });
+      vi.spyOn(fake.session, "sendCustomMessage").mockImplementation((message) => {
+        fake.emit({ type: "message_start", message: { role: "custom", ...message } });
+        return run.promise;
+      });
+      const acknowledged = vi.fn();
+      const response = service.submitAsk(sessionRef(SESSION_ID), "ask-1", { answers: [] }).then(acknowledged);
+      await vi.waitFor(() => { expect(acknowledged).toHaveBeenCalledOnce(); });
+      await response;
+      expect(unsubscribe).toHaveBeenCalledOnce();
+      // Pi can stop reporting streaming before its delivery promise settles.
+      expect(fake.session.isStreaming).toBe(false);
+      const navigation = { targetId: "leaf-1", expectedLeafId: "leaf-1", summary: { mode: "none" as const } };
+      await expect(service.navigateTree(sessionRef(SESSION_ID), navigation)).rejects.toThrow("Stop current session activity");
+      run.resolve();
+      await expect(service.navigateTree(sessionRef(SESSION_ID), navigation)).resolves.toEqual({ cancelled: false });
+    } finally { run.resolve(); await service.dispose(); }
+  });
+
+  it("does not acknowledge another reply to the same ask, even with identical answer data", async () => {
+    const { service, fake } = askService();
+    const run = deferred();
+    const send = vi.spyOn(fake.session, "sendCustomMessage").mockReturnValue(run.promise);
+    try {
+      const acknowledged = vi.fn();
+      const response = service.submitAsk(sessionRef(SESSION_ID), "ask-1", { answers: [] }).then(acknowledged);
+      await vi.waitFor(() => { expect(send).toHaveBeenCalledOnce(); });
+      const message = send.mock.calls[0]?.[0];
+      if (message === undefined) throw new Error("Expected a reply message");
+      fake.emit({ type: "message_start", message: { role: "custom", ...message, details: structuredClone(message.details) } });
+      // Let acknowledgment continuations drain before checking that the
+      // unrelated event did not release this request.
+      await new Promise<void>((resolve) => { setImmediate(resolve); });
+      expect(acknowledged).not.toHaveBeenCalled();
+      fake.emit({ type: "message_start", message: { role: "custom", ...message } });
+      await vi.waitFor(() => { expect(acknowledged).toHaveBeenCalledOnce(); });
+      await response;
+    } finally { run.resolve(); await service.dispose(); }
+  });
+});
+
 // The durable-history invariant needs real JSONL and SDK tool/custom-message
 // persistence. Only resource discovery and model transport are isolated here.
 describe("durable questions across runtime/service restarts", () => {
@@ -228,6 +348,7 @@ describe("durable questions across runtime/service restarts", () => {
     await modelRuntime.setRuntimeApiKey("anthropic", "isolated-test-key");
     const nativeSessions: AgentSession[] = [];
     const modelContexts: unknown[] = [];
+    const finishFirstReply = deferred();
     const createAgentRuntime: NonNullable<PiSessionServiceDependencies["createAgentRuntime"]> = async (_factory, options) => {
       if (!(options.sessionManager instanceof SessionManager)) throw new Error("Expected a real SessionManager");
       const settingsManager = SettingsManager.inMemory({ retry: { enabled: false }, compaction: { enabled: false } });
@@ -255,8 +376,12 @@ describe("durable questions across runtime/service restarts", () => {
           stopReason: posting ? "toolUse" : "stop", timestamp: Date.now(),
         };
         const stream = createAssistantMessageEventStream();
-        stream.push({ type: "done", reason: message.stopReason === "toolUse" ? "toolUse" : "stop", message });
-        stream.end(message);
+        const finish = () => {
+          stream.push({ type: "done", reason: message.stopReason === "toolUse" ? "toolUse" : "stop", message });
+          stream.end(message);
+        };
+        if (modelContexts.length === 2) void finishFirstReply.promise.then(finish);
+        else finish();
         return stream;
       };
       const runtime: PiSessionRuntime = {
@@ -281,6 +406,8 @@ describe("durable questions across runtime/service restarts", () => {
       if (originalSession === undefined) throw new Error("Expected original SDK session");
       await originalSession.prompt("Ask me which database to use");
       expect(modelContexts).toHaveLength(1); // terminate skips the automatic follow-up.
+      expect(await first.service.status(sessionRef(started.id, directory))).toMatchObject({ interventionRequired: true });
+      expect((await first.service.list(directory)).find((entry) => entry.id === started.id)?.interventionRequired).toBe(true);
       const sessionFile = originalSession.sessionFile;
       if (sessionFile === undefined) throw new Error("Expected a durable session file");
       expect(SessionManager.open(sessionFile).getBranch().find((entry) => entry.type === "message" && entry.message.role === "toolResult"))
@@ -291,9 +418,22 @@ describe("durable questions across runtime/service restarts", () => {
 
       reopened = newService();
       const ref = sessionRef(started.id, directory);
-      await expect(reopened.service.submitAsk(ref, "persisted-ask", { answers: [{ id: "db", values: ["pg"] }] })).resolves.toMatchObject({ sessionId: started.id });
+      expect((await reopened.service.list(directory)).find((entry) => entry.id === started.id)?.interventionRequired).toBe(true);
+      const acknowledged = vi.fn();
+      const firstReply = reopened.service.submitAsk(ref, "persisted-ask", { answers: [{ id: "db", values: ["pg"] }] }).then(acknowledged);
+      await vi.waitFor(() => { expect(acknowledged).toHaveBeenCalledWith(expect.objectContaining({ sessionId: started.id })); });
+      await firstReply;
+      const reopenedSession = nativeSessions[1];
+      if (reopenedSession === undefined) throw new Error("Expected reopened SDK session");
+      expect(reopenedSession.isStreaming).toBe(true);
+      finishFirstReply.resolve();
+      await reopenedSession.waitForIdle();
       await reopened.service.submitAsk(ref, "persisted-ask", { answers: [{ id: "db", values: [], otherText: "DuckDB" }] });
+      await reopenedSession.waitForIdle();
       await reopened.service.cancelAsk(ref, "persisted-ask");
+      await reopenedSession.waitForIdle();
+      expect(await reopened.service.status(ref)).toMatchObject({ interventionRequired: false });
+      expect((await reopened.service.list(directory)).find((entry) => entry.id === started.id)?.interventionRequired).toBe(false);
       expect(nativeSessions).toHaveLength(2);
       expect(modelContexts).toHaveLength(4);
       expect(JSON.stringify(modelContexts[1])).toContain("The user submitted answers to your questions.");
@@ -311,6 +451,7 @@ describe("durable questions across runtime/service restarts", () => {
       const projectedOutcomes = transcript.messages.filter((message) => isRecord(message) && message["customType"] === ASK_USER_ANSWERS_CUSTOM_TYPE);
       expect(projectedOutcomes.at(-1)).toMatchObject({ customType: ASK_USER_ANSWERS_CUSTOM_TYPE, details: { reason: "cancelled" } });
     } finally {
+      finishFirstReply.resolve();
       await first.service.dispose();
       await reopened?.service.dispose();
       await rm(directory, { recursive: true, force: true });

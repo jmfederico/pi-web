@@ -11,7 +11,7 @@ import { createServerPluginWorkspacesCapabilityFactory } from "./serverPluginWor
 
 export function createServerPluginPiSessionEventsCapabilityFactory(options: {
   readonly projects: Pick<ProjectService, "requireProject">;
-  readonly workspaces: Pick<WorkspaceProviderRegistry, "resolve">;
+  readonly workspaces: Pick<WorkspaceProviderRegistry, "checkCurrent">;
   readonly sessions: {
     connectSessionEvents(ref: { id: string; cwd: string }, lifetime: AbortSignal): PiWebHostPiSessionConnection;
   };

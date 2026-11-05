@@ -2,6 +2,7 @@ import { css } from "lit";
 import { uiButtonStyles, uiMenuStyles, uiToolbarStyles, uiTabStyles } from "./controlStyles";
 import { chatNavigationStyles } from "./chatNavigationStyles";
 import { promptEditorIntegrationStyles } from "./promptEditorIntegrationStyles";
+import { activityIndicatorStyles } from "./activityIndicatorStyles";
 
 // The base theme owns default shell layout and presentation; components retain behaviour.
 
@@ -144,6 +145,7 @@ export const workspacePanelStyles = css`
 `;
 
 export const listStyles = css`
+  ${activityIndicatorStyles}
   ${uiButtonStyles}
   ${uiToolbarStyles}
   ${uiMenuStyles}
@@ -184,16 +186,8 @@ export const listStyles = css`
   .badge { display: inline-block; margin-left: 5px; border: 1px solid var(--pi-border); border-radius: 999px; color: var(--pi-muted); padding: 0 5px; font-size: 11px; font-weight: 400; }
   .action-activity { position: absolute; top: 50%; inset-inline-start: calc(6px + var(--depth, 0) * 16px + var(--agent-offset, 0px)); transform: translateY(-50%); z-index: 1; display: grid; place-items: center; width: 10px; height: 10px; }
   .action-activity .activity-indicator { margin: 0; vertical-align: 0; }
-  .activity-indicator { flex: 0 0 auto; display: inline-block; width: 7px; height: 7px; margin-right: 6px; background: var(--pi-success); animation: pulse 1s ease-in-out infinite; vertical-align: 1px; }
-  .activity-indicator.session { border-radius: 50%; background: var(--pi-success); }
-  .activity-indicator.terminal { border-radius: 2px; background: var(--pi-accent); }
-  /* Client-side sending (upload in flight); distinct from server activity, which propagates to workspace/machine rows. */
-  .activity-indicator.sending { border-radius: 50%; background: var(--pi-warning); }
-  /* Unread is a stable state, not ongoing work: keep it static and accent-colored. */
-  .activity-indicator.unread { border-radius: 50%; background: var(--pi-accent); animation: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--pi-accent) 20%, transparent); }
-  /* Unread + ongoing work: a static accent ring wraps the still-pulsing work dot. */
-  .unread-ring { flex: 0 0 auto; box-sizing: border-box; display: inline-grid; place-items: center; width: 9px; height: 9px; margin-right: 6px; border: 1.5px solid var(--pi-accent); border-radius: 50%; vertical-align: 1px; }
-  .unread-ring .activity-indicator { width: 5px; height: 5px; margin: 0; vertical-align: 0; }
+  .activity-indicator, .unread-ring { margin-right: 6px; vertical-align: 1px; }
+  .unread-ring .activity-indicator { margin: 0; vertical-align: 0; }
   .action-activity .unread-ring { margin: 0; vertical-align: 0; }
   .action-menu { position: relative; align-self: stretch; }
   .action-menu-toggle { height: 100%; }
@@ -210,7 +204,6 @@ export const listStyles = css`
   .workspace-label-link:hover, .workspace-label-link:focus { text-decoration: underline; }
   .workspace-detail-row .workspace-label { overflow: visible; white-space: normal; flex-wrap: wrap; }
   .workspace-detail-row .workspace-label-base, .workspace-detail-row .workspace-label-item, .workspace-detail-row .workspace-label-render { overflow: visible; text-overflow: clip; overflow-wrap: anywhere; white-space: normal; }
-  @keyframes pulse { 0%, 100% { transform: scale(.75); opacity: .55; } 50% { transform: scale(1.2); opacity: 1; } }
   }
 `;
 

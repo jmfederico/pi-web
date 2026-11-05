@@ -19,7 +19,7 @@ describe("plugin session lifecycle routes", () => {
     const pins = { pinnedSessionIds: vi.fn(() => Promise.resolve(["child"])), setPinned: vi.fn(() => Promise.resolve()) };
     registerPluginSessionLifecycleRoutes(app, {
       projects: { requireProject: () => Promise.resolve(project) },
-      workspaces: { resolve: () => Promise.resolve({ projectId: "p", status: "provider" as const, diagnostics: [], workspaces: [{ id: "w", projectId: "p", path: cwd, label: "Main", isMain: true }] }) },
+      workspaces: { checkCurrent: () => Promise.resolve({ projectId: "p", status: "provider" as const, diagnostics: [], workspaces: [{ id: "w", projectId: "p", path: cwd, label: "Main", isMain: true }] }) },
       sessions, pins,
     });
     try {

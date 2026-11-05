@@ -43,7 +43,7 @@ describe("eventual project unread cleanup", () => {
       unread: fixture.unread,
       attribution: new CachedWorkspaceAttribution({
         projects: fixture.projects,
-        workspaces: { list: async (owner) => [...(await fixture.workspaces.resolve(owner)).workspaces] },
+        workspaces: { lookup: fixture.workspaces.resolve },
         logger: fixture.logger,
       }),
       publisher: { publish: vi.fn() },

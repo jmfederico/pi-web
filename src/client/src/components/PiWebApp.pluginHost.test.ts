@@ -24,7 +24,7 @@ import type { MachineNavigationSnapshot } from "../controllers/machineNavigation
 import type { NavigationFreshness, NavigationScope } from "../controllers/types";
 import { SessionController, type SessionEventSocket } from "../controllers/sessionController";
 import { WorkspaceController } from "../controllers/workspaceController";
-import type { SessionUiEvent } from "../sessionSocket";
+import { SessionSocket, type SessionUiEvent } from "../sessionSocket";
 import { loadExternalPlugins, type PluginManifestEntry } from "../plugins/external";
 import { PluginRegistry } from "../plugins/registry";
 import { adaptPublicPlugin } from "../plugins/publicContext";
@@ -1528,6 +1528,39 @@ describe("PiWebApp plugin host", () => {
     if (scenario === "machine load failure") expect(appState(app).error).not.toContain("not found");
   });
 
+  it.each([
+    ["in a project", { status: 200, body: { sessionId: "s1", projectId: "project-1", workspaceId: "workspace-1" } }],
+    ["unknown", { status: 404, body: { error: "Session not found" } }],
+  ] as const)("expands a session-only link when the session is %s", async (scenario, location) => {
+    const browser = installBrowserWindow("http://localhost/app?session=s1&view=chat");
+    const app = createDetachedApp();
+    await markPluginLoadingReady(app);
+    const json = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.endsWith("api/machines")) return json({ machines: [{ id: "local", name: "Local", kind: "local", createdAt: "now", updatedAt: "now" }] });
+      if (url.endsWith("api/machines/local/sessions/s1/location")) return json(location.body, location.status);
+      if (url.endsWith("api/machines/local/projects")) return json([]);
+      return Promise.reject(new Error(`unexpected request ${url}`));
+    }));
+    const restored: unknown[] = [];
+    Reflect.set(app, "restoreRouteFor", (route: unknown) => { restored.push(route); return Promise.resolve(); });
+    Reflect.set(app, "withChatScrollTransition", async (action: () => Promise<void>) => { await action(); });
+    Reflect.set(app, "refreshWorkspaceDeletionRuns", () => Promise.resolve());
+
+    await callAsyncAppMethod(app, "loadProjectsAndRestoreRoute");
+
+    if (scenario === "unknown") {
+      expect(browser.replaced).toEqual([]);
+      expect(restored).toEqual([expect.objectContaining({ projectId: undefined, sessionId: "s1" })]);
+      expect(callAppMethod(app, "sessionEmptyMessage")).toBe("Session s1 was not found in any open project.");
+      return;
+    }
+    expect(browser.pushed).toEqual([]);
+    expect(Object.fromEntries(browser.url.searchParams)).toEqual({ project: "project-1", workspace: "workspace-1", session: "s1", view: "chat" });
+    expect(restored).toEqual([expect.objectContaining({ projectId: "project-1", workspaceId: "workspace-1", sessionId: "s1", view: "chat" })]);
+  });
+
   it("keeps an unavailable machine route explicit instead of resolving it locally", async () => {
     const browser = installBrowserWindow("http://localhost/app?machine=removed-machine&project=project-1&workspace=workspace-1&view=chat");
     const app = createDetachedApp();
@@ -1687,6 +1720,115 @@ describe("PiWebApp plugin host", () => {
     sessions.flushPendingUpdates();
     expect(appState(app).status?.cost).toBe(1);
     sessions.dispose();
+  });
+
+  it.each(["project", "workspace", "current URL"] as const)("keeps the deferred chat join alive when %s navigation publishes its resolved selection", async (destination) => {
+    const browser = installBrowserWindow(`http://localhost/app?project=${destination === "current URL" ? project.id : "previous"}&tool=test%3Aworkspace.panel&view=chat`);
+    const app = createDetachedApp();
+    const session = runtimeRecoverySession(workspace);
+    const sessions = await installRuntimeRecoveryBoundaries(app, () => Promise.resolve([workspace]), session);
+    const panelRefresh = deferred<undefined>();
+    const refreshPanel = vi.fn(() => panelRefresh.promise);
+    await appPluginRegistry(app).register({ id: "test", plugin: pluginWithPanel("Delayed panel", refreshPanel) });
+    setAppState(app, { ...initialAppState(), projects: [project], mainView: "chat", workspaceTool: "test:workspace.panel" });
+
+    // Keep the production SessionSocket lifecycle; only the browser transport is fake.
+    class Transport {
+      static readonly CONNECTING = 0;
+      static readonly instances: Transport[] = [];
+      readyState = 0;
+      onopen: (() => void) | null = null;
+      onmessage: ((event: { data: string }) => void) | null = null;
+      onerror: (() => void) | null = null;
+      onclose: (() => void) | null = null;
+      close = vi.fn(() => { this.readyState = 3; });
+      constructor() { Transport.instances.push(this); }
+    }
+    vi.stubGlobal("WebSocket", Transport);
+    Reflect.set(sessions, "socket", new SessionSocket());
+    const pendingSnapshot = deferred<Awaited<ReturnType<typeof defaultApi.transcriptSnapshot>>>();
+    const snapshot: Awaited<ReturnType<typeof defaultApi.transcriptSnapshot>> = {
+      page: { messages: [{ role: "assistant", content: [{ type: "text", text: "Final reply" }] }], start: 0, total: 1 },
+      status: { sessionId: session.id, isStreaming: false, isCompacting: false, isBashRunning: false,
+        pendingMessageCount: 0, queuedMessages: [], tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }, cost: 0 },
+      seq: 1, partial: null,
+    };
+    const transcriptSnapshot = vi.fn<typeof defaultApi.transcriptSnapshot>()
+      .mockReturnValueOnce(pendingSnapshot.promise).mockResolvedValue(snapshot);
+    const thinkingLevels = vi.fn().mockResolvedValue({ levels: [] });
+    Reflect.set(sessions, "api", { transcriptSnapshot, thinkingLevels });
+
+    const navigating = destination === "current URL"
+      ? callAsyncAppMethod(app, "restoreRoute", true)
+      : destination === "project"
+        ? callAsyncAppMethod(app, "navigateToProjectFromController", project)
+        : callAsyncAppMethod(app, "navigateToWorkspaceFromController", workspace);
+    await vi.waitFor(() => { expect(refreshPanel).toHaveBeenCalled(); });
+    expect(sessions.isChatLoadDeferred).toBe(true);
+    expect(browser.url.searchParams.get("session")).toBeNull();
+    // Drive the shell's deferred reveal while panel I/O still delays URL completion.
+    const joining = sessions.loadSelectedSession();
+    await vi.waitFor(() => { expect(transcriptSnapshot).toHaveBeenCalledOnce(); });
+    panelRefresh.resolve(undefined);
+    await navigating;
+    expect(browser.url.searchParams.get("workspace")).toBe(workspace.id);
+    expect(browser.url.searchParams.get("session")).toBe(session.id);
+    pendingSnapshot.resolve(snapshot);
+    await joining;
+
+    expect(appState(app).messages).toMatchObject([{ parts: [{ type: "text", text: "Final reply" }] }]);
+    expect(thinkingLevels).toHaveBeenCalledOnce();
+    expect(Transport.instances).toHaveLength(1);
+    const transport = Transport.instances[0];
+    if (transport === undefined) throw new Error("Session transport unavailable");
+    transport.readyState = 1;
+    transport.onopen?.();
+    await vi.waitFor(() => { expect(appState(app).conversationSync).toBe("checked"); });
+    expect(transcriptSnapshot).toHaveBeenCalledTimes(2);
+    expect(transport.close).not.toHaveBeenCalled();
+    transport.onmessage?.({ data: JSON.stringify({ type: "status.update", seq: 2, status: { ...snapshot.status, cost: 42 } }) });
+    await vi.waitFor(() => {
+      sessions.flushPendingUpdates();
+      expect(appState(app).status?.cost).toBe(42);
+    });
+  });
+
+  it("recovers an abandoned selection only after its navigation settles and still targets that selection", async () => {
+    const session = runtimeRecoverySession(workspace);
+    const selectedUrl = `http://localhost/app?project=${project.id}&workspace=${workspace.id}&session=${session.id}&tool=test%3Aworkspace.panel&view=chat`;
+    const browser = installBrowserWindow(selectedUrl);
+    const app = createDetachedApp();
+    const sessions = await installRuntimeRecoveryBoundaries(app, () => Promise.resolve([workspace]), session);
+    const panelRefresh = deferred<undefined>();
+    const refreshPanel = vi.fn(() => panelRefresh.promise);
+    await appPluginRegistry(app).register({ id: "test", plugin: pluginWithPanel("Delayed panel", refreshPanel) });
+    setAppState(app, { ...initialAppState(), projects: [project], selectedProject: project, selectedWorkspace: workspace,
+      selectedSession: session, sessions: [session], mainView: "chat", workspaceTool: "test:workspace.panel" });
+    const connect = vi.fn<SessionEventSocket["connect"]>();
+    const socket: SessionEventSocket = { connect, close: () => undefined, reconnect: () => undefined, setHandler: () => undefined };
+    Reflect.set(sessions, "socket", socket);
+
+    const restoring = callAsyncAppMethod(app, "restoreRoute", false);
+    await vi.waitFor(() => { expect(refreshPanel).toHaveBeenCalled(); });
+    await sessions.resumeSelectedSession();
+    expect(connect).not.toHaveBeenCalled();
+    panelRefresh.resolve(undefined);
+    await restoring;
+
+    // The browser may have published its next destination before restoration starts.
+    for (const [field, value] of [["machine", "remote"], ["project", "other-project"], ["workspace", "other-workspace"], ["session", "other-session"]] as const) {
+      const next = new URL(selectedUrl);
+      next.searchParams.set(field, value);
+      browser.navigate(next.href);
+      await sessions.resumeSelectedSession();
+      expect(connect).not.toHaveBeenCalled();
+    }
+
+    // Plugin destinations may leave the resolved IDs implicit even after settling.
+    browser.navigate(`http://localhost/app?project=${project.id}&view=chat`);
+    await sessions.resumeSelectedSession();
+    expect(connect).toHaveBeenCalledOnce();
+    expect(connect.mock.calls[0]?.[0]).toEqual(session);
   });
 
   it.each([
@@ -1984,6 +2126,21 @@ describe("PiWebApp plugin host", () => {
     expect(selectionOperation.isCurrent()).toBe(true);
 
     browser.navigate("http://localhost/app?project=project-2&workspace=workspace-2&tool=core%3Aworkspace.terminal&view=workspace");
+    expect(selectionOperation.isCurrent()).toBe(false);
+  });
+
+  it("does not revive retired selection work when navigation away and back finishes resolving IDs", () => {
+    const browser = installBrowserWindow("http://localhost/app?project=project-1&view=chat");
+    const app = createDetachedApp();
+    const selectionOperation = beginNavigationOperation(app, ["machine", "project", "workspace", "session"]);
+    browser.navigate("http://localhost/app?project=project-2&view=chat");
+    expect(selectionOperation.isCurrent()).toBe(false);
+    browser.navigate("http://localhost/app?project=project-1&view=chat");
+    setAppState(app, { ...initialAppState(), selectedProject: project, selectedWorkspace: workspace, selectedSession: runtimeRecoverySession(workspace) });
+
+    callAppMethod(app, "replaceNavigationUrl");
+
+    expect(browser.url.searchParams.get("session")).toBe("session-next");
     expect(selectionOperation.isCurrent()).toBe(false);
   });
 

@@ -28,7 +28,7 @@ function registry(
     moduleRevision: "r1", apiVersion: 5, backend: { resource },
   };
   const value = new PluginBackendRegistry({
-    contributions: [contribution], workspaces: { resolve: vi.fn(() => { throw new Error("Unexpected workspace resolution"); }) },
+    contributions: [contribution], workspaces: { lookup: vi.fn(() => { throw new Error("Unexpected workspace resolution"); }) },
     ...options,
   });
   registries.push(value);

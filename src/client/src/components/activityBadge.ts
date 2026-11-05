@@ -1,22 +1,31 @@
 import { html, type TemplateResult } from "lit";
 import { CORE_STATUS_FLAGS, type StatusFlags } from "../../../shared/machineStatus";
+import { localization } from "../localization/browser";
+import definitions from "./activityBadge.messages";
+
+const messages = localization.registerMessages("core.activityBadge", definitions);
+
+export function interventionRequiredLabel(): string {
+  return messages.t("needsInput");
+}
 
 /**
- * Work signals a row can show. At most one kind renders at a time; call sites
- * resolve precedence (sending > session > terminal) before rendering.
+ * Activity or intervention signals a row can show. At most one kind renders
+ * at a time; intervention takes priority over ordinary work.
  */
-export type ActivityIndicatorKind = "session" | "terminal" | "sending";
+export type ActivityIndicatorKind = "session" | "terminal" | "sending" | "intervention-required";
 
 /**
  * Render the single indicator mark for a row.
  *
- * Unread is an attention flag, not a work signal, so it never competes with
- * the activity kinds for the slot: pass `unreadLabel` and it renders as a
- * static accent ring around the work dot (which keeps its own color, shape,
- * and pulse), or as a filled static accent dot when the row is idle. The label
+ * Unread is independent of activity and intervention: pass `unreadLabel` and
+ * it renders as a static accent ring around the activity mark (which keeps its
+ * own color, shape, and animation), or as a filled static accent dot when the
+ * row is idle. Intervention is a static hollow ring, not an unread mark. The label
  * is the flag — pass undefined when the row has nothing unread.
  */
 export function renderActivityIndicator(kind: ActivityIndicatorKind | undefined, label = "Active", unreadLabel?: string): TemplateResult | undefined {
+  if (kind === "intervention-required") label = interventionRequiredLabel();
   if (kind === undefined) {
     if (unreadLabel === undefined) return undefined;
     return html`<span class="activity-indicator unread" role="img" aria-label=${unreadLabel} title=${unreadLabel}></span>`;
@@ -38,6 +47,7 @@ export function renderActivityIndicator(kind: ActivityIndicatorKind | undefined,
  */
 export function statusActivityKind(flags: StatusFlags | undefined): ActivityIndicatorKind | undefined {
   if (flags === undefined) return undefined;
+  if (flags[CORE_STATUS_FLAGS.interventionRequired] === true) return "intervention-required";
   if (flags[CORE_STATUS_FLAGS.working] === true) return "session";
   if (flags[CORE_STATUS_FLAGS.terminal] === true) return "terminal";
   const hasOtherFlag = Object.entries(flags).some(([flagId, isSet]) => isSet && flagId !== CORE_STATUS_FLAGS.unread);

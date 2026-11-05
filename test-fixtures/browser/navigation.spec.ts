@@ -1,9 +1,9 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 const lists = [
-  { host: "project-list", context: "projects", second: "p2" },
-  { host: "workspace-list", context: "workspaces", second: "w2" },
-  { host: "session-list", context: "sessions", second: "s2" },
+  { host: "project-list", context: "projects", first: "p1", second: "p2" },
+  { host: "workspace-list", context: "workspaces", first: "w1", second: "w2" },
+  { host: "session-list", context: "sessions", first: "s1", second: "s2" },
 ] as const;
 
 test.beforeEach(async ({ page }) => {
@@ -54,7 +54,12 @@ test("shared row hooks preserve full-width geometry, long names, and keyboard na
 test("less-specific themes override navigation presentation across component roots", async ({ page }) => {
   const labels = lists.map(({ host }) => page.locator(host).locator(".ui-nav-row-label").first());
   const positions = await Promise.all(labels.map((label) => label.evaluate((element) => element.getBoundingClientRect().left)));
-  await page.evaluate(() => { window.navigationFixture.applyTheme(); });
+  await page.route("**/navigation-theme.css", (route) => route.fulfill({
+    contentType: "text/css",
+    body: `.ui-nav-row-label { color: rgb(200, 210, 220); white-space: normal; }
+      .ui-nav-row-main { padding-inline-start: 24px; }`,
+  }));
+  await page.evaluate(() => window.navigationFixture.applyTheme(new URL("navigation-theme.css", location.href).href));
   for (const [index, { host }] of lists.entries()) {
     const component = page.locator(host);
     const row = component.locator(".ui-nav-row").first();
@@ -65,4 +70,97 @@ test("less-specific themes override navigation presentation across component roo
   const screenshot = test.info().outputPath("navigation-themed.png");
   await page.screenshot({ path: screenshot });
   await test.info().attach("navigation-themed", { path: screenshot, contentType: "image/png" });
+});
+
+// Each locator crosses the real consumer's registered shadow root. The disclosure
+// also exercises the rolled-up attention of an unmounted, collapsed agent child.
+function interventionCues(page: Page) {
+  return [
+    page.locator("machine-switcher .machine-switcher-button"),
+    ...lists.map(({ host }) => page.locator(host).locator(".ui-nav-row").first()),
+    page.locator("session-list .ui-nav-row-disclosure"),
+  ];
+}
+
+test("intervention is static, independent of unread, and does not intercept navigation actions", async ({ page }) => {
+  for (const unread of [false, true, false]) {
+    await page.evaluate((value) => window.navigationFixture.intervention(value), unread);
+    for (const cue of interventionCues(page)) {
+      const mark = cue.locator(".activity-indicator.intervention-required");
+      await expect(mark).toHaveCount(1);
+      await expect(mark).toHaveCSS("animation-name", "none");
+      await expect(cue.getByRole("img", { name: /Needs input/ })).toHaveCount(1);
+      await expect(cue.locator(".unread-ring")).toHaveCount(unread ? 1 : 0);
+      // Intervention wins over simultaneous working; it is not another work dot.
+      await expect(cue.locator(".activity-indicator.session")).toHaveCount(0);
+    }
+    for (const { host } of lists) {
+      const row = page.locator(host).locator(".ui-nav-row").first();
+      await expect(row).toHaveAttribute("data-activity", "intervention-required");
+      await expect(row).toHaveAttribute("data-unread", String(unread));
+    }
+  }
+  const sessionRow = page.locator('session-list [data-session-id="s1"]');
+  await expect(sessionRow).toHaveAttribute("data-busy", "true");
+  await expect(page.locator('session-list [data-session-id="agent"]')).toHaveCount(0);
+  const disclosure = page.locator("session-list .ui-nav-row-disclosure");
+  await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  // Click the painted cue, not a forced click or a synthetic DOM event.
+  for (const { host, context, first } of lists) {
+    const row = page.locator(host).locator(".ui-nav-row").first();
+    await row.locator(".intervention-required").click();
+    await expect(page.locator("#last-selected")).toHaveText(`${context}:${first}`);
+    const action = row.locator(".ui-nav-row-action");
+    await action.click();
+    await expect(action).toHaveAttribute("aria-expanded", "true");
+    await page.keyboard.press("Escape");
+  }
+  await disclosure.locator(".intervention-required").click();
+  await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator('session-list [data-session-id="agent"]')).toHaveAttribute("data-activity", "intervention-required");
+  await page.locator("machine-switcher .intervention-required").first().click();
+  await expect(page.locator("machine-switcher .machine-switcher-button")).toHaveAttribute("aria-expanded", "true");
+});
+
+test("contributed unlayered themes replace or hide intervention cues and clearing restores base", async ({ page }) => {
+  await page.evaluate(() => window.navigationFixture.intervention(true));
+  const cues = interventionCues(page);
+  const marks = cues.map((cue) => cue.locator(".activity-indicator.intervention-required"));
+  const appearance = (mark: Locator) => mark.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { border: style.border, background: style.backgroundColor, radius: style.borderRadius, opacity: style.opacity };
+  });
+  const base = await Promise.all(marks.map(appearance));
+  // One class is deliberately less specific than the base's compound selectors.
+  await page.route("**/intervention-theme.css", (route) => route.fulfill({
+    contentType: "text/css",
+    body: `.activity-indicator { border: 2px dashed rgb(240, 80, 120); background: rgb(20, 180, 210); border-radius: 0; }`,
+  }));
+  await page.evaluate(() => window.navigationFixture.applyTheme(new URL("intervention-theme.css", location.href).href));
+  for (const mark of marks) {
+    await expect(mark).toHaveCSS("border-top-color", "rgb(240, 80, 120)");
+    await expect(mark).toHaveCSS("border-top-style", "dashed");
+    await expect(mark).toHaveCSS("background-color", "rgb(20, 180, 210)");
+    await expect(mark).toHaveCSS("border-radius", "0px");
+  }
+  await page.route("**/hidden-intervention-theme.css", (route) => route.fulfill({
+    contentType: "text/css", body: `.activity-indicator { opacity: 0; }`,
+  }));
+  await page.evaluate(() => window.navigationFixture.applyTheme(new URL("hidden-intervention-theme.css", location.href).href));
+  for (const [index, cue] of cues.entries()) {
+    const mark = marks[index];
+    if (!mark) throw new Error("Missing intervention cue");
+    await expect(mark).toHaveCSS("opacity", "0");
+    // Hiding the paint must not remove the accessible status or unread signal.
+    await expect(cue.getByRole("img", { name: /Needs input/ })).toHaveCount(1);
+    await expect(cue.locator(".unread-ring")).toHaveCount(1);
+  }
+  for (const { host } of lists) {
+    const row = page.locator(host).locator(".ui-nav-row").first();
+    await expect(row).toHaveAttribute("data-activity", "intervention-required");
+    await expect(row).toHaveAttribute("data-unread", "true");
+  }
+  await page.evaluate(() => { window.navigationFixture.clearTheme(); });
+  expect(await Promise.all(marks.map(appearance))).toEqual(base);
+  for (const mark of marks) await expect(mark).toHaveCSS("animation-name", "none");
 });

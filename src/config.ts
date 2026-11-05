@@ -7,7 +7,7 @@ import { isPiWebPluginId, piWebPluginIdPattern } from "./shared/pluginIds.js";
 import { requireDefaultThemePreference } from "./shared/themePreference.js";
 import { requireDefaultLocalization } from "./shared/defaultLocalization.js";
 import { requireDefaultStreamingBehavior } from "./shared/streamingBehavior.js";
-import { isKnownThinkingLevel } from "./shared/thinkingLevels.js";
+import { migrateSessionNamingConfig } from "./configSessionNamingMigration.js";
 import { requireInstallationName } from "./shared/installationName.js";
 
 import { PI_WEB_CONFIG_DEFINITIONS, overlayPiWebConfig, parsePiWebEnvBoolean, piWebConfigEnvName, piWebConfigNamespaceFields, piWebConfigSettingPointers } from "./shared/configResolution.js";
@@ -186,9 +186,29 @@ export function loadPiWebConfig(options: LoadOptions = {}): LoadedPiWebConfig {
   const defaultsSelector = envValue(env, "PI_WEB_DEFAULTS_CONFIG");
   const defaultsPath = defaultsSelector === undefined ? undefined : resolve(options.cwd ?? process.cwd(), defaultsSelector);
   // A selected defaults file is deployment policy: a missing or corrupt file fails visibly.
-  const defaultsConfig = defaultsPath === undefined ? undefined : readConfig(defaultsPath);
+  const defaultsRecord = defaultsPath === undefined ? undefined : readConfigObject(defaultsPath);
+  const defaultsConfig = defaultsRecord === undefined ? undefined : parseFileConfig(defaultsRecord, defaultsPath ?? path);
   const exists = existsSync(path);
-  const config = exists ? readConfig(path) : {};
+  const record = exists ? readConfigObject(path) : {};
+  const config = parseFileConfig(record, path);
+  if (Object.hasOwn(record, "sessionNaming") || (defaultsRecord !== undefined && Object.hasOwn(defaultsRecord, "sessionNaming"))) {
+    migrateSessionNamingConfig({
+      agentDir: effectiveAgentConfig(env, overlayPiWebConfig(defaultsConfig ?? {}, config)).dir,
+      saved: { path, record },
+      ...(defaultsPath !== undefined && defaultsRecord !== undefined ? { defaults: { path: defaultsPath, record: defaultsRecord } } : {}),
+      cleanup: () => {
+        if (defaultsPath !== undefined && realpathSync(path) === realpathSync(defaultsPath)) {
+          throw new Error(`Writable config selects deployment defaults; remove obsolete sessionNaming manually: ${path}`);
+        }
+        const current = readConfigObject(path);
+        if (JSON.stringify(current["sessionNaming"]) !== JSON.stringify(record["sessionNaming"])) {
+          throw new Error(`sessionNaming changed during migration: ${path}`);
+        }
+        Reflect.deleteProperty(current, "sessionNaming");
+        writeWritableConfig(path, current);
+      },
+    });
+  }
   return {
     path, exists, config,
     ...(defaultsPath !== undefined && defaultsConfig !== undefined ? { defaultsPath, defaultsConfig } : {}),
@@ -233,6 +253,7 @@ export function resolveEffectivePiWebConfig(loaded: LoadedPiWebConfig, options: 
 }
 
 export function savePiWebConfig(config: PiWebConfig, options: LoadOptions = {}): LoadedPiWebConfig {
+  rejectRetiredSessionNaming(config, "save request");
   const env = options.env ?? process.env;
   const path = piWebConfigPath(env, options.cwd ?? process.cwd());
   const defaultsSelector = envValue(env, "PI_WEB_DEFAULTS_CONFIG");
@@ -241,7 +262,7 @@ export function savePiWebConfig(config: PiWebConfig, options: LoadOptions = {}):
     const canonicalPath = (candidate: string): string => existsSync(candidate) ? realpathSync(candidate) : resolve(candidate);
     if (canonicalPath(path) === canonicalPath(defaultsPath)) throw new Error("PI_WEB_CONFIG must not select the PI_WEB_DEFAULTS_CONFIG file");
     // Validate deployment policy before touching the writable file.
-    readConfig(defaultsPath);
+    parseFileConfig(readConfigObject(defaultsPath), defaultsPath);
   }
   const normalized = parsePiWebConfig(piWebConfigRecord(config), path);
   effectiveAgentConfig(env, normalized);
@@ -268,10 +289,20 @@ function writeWritableConfig(path: string, config: Record<string, unknown>): voi
   }
 }
 
-function readConfig(path: string): PiWebConfig {
+function readConfigObject(path: string): Record<string, unknown> {
   const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
   if (!isRecord(parsed)) throw new Error(`PI WEB config must be a JSON object: ${path}`);
-  return parsePiWebConfig(parsed, path);
+  return parsed;
+}
+
+function parseFileConfig(record: Record<string, unknown>, path: string): PiWebConfig {
+  const sanitized = { ...record };
+  Reflect.deleteProperty(sanitized, "sessionNaming");
+  return parsePiWebConfig(sanitized, path);
+}
+
+function rejectRetiredSessionNaming(value: object, path: string): void {
+  if (Object.hasOwn(value, "sessionNaming")) throw new Error(`PI WEB config sessionNaming is retired; use the Session naming Pi package config: ${path}`);
 }
 
 function parseEnvJson(value: string, source: string): unknown {
@@ -357,6 +388,7 @@ function requireNamespaceKeys(value: Record<string, unknown>, key: string, path:
 }
 
 export function parsePiWebConfig(value: Record<string, unknown>, path = "request", pathHost: AgentPathHost = "current"): PiWebConfig {
+  rejectRetiredSessionNaming(value, path);
   return {
     ...(value["installationName"] !== undefined ? { installationName: requireInstallationName(value["installationName"], `PI WEB config installationName: ${path}`) } : {}),
     ...(value["host"] !== undefined ? { host: parseString(value["host"], "host", path) } : {}),
@@ -373,7 +405,6 @@ export function parsePiWebConfig(value: Record<string, unknown>, path = "request
     ...(value["uploads"] !== undefined ? { uploads: parseUploadsConfig(value["uploads"], path) } : {}),
     ...(value["attachments"] !== undefined ? { attachments: parseAttachmentsConfig(value["attachments"], path) } : {}),
     ...(value["maxUploadBytes"] !== undefined ? { maxUploadBytes: parseMaxUploadBytes(value["maxUploadBytes"], "maxUploadBytes", path) } : {}),
-    ...(value["sessionNaming"] !== undefined ? { sessionNaming: parseSessionNamingConfig(value["sessionNaming"], path) } : {}),
     ...(value["sessionArchive"] !== undefined ? { sessionArchive: parseSessionArchiveConfig(value["sessionArchive"], path) } : {}),
     ...(value["spawnSessions"] !== undefined ? { spawnSessions: parseSpawnSessions(value["spawnSessions"], path) } : {}),
     ...(value["sessionMessages"] !== undefined ? { sessionMessages: parseBooleanKey(value["sessionMessages"], "sessionMessages", path) } : {}),
@@ -394,33 +425,6 @@ export function parseSessionArchiveConfig(value: unknown, path: string): NonNull
     throw new Error(`PI WEB config sessionArchive.directory must be a non-empty path: ${path}`);
   }
   return { directory };
-}
-
-export function parseSessionNamingConfig(value: unknown, path: string): NonNullable<PiWebConfigValues["sessionNaming"]> {
-  if (!isRecord(value)) throw new Error(`PI WEB config sessionNaming must be an object: ${path}`);
-  requireNamespaceKeys(value, "sessionNaming", path);
-  const model = value["model"];
-  const maxTokens = value["maxTokens"];
-  const thinkingLevel = value["thinkingLevel"];
-  const timeoutMs = value["timeoutMs"];
-  if (model !== undefined && (typeof model !== "string" || !/^[^/\s]+\/\S+$/.test(model))) {
-    throw new Error(`PI WEB config sessionNaming.model must be an exact provider/model-id with non-empty parts: ${path}`);
-  }
-  if (maxTokens !== undefined && (typeof maxTokens !== "number" || !Number.isSafeInteger(maxTokens) || maxTokens <= 0)) {
-    throw new Error(`PI WEB config sessionNaming.maxTokens must be a positive safe integer: ${path}`);
-  }
-  if (thinkingLevel !== undefined && (typeof thinkingLevel !== "string" || !isKnownThinkingLevel(thinkingLevel))) {
-    throw new Error(`PI WEB config sessionNaming.thinkingLevel must be a known thinking level: ${path}`);
-  }
-  if (timeoutMs !== undefined && (typeof timeoutMs !== "number" || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_TIMER_TIMEOUT_MS)) {
-    throw new Error(`PI WEB config sessionNaming.timeoutMs must be an integer from 1 to 2147483647: ${path}`);
-  }
-  return {
-    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-    ...(model !== undefined ? { model } : {}),
-    ...(maxTokens !== undefined ? { maxTokens } : {}),
-    ...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
-  };
 }
 
 function parseMaxUploadBytes(value: unknown, key: string, path = "environment"): number {

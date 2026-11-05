@@ -164,8 +164,8 @@ Boolean presentation attributes use the strings `"true"` and `"false"`, except o
 | State | Scope and meaning |
 | --- | --- |
 | `data-current` | All rows: currently navigated project, workspace, or session. The current row also has `aria-current="true"`; other rows omit it |
-| `data-activity` | All rows: `idle`, `session`, `terminal`, or `sending`, matching the existing activity indicator's resolved kind |
-| `data-busy` | All rows: session/sending activity, or workspace deletion in progress. Terminal presence and unread alone do not mean busy |
+| `data-activity` | All rows: `idle`, `session`, `terminal`, `sending`, or `intervention-required`, matching the activity indicator's resolved kind. Intervention takes visual priority over work |
+| `data-busy` | All rows: session/sending activity, or workspace deletion in progress, independently of the displayed indicator. Terminal presence, intervention, and unread alone do not mean busy |
 | `data-unread` | All rows: the existing unread indication; project/workspace values come from their rolled-up snapshots, session values concern that session |
 | `data-selected` | Session rows: checked for a bulk action, distinct from navigation's `data-current` |
 | `data-selecting` | Session rows: a bulk-selection checkbox is currently shown for this row |
@@ -174,7 +174,7 @@ Boolean presentation attributes use the strings `"true"` and `"false"`, except o
 
 Projects and workspaces do not acquire synthetic bulk-selection states. Archived sessions and deleting workspaces are not disabled navigation rows. Busy means work is underway, not that navigation is blocked. Existing native `:disabled` controls and `:checked` checkboxes remain the interaction authority; focus and hover use native pseudo-classes and never determine current/selected state.
 
-A session disclosure may show its own aggregate child-attention mark. That does not change the parent row's own activity/unread attributes. Pending-session status placeholders are not navigable rows and do not expose `.ui-nav-row`.
+A session that needs input also carries the `.intervention-required` state hook. Its indicator is a static hollow ring; unread remains an independent mark. A session disclosure may show its own aggregate child-attention mark. That does not change the parent row's own activity/unread attributes. Pending-session status placeholders are not navigable rows and do not expose `.ui-nav-row`.
 
 Base defaults for these surfaces, including session-specific row styles, use `pi-web-base`. For example, an ordinary contributed sheet can compose context and anatomy without matching implementation selectors:
 

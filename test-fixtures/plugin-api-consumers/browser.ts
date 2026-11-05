@@ -15,6 +15,7 @@ import type {
   SessionLabelContext,
   ContentRenderingCapability,
   ContentRendererInput,
+  TranscriptRendererContribution,
   JsonValue,
   PluginCapability,
   StylesheetIntegrationCapabilityV1,
@@ -39,6 +40,44 @@ import type {
   MaintenanceTerminal,
   TerminalCommandRun,
 } from "@jmfederico/pi-web/plugin-api";
+
+export const transcriptToolRenderer: TranscriptRendererContribution = {
+  id: "tool", target: "tool",
+  resolve(toolName, next) {
+    const name: string = toolName;
+    if (name !== "read") return next();
+    const downstream = next();
+    return {
+      render(input) {
+        const status: "pending" | "running" | "success" | "error" = input.entry.status;
+        const sessionId: string = input.scope.sessionId;
+        void [status, sessionId, input.entry.args, input.entry.details, input.signal, input.fail];
+        // @ts-expect-error Tool targets infer tool input, not custom-message input.
+        input.entry.customType;
+        // @ts-expect-error Transcript rendering conveys no provenance.
+        input.source;
+        return downstream?.render(input);
+      },
+    };
+  },
+};
+
+export const transcriptMessageRenderer: TranscriptRendererContribution = {
+  id: "message", target: "custom-message", customType: "notice",
+  render(input) {
+    const customType: string = input.entry.customType;
+    void [customType, input.entry.content];
+    // @ts-expect-error Custom-message targets infer message input, not tool input.
+    input.entry.toolName;
+    return undefined;
+  },
+};
+
+export function checkTranscriptContributions(v4: PluginContributions, v5: PluginContributionsV5): void {
+  v5.transcriptRenderers = [transcriptToolRenderer, transcriptMessageRenderer];
+  // @ts-expect-error Transcript contributions are v5-only.
+  v4.transcriptRenderers = [];
+}
 
 export function previewSessionAgePolicy(sessions: readonly PluginSessionSnapshot[], cutoff: number) {
   return sessions.filter((session) => {

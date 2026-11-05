@@ -30,14 +30,14 @@ describe("explicit Settings updates", () => {
 
   it("diffs static namespaces per leaf while keeping coherent objects atomic", () => {
     const snapshot = response();
-    snapshot.config = { sessionNaming: { model: "saved", maxTokens: 48, timeoutMs: 1000 }, uploads: { defaultFolder: "old" }, pathAccess: { allowedPaths: ["/old"] } };
-    snapshot.enforcedSettings = { "/sessionNaming/model": "PI_WEB_SESSION_NAMING" };
-    expect(explicitConfigUpdate(snapshot, { sessionNaming: { model: "env", maxTokens: 64 }, uploads: {}, pathAccess: { allowedPaths: [] }, defaultTheme: { themeId: "new", auto: false } })).toEqual({ set: { sessionNaming: { maxTokens: 64 }, pathAccess: { allowedPaths: [] }, defaultTheme: { themeId: "new", auto: false } } });
-    expect(resetConfigUpdate(snapshot, ["/sessionNaming", "/sessionNaming/maxTokens", "/uploads"])).toEqual({ unset: ["/sessionNaming/maxTokens", "/sessionNaming/timeoutMs", "/uploads/defaultFolder"] });
-    snapshot.enforcedSettings = { "/sessionNaming": "LEGACY_ENV" };
-    expect(enforcedSetting(snapshot, "/sessionNaming/maxTokens")).toBe("LEGACY_ENV");
-    expect(explicitConfigUpdate(snapshot, { sessionNaming: { maxTokens: 64 } })).toEqual({});
-    expect(resetConfigUpdate(snapshot, ["/sessionNaming"])).toEqual({ unset: [] });
+    snapshot.config = { defaultLocalization: { language: "en", formatLocale: "en-US", timeZone: "UTC" }, uploads: { defaultFolder: "old" }, pathAccess: { allowedPaths: ["/old"] } };
+    snapshot.enforcedSettings = { "/defaultLocalization/language": "PI_WEB_DEFAULT_LOCALIZATION" };
+    expect(explicitConfigUpdate(snapshot, { defaultLocalization: { language: "de", formatLocale: "de-DE" }, uploads: {}, pathAccess: { allowedPaths: [] }, defaultTheme: { themeId: "new", auto: false } })).toEqual({ set: { defaultLocalization: { formatLocale: "de-DE" }, pathAccess: { allowedPaths: [] }, defaultTheme: { themeId: "new", auto: false } } });
+    expect(resetConfigUpdate(snapshot, ["/defaultLocalization", "/defaultLocalization/formatLocale", "/uploads"])).toEqual({ unset: ["/defaultLocalization/formatLocale", "/defaultLocalization/timeZone", "/uploads/defaultFolder"] });
+    snapshot.enforcedSettings = { "/defaultLocalization": "PI_WEB_DEFAULT_LOCALIZATION" };
+    expect(enforcedSetting(snapshot, "/defaultLocalization/formatLocale")).toBe("PI_WEB_DEFAULT_LOCALIZATION");
+    expect(explicitConfigUpdate(snapshot, { defaultLocalization: { formatLocale: "de-DE" } })).toEqual({});
+    expect(resetConfigUpdate(snapshot, ["/defaultLocalization"])).toEqual({ unset: [] });
   });
 
   it("clears reset selected-machine values and metadata without dropping gateway settings", () => {

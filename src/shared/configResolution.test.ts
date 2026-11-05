@@ -24,28 +24,29 @@ describe("configuration namespace identifiers", () => {
   it("resolves declared container fields independently without merging setting values", () => {
     const base = {
       uploads: { defaultFolder: "deployed" }, attachments: { defaultFolder: "attachments" },
-      sessionNaming: { model: "provider/model", maxTokens: 48, timeoutMs: 12000 },
+      defaultLocalization: { language: "de", timeZone: "UTC", formatLocale: "en-US" },
       sessionArchive: { directory: "/archive" }, pathAccess: { allowedPaths: ["/base"] },
       shortcuts: { first: "a", second: "b" },
       plugins: { git: { settings: { options: { old: true }, list: [1, 2] } } },
     };
     expect(overlayPiWebConfig(base, {
-      uploads: {}, attachments: {}, sessionArchive: {}, sessionNaming: { maxTokens: 64 },
+      uploads: {}, attachments: {}, sessionArchive: {}, defaultLocalization: { timeZone: "Europe/Berlin" },
       pathAccess: { allowedPaths: [] }, shortcuts: { first: "c" },
       plugins: { git: { settings: { options: {}, list: [] } } },
     })).toEqual({
-      ...base, sessionNaming: { model: "provider/model", maxTokens: 64, timeoutMs: 12000 },
+      ...base, defaultLocalization: { language: "de", timeZone: "Europe/Berlin", formatLocale: "en-US" },
       pathAccess: { allowedPaths: [] }, shortcuts: { first: "c" },
       plugins: { git: { settings: { options: {}, list: [] } } },
     });
-    expect(piWebConfigSettingPointers({ uploads: {}, attachments: {}, sessionNaming: {}, sessionArchive: {}, pathAccess: {} })).toEqual([]);
-    expect(piWebConfigSettingPointers({ uploads: base.uploads, attachments: base.attachments, sessionNaming: { maxTokens: 64 }, sessionArchive: base.sessionArchive, pathAccess: { allowedPaths: [] } })).toEqual([
-      "/uploads/defaultFolder", "/attachments/defaultFolder", "/sessionNaming/maxTokens", "/sessionArchive/directory", "/pathAccess/allowedPaths",
+    expect(piWebConfigSettingPointers({ uploads: {}, attachments: {}, defaultLocalization: {}, sessionArchive: {}, pathAccess: {} })).toEqual([]);
+    expect(piWebConfigSettingPointers({ uploads: base.uploads, attachments: base.attachments, defaultLocalization: { timeZone: "Europe/Berlin" }, sessionArchive: base.sessionArchive, pathAccess: { allowedPaths: [] } })).toEqual([
+      "/uploads/defaultFolder", "/attachments/defaultFolder", "/defaultLocalization/timeZone", "/sessionArchive/directory", "/pathAccess/allowedPaths",
     ]);
   });
 
   it("recognizes only schema-declared containers, not arbitrary object settings", () => {
-    expect(isPiWebConfigNamespacePath(["sessionNaming"])).toBe(true);
+    expect(isPiWebConfigNamespacePath(["defaultLocalization"])).toBe(true);
+    expect(isPiWebConfigNamespacePath(["sessionNaming"])).toBe(false);
     expect(isPiWebConfigNamespacePath(["uploads"])).toBe(true);
     expect(isPiWebConfigNamespacePath(["plugins", "git", "settings"])).toBe(true);
     expect(isPiWebConfigNamespacePath(["plugins", "git", "settings", "options"])).toBe(false);

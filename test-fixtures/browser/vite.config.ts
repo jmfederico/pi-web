@@ -11,8 +11,10 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       input: {
-        viewport: fileURLToPath(new URL("viewport.html", import.meta.url)),
+        shellViewport: fileURLToPath(new URL("shell-viewport.html", import.meta.url)),
         overlays: fileURLToPath(new URL("overlays.html", import.meta.url)),
+        viewport: fileURLToPath(new URL("viewport.html", import.meta.url)),
+        codeScroll: fileURLToPath(new URL("code-scroll.html", import.meta.url)),
         cleanup: fileURLToPath(new URL("cleanup.html", import.meta.url)),
         navigation: fileURLToPath(new URL("navigation.html", import.meta.url)),
         terminal: fileURLToPath(new URL("terminal.html", import.meta.url)),
@@ -21,6 +23,8 @@ export default defineConfig({
         recovery: fileURLToPath(new URL("recovery.html", import.meta.url)),
         filePreviews: fileURLToPath(new URL("file-previews.html", import.meta.url)),
         scheduledTasks: fileURLToPath(new URL("scheduled-tasks.html", import.meta.url)),
+        transcriptRenderers: fileURLToPath(new URL("transcript-renderers.html", import.meta.url)),
+        transcriptExample: fileURLToPath(new URL("transcript-example.html", import.meta.url)),
       },
     },
   },

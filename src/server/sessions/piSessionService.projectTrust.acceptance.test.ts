@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -29,7 +29,7 @@ afterEach(async () => {
 });
 
 async function tempDir(prefix: string): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), prefix));
+  const dir = await realpath(await mkdtemp(join(tmpdir(), prefix)));
   tempDirs.push(dir);
   return dir;
 }

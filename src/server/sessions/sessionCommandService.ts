@@ -49,6 +49,8 @@ export interface CommandEventPublisher {
 }
 
 export interface SessionCommandLifecycle<TSession extends CommandSession = CommandSession> {
+  /** Host publication also handles SDK metadata events and deduplicates them. */
+  onSessionNameChanged?: (session: TSession) => void;
   onCompactionStart?: (session: TSession) => void;
   onCompactionEnd?: (session: TSession, result: "success" | "error", detail?: string) => void;
   reloadSession?: (session: TSession) => Promise<void>;
@@ -288,6 +290,10 @@ export class SessionCommandService<TSession extends CommandSession = CommandSess
   }
 
   private publishSessionName(session: TSession): void {
+    if (this.lifecycle.onSessionNameChanged !== undefined) {
+      this.lifecycle.onSessionNameChanged(session);
+      return;
+    }
     const event = session.sessionName === undefined
       ? { type: "session.name", sessionId: session.sessionId } as const
       : { type: "session.name", sessionId: session.sessionId, name: session.sessionName } as const;

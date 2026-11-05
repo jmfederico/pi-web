@@ -86,8 +86,8 @@ export class PluginBackendRequestError extends Error {
 export interface PluginBackendRegistryOptions {
   /** Healthy direct contributions from one immutable server-plugin snapshot. */
   contributions: readonly ServerPluginPairedBackendContribution[];
-  /** Authoritative workspace resolver for browser-visible paired scope. */
-  workspaces: Pick<WorkspaceProviderRegistry, "resolve">;
+  /** Established server-owned workspace identity; dispatch never starts discovery. */
+  workspaces: Pick<WorkspaceProviderRegistry, "lookup">;
   callbackTimeoutMs?: number;
   dispatchTimeoutMs?: number;
   resourceLifetimeMs?: number;
@@ -966,7 +966,7 @@ async function closeUnpublishedChannel(
 }
 
 async function resolveBackendScope(
-  workspaces: Pick<WorkspaceProviderRegistry, "resolve">,
+  workspaces: Pick<WorkspaceProviderRegistry, "lookup">,
   request: PluginBackendRequest,
   pluginId: string,
   operation: string,
@@ -991,7 +991,8 @@ async function resolveBackendScope(
   if (kind === "project") return Object.freeze({ kind, project });
   let target: WorkspaceListing | undefined;
   try {
-    const resolution = await workspaces.resolve(request.project, signal);
+    const resolution = await workspaces.lookup(request.project, signal);
+    if (resolution === undefined) throw new Error("Workspace discovery is not ready; refresh the project's workspace list");
     target = resolution.workspaces.find((workspace) => workspace.id === request.workspaceId);
   } catch (error) {
     if (signal.aborted) throw abortError(signal);

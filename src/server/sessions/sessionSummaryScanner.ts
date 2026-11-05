@@ -6,6 +6,7 @@ import { isRecord, tryParseEntry } from "./sessionFileFormat.js";
 import type { PiSessionListEntry } from "./piSessionService.js";
 import type { SessionUiMetadata } from "../../shared/pluginApiTypes.js";
 import { sessionUiMetadataFromEntry } from "./sessionMetadata.js";
+import { interventionStateFromEntry } from "./sessionIntervention.js";
 import { cwdPathsEqual } from "../workingDirectory.js";
 import { parsePersistedChildSubsessionLink, parsePersistedParentSubsessionLink, type PersistedChildSubsessionLink, type PersistedParentSubsessionLink } from "./subsessionProvenance.js";
 
@@ -242,6 +243,7 @@ interface SummaryFoldState {
   firstMessageText: string | undefined;
   name: string | undefined;
   metadata?: SessionUiMetadata;
+  interventionRequired?: boolean;
   childLinks?: PersistedChildSubsessionLink[];
   parentLinks?: PersistedParentSubsessionLink[];
 }
@@ -371,6 +373,7 @@ function buildSummaryFromFold(fold: SummaryFoldState, filePath: string, mtime: D
     modified: mtime,
     messageCount: fold.messageCount,
     firstMessage: fold.firstMessageText ?? "(no messages)",
+    ...(fold.interventionRequired === true ? { interventionRequired: true } : {}),
     // Never built: see the listing contract above. Kept because SDK-built
     // entries (cleanup listing) still carry the field.
     allMessagesText: "",
@@ -404,6 +407,8 @@ function processLineBytes(data: Buffer, start: number, end: number, state: Summa
   }
   if (entryType === "custom") {
     const entry = tryParseEntry(data.toString("utf8", start, end));
+    const intervention = interventionStateFromEntry(entry);
+    if (intervention !== undefined) state.interventionRequired = intervention;
     const childLink = parsePersistedChildSubsessionLink(entry);
     if (childLink !== undefined) (state.childLinks ??= []).push(childLink);
     const parentLink = parsePersistedParentSubsessionLink(entry);
@@ -439,6 +444,8 @@ function processLineBytes(data: Buffer, start: number, end: number, state: Summa
   if (entry === undefined) return;
   if (entry["type"] === "session_info") state.name = sessionInfoName(entry);
   else if (entry["type"] === "custom") {
+    const intervention = interventionStateFromEntry(entry);
+    if (intervention !== undefined) state.interventionRequired = intervention;
     const metadata = sessionUiMetadataFromEntry(entry);
     if (metadata !== undefined) state.metadata = metadata;
   } else if (entry["type"] === "message") {

@@ -1,5 +1,5 @@
 import type { AskUserOutcome, AskUserRequest } from "../../shared/apiTypes";
-import type { ChatLine } from "./chatTypes";
+import { chatFallbackParts, type ChatLine } from "./chatTypes";
 
 export interface QuestionTailContext {
   historyReady: boolean;
@@ -19,7 +19,7 @@ export function openTranscriptQuestion(messages: readonly ChatLine[], context: Q
 export function transcriptQuestionOutcomes(messages: readonly ChatLine[]): ReadonlyMap<string, AskUserOutcome[]> {
   const outcomes = new Map<string, AskUserOutcome[]>();
   for (const message of messages) {
-    for (const part of message.parts) {
+    for (const part of chatFallbackParts(message.parts)) {
       if (part.type !== "askUserRecord") continue;
       const replies = outcomes.get(part.outcome.askId) ?? [];
       replies.push(part.outcome);

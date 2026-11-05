@@ -10,7 +10,7 @@ function harness() {
   const project: Project = { id: "project", name: "Project", path: resolve("/repo"), createdAt: "2026-09-10T00:00:00.000Z" };
   const workspace = { id: "workspace", projectId: project.id, path: resolve("/repo/worktree"), label: "Worktree", isMain: false };
   const projects = { requireProject: vi.fn((id: string) => id === project.id ? Promise.resolve(project) : Promise.reject(new Error("Project not found"))) };
-  const workspaces = { resolve: vi.fn(() => Promise.resolve({ status: "folder" as const, projectId: project.id, workspaces: [workspace], diagnostics: [] })) };
+  const workspaces = { checkCurrent: vi.fn(() => Promise.resolve({ status: "folder" as const, projectId: project.id, workspaces: [workspace], diagnostics: [] })) };
   const registry = new PiSessionEventConnections();
   const session = {}, bus = createEventBus();
   registry.register(session, bus);
@@ -36,7 +36,7 @@ describe("selected-machine hosted session event capability", () => {
     expect(remote.sessions.connectSessionEvents).not.toHaveBeenCalled();
     expect(fixture.sessions.connectSessionEvents).toHaveBeenCalledWith({ id: "exact-session-id", cwd: fixture.workspace.path }, expect.any(AbortSignal));
     await fixture.capability.connect(fixture.selection);
-    expect(fixture.workspaces.resolve).toHaveBeenCalledTimes(2);
+    expect(fixture.workspaces.checkCurrent).toHaveBeenCalledTimes(2);
     await fixture.instance.dispose?.(new AbortController().signal);
     expect(connection.signal.aborted).toBe(true);
     fixture.bus.emit("reply", "late");
@@ -56,8 +56,8 @@ describe("selected-machine hosted session event capability", () => {
 
   it("does not admit a connection when plugin lifetime ends during workspace resolution", async () => {
     const fixture = harness();
-    const original = fixture.workspaces.resolve.getMockImplementation();
-    fixture.workspaces.resolve.mockImplementation(() => {
+    const original = fixture.workspaces.checkCurrent.getMockImplementation();
+    fixture.workspaces.checkCurrent.mockImplementation(() => {
       fixture.lifetime.abort();
       if (original === undefined) throw new Error("Missing workspace fixture");
       return original();

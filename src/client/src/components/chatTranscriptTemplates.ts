@@ -1,11 +1,13 @@
-import { html, nothing } from "lit";
+import { html, nothing, type TemplateResult } from "lit";
 import { localizedArgumentSummary, localizedChatText } from "../localizedChatPresentation";
 import { chatTranscriptMessages as messages } from "../chatTranscriptMessages";
 import { live } from "lit/directives/live.js";
 import { cache } from "lit/directives/cache.js";
 import { MessageActionsMenu } from "./chat/MessageActionsMenu";
+import { renderMessageFrame } from "./chat/MessageFrame";
 import { renderSessionWarningIcon } from "./shared";
 import { chatToolOutputLabel, chatMessageGroupClassName, chatMessageGroupLabel, localizedChatGroupSummary } from "./chat/transcriptLabels";
+import { interventionRequestText } from "../chatInterventions";
 import { chatMessageHasHeader, summarizeChatGroup, type ChatDisplayGroup, type ChatGroup } from "../chatGroups";
 import type { ChatBehaviors } from "../chatBehaviors";
 import type { AskUserSubmission, SessionRef } from "../api";
@@ -15,6 +17,8 @@ import type { MarkdownWorkspaceContext } from "../formatting/workspaceLinks";
 import type { ChatLine, ChatPart } from "../chatTypes";
 import type { ImageOpenDetail } from "./ImagePresentation";
 import type { ChatMessageActionController } from "./ChatMessageActionController";
+import type { RegisteredTranscriptRenderer } from "../plugins/transcriptRenderers";
+import type { TranscriptRendererScope } from "../../../plugin-api";
 
 export interface TranscriptGroupDisclosure {
   open: boolean;
@@ -31,6 +35,8 @@ export interface TranscriptRenderContext {
   messageStart: number;
   behaviors: ChatBehaviors;
   contentRendering: ChatContentRendering | undefined;
+  transcriptRenderers: readonly RegisteredTranscriptRenderer[];
+  rendererScope: TranscriptRendererScope;
   workspaceContext: MarkdownWorkspaceContext | undefined;
   anchors: {
     message: (index: number, message: ChatLine) => string | undefined;
@@ -60,18 +66,12 @@ export function renderMessage(context: TranscriptRenderContext, message: ChatLin
     const hasHeader = chatMessageHasHeader(message);
     const shellClass = toolOnly ? "msg tool-execution-shell" : "msg ask-user-record-shell";
     const conversationClass = hasHeader && (message.role === "user" || message.role === "assistant") ? " conversation-message conversation-layout chat-message" : "";
+    const body = html`${message.parts.map((part, partIndex) => renderPart(context, part, message, index, partIndex))}`;
     return html`
       <article class=${`${hasHeader ? `msg ${message.role}${conversationClass}` : shellClass} ui-transcript-surface`} data-speaker=${conversationClass !== "" ? message.role : nothing} data-index=${index} data-scroll-anchor-id=${context.anchors.message(index, message) ?? nothing}>
-        ${conversationClass !== "" ? html`
-          <div class="conversation-content chat-message-content">
-            ${renderMessageHeader(context, message, String(index), index, entryActionHeaders, undefined, true)}
-            <div class="conversation-body chat-message-body">${message.parts.map((part, partIndex) => renderPart(context, part, message, index, partIndex))}</div>
-          </div>
-          ${renderMessageMetadata(context, message, String(index))}
-        ` : html`
-          ${hasHeader ? renderMessageHeader(context, message, String(index), index, entryActionHeaders) : null}
-          ${message.parts.map((part, partIndex) => renderPart(context, part, message, index, partIndex))}
-        `}
+        ${hasHeader ? renderFramedMessage(context, message, String(index), index, entryActionHeaders, body, {
+          actionPlacement: conversationClass !== "" ? "corner" : "header", conversation: conversationClass !== "",
+        }) : body}
       </article>
     `;
   }
@@ -89,9 +89,7 @@ export function renderToolImageOutputs(context: TranscriptRenderContext, group: 
     const images = parts.map((image, imageIndex) => ({ ...image,
       description: () => messages.t("toolImage", { name: image.output.toolName ?? "", named: image.output.toolName === undefined || image.output.toolName === "" ? "no" : "yes", index: imageIndex + 1, total: parts.length }),
     }));
-    return html`
-      <article class="msg tool-image-output conversation-message ui-transcript-surface" data-index=${first.index} data-scroll-anchor-id=${context.anchors.message(first.index, first.message) ?? nothing}>
-        ${outputs.length === 1 ? renderMessageHeader(context, first.message, String(first.index), first.index, entryActionHeaders, label) : html`<div class="msg-header"><span class="label">${label}</span></div>`}
+    const body = html`
         <div class="tool-image-thumbnails">
           ${images.map((image, imageIndex) => html`
             <pi-web-transcript-image .imagePart=${image.part} .thumbnail=${true} .description=${image.description}
@@ -105,10 +103,18 @@ export function renderToolImageOutputs(context: TranscriptRenderContext, group: 
           <details class="image-output-sources" ?open=${live(sourcesOpen)} @toggle=${(event: Event) => { context.disclosure.toggle(sourcesKey, event, false); }}>
             <summary class="ui-transcript-disclosure">${messages.t("sources", { count: outputs.length })}</summary>
             ${sourcesOpen ? outputs.map((output, outputIndex) => html`<section class="image-output-source" aria-label=${messages.t("output", { index: outputIndex + 1 })}>
-              ${renderMessageHeader(context, output.message, `image-source:${String(output.index)}`, output.index, entryActionHeaders, messages.t("sourceHeader", { name: output.toolName ?? "", named: output.toolName === undefined || output.toolName === "" ? "no" : "yes", index: outputIndex + 1 }))}
+              ${renderFramedMessage(context, output.message, `image-source:${String(output.index)}`, output.index, entryActionHeaders, undefined, {
+                actionPlacement: "header", label: messages.t("sourceHeader", { name: output.toolName ?? "", named: output.toolName === undefined || output.toolName === "" ? "no" : "yes", index: outputIndex + 1 }),
+              })}
             </section>`) : nothing}
           </details>
         `}
+    `;
+    return html`
+      <article class="msg tool-image-output conversation-message ui-transcript-surface" data-index=${first.index} data-scroll-anchor-id=${context.anchors.message(first.index, first.message) ?? nothing}>
+        ${outputs.length === 1
+          ? renderFramedMessage(context, first.message, String(first.index), first.index, entryActionHeaders, body, { actionPlacement: "header", label })
+          : renderMessageFrame({ heading: label, actionPlacement: "header", body })}
       </article>
     `;
   }
@@ -144,8 +150,10 @@ export function renderMessageGroupBody(context: TranscriptRenderContext, { messa
         ${messages.map(({ message, index }, offset) => {
           return html`
             <section class=${`group-msg ${message.role} ui-transcript-surface`} data-index=${index} data-scroll-anchor-id=${context.anchors.event(index, message) ?? nothing}>
-              ${chatMessageHasHeader(message) ? html`<div class="transcript-content">${renderMessageHeader(context, message, `${String(startIndex)}:${String(offset)}`, index, entryActionHeaders)}</div>` : null}
-              ${renderGroupedParts(context, message, index)}
+              ${chatMessageHasHeader(message) ? renderFramedMessage(context, message, `${String(startIndex)}:${String(offset)}`, index, entryActionHeaders,
+                html`${renderGroupedParts(context, message, index)}`, {
+                  actionPlacement: message.role === "assistant" || message.role === "user" ? "corner" : "header",
+                }) : renderGroupedParts(context, message, index)}
             </section>`;
         })}
       </div>
@@ -171,15 +179,22 @@ function renderGroupedParts(context: TranscriptRenderContext, message: ChatLine,
   `);
 }
 
-export function renderMessageHeader(context: TranscriptRenderContext, message: ChatLine, key: string, index: number, entryActionHeaders: ReadonlySet<ChatLine>, label?: string, metadataBelow = false) {
+function renderFramedMessage(context: TranscriptRenderContext, message: ChatLine, key: string, index: number, entryActionHeaders: ReadonlySet<ChatLine>, body: TemplateResult | undefined,
+  options: { actionPlacement: "corner" | "header"; conversation?: boolean; label?: string }) {
+  return renderMessageFrame({
+    ...options,
+    heading: options.label ?? messages.t("role", { role: message.role }),
+    ...(body === undefined ? {} : { body }),
+    actions: renderMessageMenu(context, message, key, index, entryActionHeaders),
+    metadata: renderMessageMetadata(context, message, key),
+  });
+}
+
+function renderMessageMenu(context: TranscriptRenderContext, message: ChatLine, key: string, index: number, entryActionHeaders: ReadonlySet<ChatLine>) {
     const meta = context.metadata.label(message);
     const expanded = context.metadata.expandedKey === key;
     const detailId = `message-meta-${key}`;
-    const conversation = label === undefined && (message.role === "user" || message.role === "assistant");
-    const heading = label ?? messages.t("role", { role: message.role });
     return html`
-      <div class=${conversation ? "msg-header conversation-header chat-message-header" : "msg-header"}>
-        <span class=${conversation ? "visually-hidden" : "label"}>${heading}</span>
         <pi-message-actions-menu>
           <div class="msg-actions-strip">
             ${renderMessageActions(context, message, key, context.messages[index - context.messageStart] ?? message, entryActionHeaders.has(message))}
@@ -190,17 +205,22 @@ export function renderMessageHeader(context: TranscriptRenderContext, message: C
             }}>${renderSessionWarningIcon("info", "msg-info-icon")}</button>
           </div>
         </pi-message-actions-menu>
-      </div>
-      ${metadataBelow ? null : renderMessageMetadata(context, message, key)}
     `;
   }
 
 function renderMessageMetadata(context: TranscriptRenderContext, message: ChatLine, key: string) {
-  return html`<div id=${`message-meta-${key}`} class="msg-meta-details chat-message-meta" ?hidden=${context.metadata.expandedKey !== key}>${context.metadata.label(message)}</div>`;
+  return html`<div id=${`message-meta-${key}`} class="msg-meta-details chat-message-meta message-frame-meta" ?hidden=${context.metadata.expandedKey !== key}>${context.metadata.label(message)}</div>`;
 }
 
-export function renderPart(context: TranscriptRenderContext, part: ChatPart, message: ChatLine, messageIndex: number, partIndex: number) {
+export function renderPart(context: TranscriptRenderContext, part: ChatPart, message: ChatLine, messageIndex: number, partIndex: number): TemplateResult | null {
     const intentKey = JSON.stringify([context.machineId, context.sessionId, message.entryId ?? messageIndex, partIndex]);
+    if (part.type === "customMessage") {
+      const fallback = part.parts.map((fallbackPart, index) => renderPart(context, fallbackPart, message, messageIndex, index));
+      const renderer = context.transcriptRenderers.find((candidate) => candidate.target === "custom-message" && candidate.customType === part.customType);
+      if (renderer?.target !== "custom-message") return html`${fallback}`;
+      return html`<pi-web-transcript-renderer class="part" .itemKey=${intentKey} .scope=${context.rendererScope}
+        .entryId=${message.entryId} .request=${{ kind: "custom-message", renderer, entry: part }}>${fallback}</pi-web-transcript-renderer>`;
+    }
     if (part.type === "text" || part.type === "thinking") {
       const text = part.type === "text" && part.presentation !== undefined ? localizedChatText(part.presentation) : part.displayText ?? part.text;
       if (text === "") return null;
@@ -260,7 +280,18 @@ export function renderPart(context: TranscriptRenderContext, part: ChatPart, mes
       ></pi-web-transcript-image>`;
     }
     if (part.type === "toolCall") return html`<div class="part tool-line ui-transcript-surface ui-transcript-activity ui-transcript-tool"><div class="ui-transcript-heading"><span aria-hidden="true">▶</span> ${part.toolName}<span class="summary">${part.summaryPresentation === undefined ? part.summary : localizedArgumentSummary(part.summaryPresentation)}</span></div></div>`;
-    if (part.type === "toolExecution") return html`<tool-execution-view class="part" .execution=${part}></tool-execution-view>`;
+    if (part.type === "toolExecution") {
+      const request = interventionRequestText(part);
+      if (request !== undefined) return html`
+      <section class="part intervention-request ui-transcript-surface ui-transcript-activity" aria-label=${messages.t("interventionRequest")}>
+        <div class="ui-transcript-heading">${messages.t("interventionRequest")}</div>
+        <p class="intervention-request-text" dir="auto">${request}</p>
+      </section>`;
+      const fallback = html`<tool-execution-view class="part" .execution=${part}></tool-execution-view>`;
+      if (!context.transcriptRenderers.some((candidate) => candidate.target === "tool")) return fallback;
+      return html`<pi-web-transcript-renderer class="part" .itemKey=${intentKey} .scope=${context.rendererScope}
+        .request=${{ kind: "tool", renderers: context.transcriptRenderers, entry: part }}>${fallback}</pi-web-transcript-renderer>`;
+    }
     if (part.type === "toolResult") {
       const key = `tool-result:${intentKey}`;
       const open = context.disclosure.isOpen(key, part.isError);

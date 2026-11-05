@@ -6,7 +6,8 @@ import { customElement, property, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
 import { trustApi } from "../api";
 import type { Workspace } from "../api";
-import type { MachineStatusSnapshot } from "../../../shared/machineStatus";
+import { CORE_STATUS_FLAGS, type MachineStatusSnapshot } from "../../../shared/machineStatus";
+import { renderCopyIdAction } from "./copyIdAction";
 import { writeClipboardText } from "../clipboard";
 import type { WorkspaceLabelItem } from "../plugins/types";
 import { canDeleteWorkspace, workspaceRemovalActionLabel } from "../workspaceDeletion";
@@ -116,7 +117,7 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
                   data-current=${String(current)}
                   aria-current=${current ? "true" : nothing}
                   data-activity=${kind ?? "idle"}
-                  data-busy=${String(kind === "session" || kind === "sending" || this.isDeleting(workspace))}
+                  data-busy=${String(flags?.[CORE_STATUS_FLAGS.working] === true || this.isDeleting(workspace))}
                   data-unread=${String(unread)}
                   tabindex="0"
                   data-workspace-id=${workspace.id}
@@ -202,6 +203,7 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
         ${canDeleteWorkspace(workspace) ? html`
           <button class="danger ui-button ui-menu-item" title=${deleting ? messages.t("removalProgress") : actionLabel} ?disabled=${deleting} @click=${() => { this.delete(workspace); }}>${deleting ? messages.t("removing") : actionLabel}</button>
         ` : null}
+        ${renderCopyIdAction("workspace", workspace.id, () => { this.openMenuWorkspaceId = undefined; })}
       </div>
     `;
   }

@@ -33,7 +33,7 @@ interface HostPiSessionService {
 
 export interface CreateServerPluginPiSessionsCapabilityOptions {
   readonly projects: Pick<ProjectService, "requireProject">;
-  readonly workspaces: Pick<WorkspaceProviderRegistry, "resolve">;
+  readonly workspaces: Pick<WorkspaceProviderRegistry, "checkCurrent">;
   readonly sessions: HostPiSessionService;
   /** Test/host tuning seam; production uses the conservative default. */
   readonly maxConcurrentRunsPerPlugin?: number;

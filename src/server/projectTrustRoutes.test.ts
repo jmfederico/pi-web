@@ -1,4 +1,4 @@
-import { mkdtemp, rm, symlink } from "node:fs/promises";
+import { mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
@@ -19,7 +19,7 @@ const cleanup: string[] = [];
 const TRUST_URL = "/api/projects/p1/workspaces/w1/trust";
 
 async function tempDir(prefix: string): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), prefix));
+  const dir = await realpath(await mkdtemp(join(tmpdir(), prefix)));
   cleanup.push(dir);
   return dir;
 }

@@ -21,6 +21,28 @@ describe("sessionRowActivityKind", () => {
     expect(sessionRowActivityKind(session("s"), { ...idle, isStreaming: true }, undefined, true)).toBe("sending");
   });
 
+  it("restores persisted intervention, then honors a matching live false when work resumes", () => {
+    const waiting = session("s", { interventionRequired: true });
+    expect(sessionRowActivityKind(waiting, undefined, undefined, false)).toBe("intervention-required");
+    expect(sessionRowActivityKind(waiting, sessionStatus("other", { interventionRequired: false }), undefined, false)).toBe("intervention-required");
+    expect(sessionRowActivityKind(waiting, { ...idle, interventionRequired: false, isStreaming: true }, undefined, false)).toBe("session");
+    expect(sessionRowActivityKind(waiting, { ...idle, interventionRequired: false }, undefined, false, { s: { "core:intervention-required": true } })).toBe("intervention-required");
+  });
+
+  it("clears stale status and listing attention from a complete snapshot", () => {
+    const waiting = session("s", { interventionRequired: true });
+    const staleStatus = { ...idle, interventionRequired: true };
+    expect(sessionRowActivityKind(waiting, staleStatus, undefined, false, {})).toBeUndefined();
+    expect(sessionRowActivityKind(waiting, staleStatus, undefined, false, { s: { "core:working": true } })).toBe("session");
+    expect(sessionRowActivityKind(waiting, staleStatus, undefined, false, { s: { "core:intervention-required": false } })).toBeUndefined();
+  });
+
+  it("prioritizes live and machine intervention over working and sending", () => {
+    expect(sessionRowActivityKind(session("s"), { ...idle, interventionRequired: true }, undefined, true)).toBe("intervention-required");
+    expect(sessionRowActivityKind(session("s"), undefined, undefined, false, { s: { "core:intervention-required": true, "core:working": true } })).toBe("intervention-required");
+    expect(sessionRowActivityKind(session("s", { archived: true, interventionRequired: true }), undefined, undefined, false)).toBeUndefined();
+  });
+
   it("reports 'session' for server activity when not sending", () => {
     expect(sessionRowActivityKind(session("s"), { ...idle, isStreaming: true }, undefined, false)).toBe("session");
   });
@@ -50,6 +72,37 @@ describe("sessionRowActivityKind", () => {
   it("never shows an indicator for archived or cached-new sessions, even while sending", () => {
     expect(sessionRowActivityKind({ ...session("s"), archived: true }, idle, undefined, true)).toBeUndefined();
     expect(sessionRowActivityKind(markCachedNewSessionInfo(session("s")), idle, undefined, true)).toBeUndefined();
+  });
+});
+
+describe("intervention navigation", () => {
+  it("renders persisted attention and clears it on a working snapshot without changing unread", async () => {
+    const waiting = session("waiting", { persisted: true, interventionRequired: true });
+    const list = sessionList([waiting], new Set([waiting.id]));
+    document.body.append(list);
+    await list.updateComplete;
+    const row = list.shadowRoot?.querySelector<HTMLElement>(".action-row");
+    expect(row?.classList.contains("intervention-required")).toBe(true);
+    expect(row?.getAttribute("data-busy")).toBe("false");
+    expect(row?.querySelector(".session-meta")?.textContent).toContain("Needs input");
+    expect(row?.querySelector(".unread-ring .intervention-required")).not.toBeNull();
+
+    list.sessionFlags = { waiting: { "core:working": true, "core:intervention-required": true } };
+    await list.updateComplete;
+    expect(row?.getAttribute("data-busy")).toBe("true");
+    expect(row?.getAttribute("data-activity")).toBe("intervention-required");
+    await openSessionMenu(list, waiting.id);
+    const reload = [...list.shadowRoot?.querySelectorAll<HTMLButtonElement>(".action-menu-panel button") ?? []]
+      .find((button) => button.textContent === "Reload from disk");
+    expect(reload?.disabled).toBe(true);
+
+    list.statuses = { waiting: sessionStatus("waiting", { interventionRequired: false, isStreaming: true }) };
+    list.sessionFlags = { waiting: { "core:working": true } };
+    await list.updateComplete;
+    expect(row?.classList.contains("intervention-required")).toBe(false);
+    expect(row?.getAttribute("data-busy")).toBe("true");
+    expect(row?.querySelector(".session-meta")?.textContent).not.toContain("Needs input");
+    expect(row?.querySelector(".unread-ring .activity-indicator.session")).not.toBeNull();
   });
 });
 

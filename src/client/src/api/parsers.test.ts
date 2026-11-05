@@ -2,14 +2,26 @@ import { describe, expect, it } from "vitest";
 import { ASK_USER_COMMENT_MAX_LENGTH, ASK_USER_TEXT_MAX_LENGTH, EXTENSION_DIALOG_TEXT_MAX_LENGTH, SESSION_NOTIFICATION_LIMIT, SESSION_NOTIFICATION_MESSAGE_BYTES, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH } from "../../../shared/apiTypes";
 import { parseAskUserRequest, parseAskUserOutcome, parseAuthProvidersResponse, parseCommandResult, parseExtensionDialogCloseResponse, parseFileContentResponse, parseFileSuggestion, parseMachine, parseMachineRuntime, parseMessagePage, parseMcpAuthServersResponse, parseOAuthFlowState, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebConfigResponse, parsePiWebPluginsResponse, parsePiWebRuntimeResponse, parsePiWebStatusResponse, parseRealtimeStreamEvent, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionInfo, parseSessionModelCatalogResponse, parseSessionNotificationInboxEvent, parseSessionNotificationInboxSnapshot, parseSessionStartupProgressEvent, parseSessionStatus, parseSessionStreamEvent, parseSessionStreamSnapshot, parseSessionTreeForkResult, parseSessionTreeNavigateResult, parseSessionTreeSnapshot, parseSessionUnreadCatalogSnapshot, parseSessionUnreadEvent, parseSlashCommand, parseWorkspace, parseWorkspaceProviderResolution } from "./parsers";
 
-import { KNOWN_THINKING_LEVELS } from "../../../shared/thinkingLevels";
-
 const legacyActivityWarning = {
   severity: "info", source: "PI-WEB",
   message: "Recently active in another PI-WEB instance. Avoid working on this session in both instances at once.",
 };
 
 describe("API parsers", () => {
+  it("preserves optional intervention state and validates live transitions", () => {
+    const info = { id: "s", path: "/s.jsonl", cwd: "/repo", created: "now", modified: "now", messageCount: 1, firstMessage: "hi" };
+    for (const interventionRequired of [true, false]) {
+      expect(parseSessionInfo({ ...info, interventionRequired }).interventionRequired).toBe(interventionRequired);
+      expect(parseSessionStatus({ ...statusWire(), interventionRequired }).interventionRequired).toBe(interventionRequired);
+      const event = parseRealtimeStreamEvent({ type: "status.update", status: { ...statusWire(), interventionRequired } });
+      expect(event.type === "status.update" && event.status.interventionRequired).toBe(interventionRequired);
+    }
+    expect(parseSessionInfo(info).interventionRequired).toBeUndefined();
+    expect(parseSessionStatus(statusWire()).interventionRequired).toBeUndefined();
+    expect(() => parseSessionInfo({ ...info, interventionRequired: "yes" })).toThrow("interventionRequired");
+    expect(() => parseSessionStatus({ ...statusWire(), interventionRequired: 1 })).toThrow("interventionRequired");
+  });
+
   it("preserves remote naming metadata and supports older machine responses", () => {
     const machine = { id: "remote", name: "Alias", kind: "remote", createdAt: "now", updatedAt: "now" };
     expect(parseMachine(machine)).toEqual(machine);
@@ -166,25 +178,15 @@ describe("API parsers", () => {
     }
   });
 
-  it("preserves naming configuration and rejects malformed naming fields", () => {
+  it("rejects the retired sessionNaming key in every config response layer", () => {
     const response = {
       path: "/tmp/config.json", exists: true, config: {}, effectiveConfig: {},
       envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false },
     };
-    for (const field of ["config", "effectiveConfig"] as const) {
-      for (const sessionNaming of [{}, { model: "openai/gpt-5" }, { maxTokens: 48 }, { timeoutMs: 1 }, { timeoutMs: 10000 }, { timeoutMs: 2147483647 }, { model: "openai/gpt-5", maxTokens: 32, thinkingLevel: "off", timeoutMs: 15000 }, ...KNOWN_THINKING_LEVELS.map((thinkingLevel) => ({ thinkingLevel }))]) {
-        expect(parsePiWebConfigResponse({ ...response, [field]: { sessionNaming } })[field]).toEqual({ sessionNaming });
+    for (const field of ["config", "effectiveConfig", "defaultsConfig"] as const) {
+      for (const sessionNaming of [{ model: "openai/gpt-5" }, {}, null, undefined]) {
+        expect(() => parsePiWebConfigResponse({ ...response, [field]: { sessionNaming } })).toThrow("Retired PI WEB sessionNaming config field");
       }
-      for (const sessionNaming of [[], "model", { model: 42 }, { model: "no-provider" }, { maxTokens: 0 }, { maxTokens: -1 }, { maxTokens: 1.5 }]) {
-        expect(() => parsePiWebConfigResponse({ ...response, [field]: { sessionNaming } })).toThrow();
-      }
-      for (const thinkingLevel of ["", "ultra", "MINIMAL", " minimal ", null, false, 42, {}, []]) {
-        expect(() => parsePiWebConfigResponse({ ...response, [field]: { sessionNaming: { thinkingLevel } } })).toThrow();
-      }
-      for (const timeoutMs of [0, -1, 1.5, 2147483648, Number.MAX_SAFE_INTEGER, NaN, Infinity, -Infinity, "10000", null, false, {}, []]) {
-        expect(() => parsePiWebConfigResponse({ ...response, [field]: { sessionNaming: { timeoutMs } } })).toThrow();
-      }
-      expect(parsePiWebConfigResponse(response)[field]).not.toHaveProperty("sessionNaming");
     }
   });
 

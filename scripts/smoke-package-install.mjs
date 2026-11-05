@@ -313,6 +313,19 @@ async function smokePiPackageExtension(packageRoot, host) {
     assert.equal(notifications.length, 1);
     assert.equal(notifications[0].type, "info", notifications[0].message);
     assert.ok(notifications[0].message.includes("PI WEB version"), notifications[0].message);
+    const namingSettings = SettingsManager.inMemory({ packages: [${JSON.stringify(join(packageRoot, "dist/pi-packages/session-naming"))}] });
+    const naming = new DefaultResourceLoader({
+      cwd: ${JSON.stringify(agentDir)}, agentDir: ${JSON.stringify(agentDir)},
+      settingsManager: namingSettings, noSkills: true, noPromptTemplates: true, noThemes: true,
+    });
+    await naming.reload();
+    assert.deepEqual(naming.getExtensions().errors, [], "Session naming must load through the installed Pi");
+    assert.deepEqual(naming.getExtensions().warnings ?? [], [], "No naming dependency warnings");
+    assert.equal(naming.getExtensions().extensions.length, 1);
+    assert.ok(naming.getExtensions().extensions[0].handlers.has("before_agent_start"));
+    namingSettings.setPackages([]);
+    await naming.reload();
+    assert.equal(naming.getExtensions().extensions.length, 0, "Removing naming must unload its extension");
     const scheduled = new DefaultResourceLoader({
       cwd: ${JSON.stringify(agentDir)}, agentDir: ${JSON.stringify(agentDir)},
       settingsManager: SettingsManager.inMemory({ packages: [${JSON.stringify(join(packageRoot, "dist/pi-packages/scheduled-tasks"))}] }),
@@ -341,6 +354,16 @@ async function smokePiPackageExtension(packageRoot, host) {
 async function smokeInstalledSessionDaemon(packageRoot, host, layout, options = {}) {
   const stateDir = join(root, `daemon-${layout}`);
   const socketPath = join(stateDir, "sessiond.sock");
+  const configPath = join(stateDir, "config.json");
+  const namingMigration = layout === "global" || layout === "managed-legacy";
+  if (namingMigration) {
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(configPath, JSON.stringify({ sessionNaming: { maxTokens: 64 } }));
+    if (layout === "managed-legacy") {
+      await mkdir(join(stateDir, "agent"), { recursive: true });
+      await writeFile(join(stateDir, "agent", "session-naming"), "blocks the optional config migration");
+    }
+  }
   const entrypoint = options.entrypoint ?? join(packageRoot, "dist", "server", "sessiond.js");
   const child = spawn(process.execPath, [...(options.nodeOptions ?? []), entrypoint], {
     cwd: packageRoot,
@@ -349,7 +372,7 @@ async function smokeInstalledSessionDaemon(packageRoot, host, layout, options = 
       PI_WEB_PI_PACKAGE_DIR: options.discoverOnPath || options.localPeers ? undefined : host.hostRoot,
       PATH: options.localPeers ? join(options.pathHost.prefix, "bin")
         : options.discoverOnPath ? join(host.prefix, "bin") : process.env["PATH"],
-      PI_WEB_DATA_DIR: stateDir, PI_WEB_SESSIOND_SOCKET: socketPath,
+      PI_WEB_DATA_DIR: stateDir, PI_WEB_SESSIOND_SOCKET: socketPath, PI_WEB_CONFIG: configPath,
       PI_CODING_AGENT_DIR: join(stateDir, "agent"),
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -392,6 +415,13 @@ async function smokeInstalledSessionDaemon(packageRoot, host, layout, options = 
     assert.ok(runtime, `Installed ${layout} daemon never became ready: ${output}`);
     assert.equal(runtime.status, 200, runtime.body);
     assert.equal(JSON.parse(runtime.body).piVersion, host.version);
+    if (layout === "global") {
+      assert.deepEqual(JSON.parse(await readFile(configPath, "utf8")), {}, "Retired core naming key must be removed after migration");
+      assert.deepEqual(JSON.parse(await readFile(join(stateDir, "agent", "session-naming", "config.json"), "utf8")), { maxTokens: 64 });
+    } else if (layout === "managed-legacy") {
+      assert.deepEqual(JSON.parse(await readFile(configPath, "utf8")), { sessionNaming: { maxTokens: 64 } }, "Failed optional migration must retain source data");
+      assert.ok(output.includes("Session naming migration failed"), "Optional migration failure must be reported without preventing readiness");
+    }
   } finally {
     if (!exited) child.kill("SIGTERM");
     await Promise.race([closed, delay(5_000)]);

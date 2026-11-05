@@ -21,6 +21,30 @@ describe("read-only session catalog", () => {
     }
   });
 
+  it("finds a session's cwd by id from hosted runtimes, the archive, and workspace session folders", async () => {
+    const fake = fakeRuntime("live");
+    const searched: (readonly string[])[] = [];
+    const gateway = {
+      ...sessionGateway([]),
+      findSessionFile: (id: string, cwds: readonly string[]) => {
+        searched.push(cwds);
+        return Promise.resolve(id === "cold" ? { id, cwd: "/cold", path: "/sessions/cold.jsonl" } : undefined);
+      },
+    };
+    const archiveStore = { ...emptyArchiveStore(), get: (id: string) => Promise.resolve(id === "archived" ? { sessionId: id, cwd: "/archived", archivedAt: "2026-01-03T00:00:00.000Z" } : undefined) };
+    const service = new PiSessionService(new CapturingSessionEventHub(), { agentDir: "/tmp/pi-web-test-agent", modelRuntime: testModelRuntime, sessionManager: gateway, archiveStore, createAgentRuntime: runtimeCreator(fake.runtime) });
+    try {
+      const live = await service.start("/workspace");
+      await expect(service.findSession(live.id, [])).resolves.toEqual({ id: live.id, cwd: "/workspace" });
+      await expect(service.findSession("archived", [])).resolves.toEqual({ id: "archived", cwd: "/archived" });
+      await expect(service.findSession("cold", ["/cold"])).resolves.toEqual({ id: "cold", cwd: "/cold" });
+      await expect(service.findSession("missing", ["/cold"])).resolves.toBeUndefined();
+      expect(searched).toEqual([["/cold"], ["/cold"]]);
+    } finally {
+      await service.dispose();
+    }
+  });
+
   it("reports already-hosted idle/busy sessions, without assigning runtime state to a cloned file", async () => {
     const fake = fakeRuntime("live");
     const gateway = sessionGateway([]);

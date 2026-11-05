@@ -18,7 +18,6 @@ export const SELECTED_MACHINE_CONFIG_KEYS = [
   "uploads",
   "attachments",
   "maxUploadBytes",
-  "sessionNaming",
   "spawnSessions",
   "sessionMessages",
   "subsessions",

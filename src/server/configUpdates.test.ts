@@ -2,21 +2,21 @@ import { describe, expect, it } from "vitest";
 import { configUpdateTargets, parseConfigPointer, preserveEnforcedConfigOverrides, removeConfigOverrides, validateConfigUpdate } from "./configUpdates.js";
 
 describe("legacy replacement protection", () => {
-  const enforced = { "/installationName": "PI_WEB_INSTALLATION_NAME", "/sessionNaming/model": "PI_WEB_SESSION_NAMING" };
-  const current = { installationName: "Hidden", sessionNaming: { model: "provider/hidden", maxTokens: 64 }, askUser: false };
+  const enforced = { "/installationName": "PI_WEB_INSTALLATION_NAME", "/defaultLocalization/language": "PI_WEB_DEFAULT_LOCALIZATION" };
+  const current = { installationName: "Hidden", defaultLocalization: { language: "fr", timeZone: "UTC" }, askUser: false };
 
   it("retains omitted locked scalars and leaves without retaining ordinary siblings", () => {
-    const replacement = { sessionNaming: { timeoutMs: 1000 } };
-    expect(preserveEnforcedConfigOverrides(current, replacement, enforced)).toEqual({ installationName: "Hidden", sessionNaming: { model: "provider/hidden", timeoutMs: 1000 } });
-    expect(replacement).toEqual({ sessionNaming: { timeoutMs: 1000 } });
-    expect(current.sessionNaming.maxTokens).toBe(64);
-    expect(preserveEnforcedConfigOverrides(current, {}, enforced)).toEqual({ installationName: "Hidden", sessionNaming: { model: "provider/hidden" } });
+    const replacement = { defaultLocalization: { formatLocale: "de-DE" } };
+    expect(preserveEnforcedConfigOverrides(current, replacement, enforced)).toEqual({ installationName: "Hidden", defaultLocalization: { language: "fr", formatLocale: "de-DE" } });
+    expect(replacement).toEqual({ defaultLocalization: { formatLocale: "de-DE" } });
+    expect(current.defaultLocalization.timeZone).toBe("UTC");
+    expect(preserveEnforcedConfigOverrides(current, {}, enforced)).toEqual({ installationName: "Hidden", defaultLocalization: { language: "fr" } });
   });
 
   it("allows unchanged saved roundtrips and rejects explicit differences", () => {
     expect(preserveEnforcedConfigOverrides(current, current, enforced)).toEqual(current);
     expect(() => preserveEnforcedConfigOverrides(current, { installationName: "Enforced" }, enforced)).toThrow("enforced by PI_WEB_INSTALLATION_NAME");
-    expect(() => preserveEnforcedConfigOverrides(current, { sessionNaming: { model: "provider/new" } }, enforced)).toThrow("enforced by PI_WEB_SESSION_NAMING");
+    expect(() => preserveEnforcedConfigOverrides(current, { defaultLocalization: { language: "de" } }, enforced)).toThrow("enforced by PI_WEB_DEFAULT_LOCALIZATION");
   });
 
   it("keeps absent saved overrides absent and rejects adding locked overrides", () => {
@@ -33,7 +33,7 @@ describe("legacy replacement protection", () => {
   });
 
   it("leaves un-enforced replacement semantics intact", () => {
-    expect(preserveEnforcedConfigOverrides(current, { sessionNaming: {} })).toEqual({ sessionNaming: {} });
+    expect(preserveEnforcedConfigOverrides(current, { defaultLocalization: {} })).toEqual({ defaultLocalization: {} });
   });
 });
 
@@ -53,11 +53,11 @@ describe("configuration override removal", () => {
       .toEqual({});
   });
 
-  it.each(["quietMode", "/unknown", "/sessionNaming/unknown", "/defaultLocalization/unknown", "/defaultTheme/auto", "/shortcuts/action", "/plugins/git/settings/key/deeper", "/plugins/git/settings/bad~escape"])("rejects invalid setting identifier %s", (pointer) => {
+  it.each(["quietMode", "/unknown", "/defaultLocalization/unknown", "/defaultTheme/auto", "/shortcuts/action", "/plugins/git/settings/key/deeper", "/plugins/git/settings/bad~escape"])("rejects invalid setting identifier %s", (pointer) => {
     expect(() => parseConfigPointer(pointer)).toThrow("PI WEB config update");
   });
 
-  it.each(["/uploads/defaultFolder", "/attachments/defaultFolder", "/sessionNaming/model", "/sessionNaming/maxTokens", "/sessionNaming/thinkingLevel", "/sessionNaming/timeoutMs", "/sessionArchive/directory", "/pathAccess/allowedPaths"])("accepts declared independent setting %s", (pointer) => {
+  it.each(["/uploads/defaultFolder", "/attachments/defaultFolder", "/defaultLocalization/language", "/defaultLocalization/timeZone", "/defaultLocalization/hourCycle", "/defaultLocalization/formatLocale", "/sessionArchive/directory", "/pathAccess/allowedPaths"])("accepts declared independent setting %s", (pointer) => {
     expect(parseConfigPointer(pointer)).toEqual(pointer.slice(1).split("/"));
   });
 
@@ -69,7 +69,7 @@ describe("configuration override removal", () => {
   });
 
   it("treats declared containers as namespaces, but individual object values as single settings", () => {
-    expect(configUpdateTargets({ defaultLocalization: { timeZone: "UTC" }, sessionNaming: { maxTokens: 50 }, plugins: { git: { settings: { options: {} }, enabled: false } } }).sort())
-      .toEqual(["/defaultLocalization/timeZone", "/plugins/git/enabled", "/plugins/git/settings/options", "/sessionNaming/maxTokens"]);
+    expect(configUpdateTargets({ defaultLocalization: { timeZone: "UTC", language: "fr" }, plugins: { git: { settings: { options: {} }, enabled: false } } }).sort())
+      .toEqual(["/defaultLocalization/language", "/defaultLocalization/timeZone", "/plugins/git/enabled", "/plugins/git/settings/options"]);
   });
 });

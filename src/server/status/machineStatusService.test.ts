@@ -6,6 +6,7 @@ import type { CwdAttribution } from "./workspaceAttribution.js";
 const WORKING = CORE_STATUS_FLAGS.working;
 const TERMINAL = CORE_STATUS_FLAGS.terminal;
 const UNREAD = CORE_STATUS_FLAGS.unread;
+const INTERVENTION = CORE_STATUS_FLAGS.interventionRequired;
 
 describe("MachineStatusService", () => {
   it("lights the project and workspace of an active session in a project the browser never opened", async () => {
@@ -22,6 +23,61 @@ describe("MachineStatusService", () => {
       workspaces: { "workspace-1": { [WORKING]: true } },
       unattributed: {},
     });
+  });
+
+  it("rolls idle intervention into attributed and unattributed status without implying work", async () => {
+    const interventionSessions = [
+      { sessionId: "idle", cwd: "/repo" },
+      { sessionId: "scratch", cwd: "/scratch" },
+    ];
+    const { service, published } = statusService({
+      interventionSessions,
+      topology: { "/repo": { projectId: "p1", workspaceId: "w1" } },
+    });
+
+    await service.refresh();
+    expect(service.snapshot()).toMatchObject({
+      sessions: { idle: { [INTERVENTION]: true }, scratch: { [INTERVENTION]: true } },
+      machine: { [INTERVENTION]: true },
+      projects: { p1: { [INTERVENTION]: true } },
+      workspaces: { w1: { [INTERVENTION]: true } },
+      unattributed: { [INTERVENTION]: true },
+    });
+    expect(service.snapshot().machine).toEqual({ [INTERVENTION]: true });
+
+    interventionSessions.length = 0;
+    await service.refresh();
+    expect(service.snapshot()).toMatchObject({
+      sessions: {}, machine: {}, projects: {}, workspaces: {}, unattributed: {},
+    });
+    expect(published).toHaveLength(2);
+  });
+
+  it("keeps intervention, working, and unread independent on the same session and rollups", async () => {
+    const interventionSessions = [{ sessionId: "unread-0", cwd: "/repo" }];
+    const { service } = statusService({
+      activity: [{ cwd: "/repo", hasSessionActivity: true, hasTerminalActivity: false }],
+      sessions: [{ sessionId: "unread-0", cwd: "/repo" }],
+      unread: ["/repo"],
+      interventionSessions,
+      topology: { "/repo": { projectId: "p1", workspaceId: "w1" } },
+    });
+    await service.refresh();
+    const allFlags = { [WORKING]: true, [UNREAD]: true, [INTERVENTION]: true };
+    expect(service.snapshot()).toMatchObject({
+      sessions: { "unread-0": allFlags },
+      machine: allFlags,
+      projects: { p1: allFlags },
+      workspaces: { w1: allFlags },
+    });
+
+    interventionSessions.length = 0;
+    await service.refresh();
+    const remaining = { [WORKING]: true, [UNREAD]: true };
+    expect(service.snapshot().sessions).toEqual({ "unread-0": remaining });
+    expect(service.snapshot().machine).toEqual(remaining);
+    expect(service.snapshot().projects).toEqual({ p1: remaining });
+    expect(service.snapshot().workspaces).toEqual({ w1: remaining });
   });
 
   it("lights the project of an unread session completion", async () => {
@@ -212,6 +268,7 @@ interface StatusServiceScenario {
   activity?: readonly ActiveCwdActivity[];
   sessions?: readonly { sessionId: string; cwd: string }[];
   unread?: readonly string[];
+  interventionSessions?: readonly { sessionId: string; cwd: string }[];
   topology?: Record<string, CwdAttribution>;
 }
 
@@ -236,7 +293,13 @@ function statusService(scenario: StatusServiceScenario = {}) {
   ));
 
   const service = new MachineStatusService({
-    activity: { snapshot: () => ({ workspaces: [...activity], sessions: [...(scenario.sessions ?? [])] }) },
+    activity: {
+      snapshot: () => ({
+        workspaces: [...activity],
+        sessions: [...(scenario.sessions ?? [])],
+        ...(scenario.interventionSessions === undefined ? {} : { interventionSessions: [...scenario.interventionSessions] }),
+      }),
+    },
     unread: {
       catalogSnapshot: () => {
         if (failUnreadRead) throw new Error("unread store unavailable");

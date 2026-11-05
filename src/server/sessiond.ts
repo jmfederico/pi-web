@@ -86,6 +86,7 @@ import { sessionServiceDependencies } from "./sessiond/sessionServiceDependencie
 import { PiSessionEventConnections } from "./sessions/piSessionEventConnections.js";
 import { bindCompanionBackend } from "./sessions/companionBackend.js";
 import { registerWorkspaceCatalogRoutes } from "./sessiond/workspaceCatalogRoutes.js";
+import { registerSessionLocationRoutes } from "./sessiond/sessionLocationRoutes.js";
 import { registerPluginBackendChannelRoutes } from "./sessiond/pluginBackendChannelRoutes.js";
 import { installPluginBackendChannelWebSocketPayloadLimit } from "./webSocketBridge.js";
 import { registerPluginBackendResourceRoutes } from "./sessiond/pluginBackendResourceRoutes.js";
@@ -291,6 +292,12 @@ async function createSessionDaemonRuntime() {
     const workspaceProviders = new WorkspaceProviderRegistry({
       contributions: eligibleWorkspaceProviderContributions(providerContributions, providerHealth),
       logger: app.log,
+      // Discovery starts only after composition. Publication invalidates status
+      // after the new record exists; status reads never request more discovery.
+      onPublished: () => {
+        statusAttribution.invalidate();
+        machineStatus.notifyChanged();
+      },
     });
     const statusAttribution = new CachedWorkspaceAttribution({
       projects,
@@ -308,6 +315,7 @@ async function createSessionDaemonRuntime() {
     // browser never has to reconcile a snapshot fetch against live frames.
     eventHub.setGlobalJoinFrame(() => ({ type: "machine.status", status: machineStatus.snapshot() }));
     const workspaceChanges = new WorkspaceChangeNotifier({
+      requestRefresh: (projectId) => { workspaceProviders.requestRefresh(projectId); },
       attribution: statusAttribution,
       status: machineStatus,
       publish: (event) => { eventHub.publishRealtime(event); },
@@ -382,6 +390,7 @@ async function createSessionDaemonRuntime() {
       }),
     }));
     sessionsForFailedConstruction = sessions;
+    await sessions.restoreInterventionState();
     auth.subscribe((change) => { sessions.applyAuthChange(change); });
     // Current workspace authority and session ownership become available at
     // one atomic late boundary, so no dependent can start against a partial host.
@@ -424,7 +433,10 @@ async function createSessionDaemonRuntime() {
       updateTerminal: (terminal) => { workspaceActivity.updateTerminal(terminal); },
       removeTerminal: (terminalId, cwd) => { workspaceActivity.removeTerminal(terminalId, cwd); },
     });
-    const workspaceRemovals = new WorkspaceRemovalService(workspaceProviders, terminals, { notices: serverNotices });
+    const workspaceRemovals = new WorkspaceRemovalService(workspaceProviders, terminals, {
+      notices: serverNotices,
+      onMutation: (projectId) => { workspaceChanges.notify(projectId); },
+    });
     const runtimeComponent = Object.freeze({
       // The deprecated-input report is fixed at startup: it was detected from
       // the captured pre-scrub daemon environment and the config snapshot this
@@ -492,6 +504,7 @@ function registerSessionDaemonRoutes({ eventHub, machineStatus, statusAttributio
   registerAuthRoutes(app, auth);
   registerMcpAuthRoutes(app, sessions);
   registerSessionRoutes(app, sessions, eventHub);
+  registerSessionLocationRoutes(app, { sessions, workspaces: statusAttribution });
   registerWorkspaceCatalogRoutes(app, {
     projects,
     workspaces: workspaceProviders,

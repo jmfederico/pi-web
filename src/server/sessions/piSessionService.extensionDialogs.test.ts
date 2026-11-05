@@ -70,6 +70,8 @@ describe("PiSessionService extension dialog UI context", () => {
 
     const parked = ui.confirm("Proceed?", "Really proceed?");
 
+    expect((await service.status(sessionRef(ACTIVE_SESSION_ID))).interventionRequired).toBe(true);
+    expect(events.globalEvents.at(-1)).toMatchObject({ type: "status.update", status: { interventionRequired: true } });
     expect(store.pendingDialogs(ACTIVE_SESSION_ID)).toEqual([{
       dialogId: "dialog-1",
       kind: "confirm",
@@ -161,6 +163,7 @@ describe("PiSessionService.answerDialog", () => {
       closedAt: "2026-02-01T10:00:00.000Z",
     });
     expect(response.sessionStatus.pendingDialogs).toBeUndefined();
+    expect(response.sessionStatus.interventionRequired).toBe(false);
     expect(store.pendingDialogs(ACTIVE_SESSION_ID)).toEqual([]);
     expect(dialogEvents(events).map(({ event }) => event)).toEqual([
       { type: "dialog.opened", dialog: openDialog(events) },
@@ -180,6 +183,7 @@ describe("PiSessionService.answerDialog", () => {
     await expect(input).resolves.toBe("feature/dialogs");
     await expect(settledValue(select)).resolves.toEqual({ settled: false });
     expect(store.pendingDialogs(ACTIVE_SESSION_ID)).toEqual([expect.objectContaining({ dialogId: "dialog-1" })]);
+    expect((await service.status(sessionRef(ACTIVE_SESSION_ID))).interventionRequired).toBe(true);
     await service.dispose();
   });
 

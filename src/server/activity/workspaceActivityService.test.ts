@@ -58,6 +58,62 @@ describe("WorkspaceActivityService", () => {
     expect(service.snapshot().sessions).toEqual([]);
   });
 
+  it("retains idle intervention state without reporting work and clears it from status updates", () => {
+    const { service, onChanged } = activityRecord();
+    service.applySessionStatus("/repo", status({ interventionRequired: true }));
+
+    expect(service.snapshot()).toEqual({
+      workspaces: [],
+      sessions: [],
+      interventionSessions: [{ sessionId: "s1", cwd: "/repo" }],
+    });
+
+    service.applySessionActivity("/moved", { sessionId: "s1", phase: "idle", label: "Idle", at: "now" });
+    expect(service.snapshot().interventionSessions).toEqual([{ sessionId: "s1", cwd: "/moved" }]);
+
+    service.applySessionStatus("/moved", status());
+    expect(service.snapshot().interventionSessions).toEqual([]);
+    expect(onChanged).toHaveBeenCalled();
+  });
+
+  it("seeds and clears intervention without replacing live status or activity", () => {
+    const { service } = activityRecord();
+    service.applySessionStatus("/repo", status({ isStreaming: true }));
+    service.applySessionActivity("/repo", { sessionId: "s2", phase: "active", label: "tool", at: "now" });
+    for (const sessionId of ["s1", "s2"]) {
+      service.applySessionIntervention("/repo", sessionId, true);
+      service.applySessionIntervention("/repo", sessionId, false);
+    }
+
+    expect(service.snapshot().sessions).toEqual([
+      { sessionId: "s1", cwd: "/repo" },
+      { sessionId: "s2", cwd: "/repo" },
+    ]);
+    expect(service.snapshot().interventionSessions).toEqual([]);
+
+    service.applySessionIntervention("/idle", "s3", true);
+    expect(service.snapshot().interventionSessions).toEqual([{ sessionId: "s3", cwd: "/idle" }]);
+    service.applySessionIntervention("/idle", "s3", false);
+    expect(service.snapshot().interventionSessions).toEqual([]);
+  });
+
+  it("removes and reconciles intervention records without clearing other workspaces", () => {
+    const { service } = activityRecord();
+    service.applySessionIntervention("/repo", "s1", true);
+    service.applySessionIntervention("/repo", "s2", true);
+    service.applySessionIntervention("/other", "s3", true);
+
+    service.reconcileSessionActivity("/repo", ["s2"]);
+    expect(service.snapshot().interventionSessions).toEqual([
+      { sessionId: "s2", cwd: "/repo" },
+      { sessionId: "s3", cwd: "/other" },
+    ]);
+
+    service.removeSession("s2");
+    service.reconcileSessionActivity("/other", []);
+    expect(service.snapshot().interventionSessions).toEqual([]);
+  });
+
   it("does not report a workspace active for a session that is only starting up", () => {
     const { service, onChanged } = activityRecord();
 

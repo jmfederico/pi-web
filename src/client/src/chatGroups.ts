@@ -1,4 +1,5 @@
 import type { ChatLine, ChatPart } from "./chatTypes";
+import { interventionRequestText } from "./chatInterventions";
 
 export type ChatGroup =
   | { kind: "message"; message: ChatLine; index: number }
@@ -22,7 +23,11 @@ export function groupConsecutiveImageOutputs(groups: readonly ChatGroup[]): Chat
   return result;
 }
 
-export function groupChatMessages(messages: ChatLine[], indexOffset = 0): ChatGroup[] {
+export function groupChatMessages(
+  messages: ChatLine[],
+  indexOffset = 0,
+  preserveCustomMessage: (customType: string) => boolean = () => false,
+): ChatGroup[] {
   const groups: ChatGroup[] = [];
   let eventMessages: Extract<ChatGroup, { kind: "group" }>["messages"] = [];
 
@@ -38,7 +43,9 @@ export function groupChatMessages(messages: ChatLine[], indexOffset = 0): ChatGr
   };
 
   messages.forEach((message, index) => {
-    const visibleParts = message.parts.filter((part) => part.type !== "toolResultBoundary" && part.type !== "empty");
+    const parts = message.parts.flatMap((part) => part.type === "customMessage" && !preserveCustomMessage(part.customType)
+      ? part.parts : [part]);
+    const visibleParts = parts.filter((part) => part.type !== "toolResultBoundary" && part.type !== "empty");
     // Ordering markers affect the conversation tail, not visual grouping.
     if (visibleParts.length === 0) return;
     const readableParts = visibleParts.filter((part) => isReadablePart(message, part));
@@ -130,6 +137,8 @@ function toolNameFromParts(parts: ChatPart[]): string | undefined {
 
 function isReadablePart(message: ChatLine, part: ChatPart): boolean {
   if (message.source === "compaction" || message.source === "branch_summary") return false;
-  if (part.type === "skillInvocation" || part.type === "image" || part.type === "askUserQuestion" || part.type === "askUserRecord") return true;
+  if (part.type === "skillInvocation" || part.type === "image" || part.type === "askUserQuestion" || part.type === "askUserRecord" || part.type === "customMessage") return true;
+  // A request addressed to the user must not be folded into collapsed activity.
+  if (interventionRequestText(part) !== undefined) return true;
   return part.type === "text" && (message.role === "user" || message.role === "assistant" || message.role === "system" || message.role === "bash");
 }

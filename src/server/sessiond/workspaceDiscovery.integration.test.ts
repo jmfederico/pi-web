@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { execFile } from "node:child_process";
-import { copyFile, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, realpath, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -26,7 +26,7 @@ const namedHooks = spawnSync("git", ["-c", "hook.pi-web-test.command=:", "-c", "
 it.skipIf(process.platform === "win32" || namedHooks.status !== 0 || !namedHooks.stdout.includes("pi-web-test"))(
   "discovers an agent-created worktree through the provider-owned integration and core notification pipeline",
   async () => {
-    const root = await mkdtemp(join(tmpdir(), "pi-web-discovery-ipc-"));
+    const root = await realpath(await mkdtemp(join(tmpdir(), "pi-web-discovery-ipc-")));
     const repository = join(root, "repo");
     const socket = join(root, "sessiond.sock");
     const env = { ...gitEnv, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" };
@@ -61,7 +61,7 @@ it.skipIf(process.platform === "win32" || namedHooks.status !== 0 || !namedHooks
       const publish = vi.fn<(event: WorkspaceChangedEvent) => void>();
       const invalidate = vi.fn();
       const notifyChanged = vi.fn();
-      const changes = new WorkspaceChangeNotifier({ attribution: { invalidate }, status: { notifyChanged }, publish });
+      const changes = new WorkspaceChangeNotifier({ requestRefresh: (projectId) => { registry?.requestRefresh(projectId); }, attribution: { invalidate }, status: { notifyChanged }, publish });
       registerWorkspaceNotificationRoutes(app, { projects, workspaces: registry, changes });
       await app.listen({ path: socket });
       await registry.reconcileProject(project);
