@@ -18,7 +18,7 @@ export default {
   enabled: message("Enabled", "Show only currently enabled models"),
   allModels: message("All models", "Show the complete model catalog"),
   enableAllModels: message("Enable all models", "Checkbox for unrestricted current and future model availability"),
-  enableAllModelsHelp: message("Includes future models and discards your saved selection. Uncheck to start with all currently available models selected.", "Explains unrestricted scope and starting a new manual selection without restoring a previous selection"),
+  enableAllModelsHelp: message("Includes future models and discards your saved selection.", "Explains that unrestricted availability includes future models and removes the saved manual selection"),
   scopeUnavailable: message("This server does not report the model selection mode. Use All models to edit availability.", "Older-server fallback when explicit scope is unavailable; do not infer scope from enabled rows"),
   projectOverride: message("Project override", "Workspace settings override model availability"),
   overrideNotice: message<{ code: RichMessageTag; path: string }>("Showing models from this workspace’s <code>{path}</code>. Model availability selection is disabled.", "Read-only workspace scope notice; code wraps the unchanged settings path"),

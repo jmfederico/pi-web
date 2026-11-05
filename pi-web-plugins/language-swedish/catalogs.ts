@@ -470,7 +470,7 @@ const catalogs: Record<string, Record<string, string>> = {
     "enabled": "Aktiverade",
     "allModels": "Alla modeller",
     "enableAllModels": "Aktivera alla modeller",
-    "enableAllModelsHelp": "Inkluderar framtida modeller och tar bort ditt sparade urval. Avmarkera för att börja med alla modeller som är tillgängliga nu valda.",
+    "enableAllModelsHelp": "Inkluderar framtida modeller och tar bort ditt sparade urval.",
     "scopeUnavailable": "Den här servern rapporterar inte modellernas urvalsläge. Använd Alla modeller för att ändra tillgängligheten.",
     "projectOverride": "Projektstyrt",
     "overrideNotice": "Visar modeller från arbetsytans <code>{path}</code>. Val av modelltillgänglighet är avstängt.",
