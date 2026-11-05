@@ -2,12 +2,14 @@ import { css } from "lit";
 import { uiButtonStyles, uiToolbarStyles } from "./controlStyles";
 import { uiTranscriptStyles } from "./transcriptStyles";
 import { chatNavigationStyles } from "./chatNavigationStyles";
+import { messageFrameStyles } from "./messageFrameStyles";
 
 export const chatStyles = css`
   ${uiButtonStyles}
   ${uiToolbarStyles}
   ${uiTranscriptStyles}
   ${chatNavigationStyles}
+  ${messageFrameStyles}
   @layer pi-web-base {
   :host { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: visible; color: var(--pi-text); font: 14px var(--pi-font, system-ui, sans-serif); }
   .chat-wrap { --pi-chat-jump-size: 28px; position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: visible; display: flex; flex-direction: column; }
@@ -19,7 +21,7 @@ export const chatStyles = css`
      to avoid browser-driven jumps; ChatScrollFlows anchors history prepends. */
   .chat { isolation: isolate; --pi-chat-sticky-top: 0px; flex: 1 1 auto; min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; overflow-anchor: none; padding: 0; box-sizing: border-box; }
   .chat-wrap > .chat-jumps { position: absolute; right: 0; bottom: 0; }
-  .chat-wrap.plain .msg-header, .chat-wrap.plain .event-group > summary { position: static; top: auto; }
+  .chat-wrap.plain .event-group > summary { position: static; top: auto; }
   .chat-wrap.plain *, .chat-wrap.plain *::before, .chat-wrap.plain *::after { transition: none !important; animation: none !important; box-shadow: none !important; text-shadow: none !important; filter: none !important; backdrop-filter: none !important; transform: none !important; border-radius: 0 !important; }
   .chat-wrap.plain .chat-image { --pi-image-radius: 0; }
   .msg { --ui-transcript-bg: var(--pi-bg); display: flow-root; max-width: 100%; min-width: 0; margin: 0; padding: 12px 16px 16px; overflow: visible; }
@@ -46,7 +48,7 @@ export const chatStyles = css`
   .image-output-sources { margin-top: 4px; }
   .image-output-source { padding: 4px 12px; }
   .image-output-source + .image-output-source { border-top: 1px solid var(--pi-border-muted); }
-  .group-msg { display: flow-root; max-width: 100%; min-width: 0; padding: 0; color: var(--pi-text); overflow: visible; }
+  .group-msg { --message-frame-header-padding: 8px 12px; --message-frame-meta-padding: 6px 12px; display: flow-root; max-width: 100%; min-width: 0; padding: 0; color: var(--pi-text); overflow: visible; }
   .group-msg.system { color: var(--pi-text-secondary); }
   .history-boundary { position: relative; z-index: 5; display: grid; gap: 3px; justify-items: center; margin: 0 0 14px; color: var(--pi-muted); font-size: 12px; text-align: center; }
   .history-load-button { color: var(--pi-text-secondary); }
@@ -70,12 +72,8 @@ export const chatStyles = css`
   .session-activity strong { color: var(--pi-purple); }
   .session-activity span, .session-activity small { color: var(--pi-muted); }
   .history-boundary small { color: var(--pi-dim); }
-  .msg-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 28px; margin-bottom: 4px; }
-  .msg.conversation-layout { padding: 0; }
-  .conversation-content { position: relative; min-width: 0; }
-  .conversation-body { min-width: 0; padding: 12px; }
-  .conversation-layout > .msg-meta-details { padding: 6px 12px; }
-  .conversation-content > .msg-header.conversation-header { position: absolute; inset-block-end: 0; inset-inline-end: 0; z-index: 6; min-height: 0; margin: 0; }
+  .msg.conversation-layout { --message-frame-meta-padding: 6px 12px; padding: 0; }
+  .conversation-body { padding: 12px; }
   .msg-actions { display: contents; }
   .msg-actions-strip { display: flex; flex-wrap: nowrap; width: max-content; background: var(--ui-transcript-bg, var(--pi-bg)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pi-text) 12%, transparent); }
   pi-message-actions-menu[open] { background: var(--ui-transcript-bg, var(--pi-bg)); }
@@ -87,7 +85,7 @@ export const chatStyles = css`
   .label { display: block; color: var(--pi-muted); font-size: 12px; font-weight: 400; }
   .msg-header .label { min-width: 0; margin: 0; overflow-wrap: anywhere; }
   .msg-actions-strip .ui-button:hover:not(:disabled), .msg-meta[aria-expanded="true"] { background: color-mix(in srgb, var(--pi-text) 8%, transparent); color: var(--pi-text); }
-  .msg-meta-details { clear: both; min-width: 0; padding: 6px 0; color: var(--pi-muted); font: 12px/18px var(--pi-font, system-ui, sans-serif); overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
+  .msg-meta-details { clear: both; min-width: 0; color: var(--pi-muted); font: 12px/18px var(--pi-font, system-ui, sans-serif); overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
   formatted-text.part { display: block; }
   formatted-text.part, .queued-message formatted-text { text-align: start; unicode-bidi: plaintext; }
   .part { max-width: 100%; min-width: 0; box-sizing: border-box; overflow: visible; overflow-wrap: anywhere; }

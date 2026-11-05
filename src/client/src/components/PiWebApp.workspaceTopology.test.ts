@@ -83,13 +83,12 @@ describe("PiWebApp workspace topology refresh wiring", () => {
     const refreshSessions = spyOnWorkspaceSessionsRefresh(app);
     const sessions: unknown = Reflect.get(app, "sessions");
     if (!(sessions instanceof SessionController)) throw new Error("SessionController was unavailable");
-    const refreshSelected = vi.spyOn(sessions, "refreshSelectedSession").mockResolvedValue();
-    const resumeSelected = vi.spyOn(sessions, "resumeSelectedSession");
+    // The controller owns whether resume needs a snapshot, reconnect, or fresh join.
+    const resumeSelected = vi.spyOn(sessions, "resumeSelectedSession").mockResolvedValue();
 
     await browserResumeRefresh(app)();
 
     expect(resumeSelected).toHaveBeenCalledExactlyOnceWith({ reconnect: false });
-    expect(refreshSelected).toHaveBeenCalledExactlyOnceWith(undefined, { recoverNetwork: true });
     expect(refreshSessions).toHaveBeenCalledExactlyOnceWith("local", { recoverNetwork: true });
     expect(refreshTopology).toHaveBeenCalledOnce();
     expect(refreshSurface).toHaveBeenCalledOnce();

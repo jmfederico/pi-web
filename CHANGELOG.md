@@ -1,5 +1,20 @@
 # @jmfederico/pi-web
 
+## 1.202611.0
+
+### Patch Changes
+
+- 8646931: Include request-correlated transport errors in session daemon logs so oversized channel rejections can be distinguished from unrelated disconnects.
+- 84a3287: Add actions to copy session, workspace, project, and machine IDs from their menus without displaying the IDs.
+- 0ec82b5: Add plugin renderers for transcript tools and displayed custom messages, with tool resolver chaining for delegation, replacement, and wrapping. Custom messages use the first matching renderer. Keep the existing view as fallback and provide a default-view control.
+- 5b0f00b: Show a static “Needs input” indicator when a session needs the user's attention to a request, including plain-text questions, structured forms, and extension dialogs. Clear agent-requested intervention when any new run starts, and retain it across restarts. Show the agent's request in the transcript as an “Input requested” card instead of inside collapsed tool activity.
+- d982b52: Automatically restore missing macOS terminal helper execute permissions during terminal checks and creation, preventing failures after reinstalling or updating.
+- ad06af3: Move automatic session naming into a removable bundled Pi package, usable in both PI WEB and the TUI. Remove the package to use another naming extension. Migrate naming tuning into package-owned configuration and remove the old writable core key. Core configuration APIs reject the retired setting. Migration failures log errors, retain source data, and allow startup to continue. Update the web UI when extensions rename sessions.
+- 6e82a8d: Keep plain-text code blocks and files in raw view without unnecessary Highlighted/Raw controls.
+- f91fcb4: Keep routine workspace plugin requests, including terminal badge updates, from repeatedly launching Git discovery and stalling the session daemon. Refresh workspace records through discovery and change notifications while retaining fresh validation before workspace deletion.
+- 7ebaf86: Keep the reading position steady when scrolling upward into long code blocks that finish rendering as they enter view.
+- 4ac2158: Coordinate chat scrolling through one viewport owner so consecutive history prepends preserve the original reading position and queued scrolling respects user navigation. Keep saved positions and disclosure choices separate between machines, while preserving existing local state.
+
 ## 1.202610.9
 
 ### Patch Changes

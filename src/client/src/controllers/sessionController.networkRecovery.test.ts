@@ -29,6 +29,8 @@ afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 describe("silent session read recovery", () => {
   it("reconnects the live stream and refreshes the snapshot on browser resume", async () => {
     const h = setup();
+    await h.controller.selectSession(oldSession);
+    h.snapshot.mockClear();
     const reconnect = vi.spyOn(h.socket, "reconnect");
     h.snapshot.mockRejectedValueOnce(networkFailure());
     const resume = h.controller.resumeSelectedSession();
