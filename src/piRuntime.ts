@@ -79,7 +79,7 @@ async function managedInstallSdk(installRoot: string): Promise<string | undefine
     version = (await readFile(versionFile, "utf8")).trim();
   } catch (error) {
     if (error instanceof Error && "code" in error
-      && (error.code === "ENOENT" || error.code === "ENOTDIR" || error.code === "EISDIR")) return undefined;
+      && (error.code === "ENOENT" || error.code === "ENOTDIR")) return undefined;
     throw error;
   }
   // The version becomes one path segment; reject anything that could leave releases/.
@@ -103,7 +103,8 @@ export function stablePiPackageSelection(packageDir: string): string {
   const installRoot = managedInstallRootFromPath(packageDir);
   if (installRoot === undefined) return packageDir;
   try {
-    return statSync(join(installRoot, MANAGED_CURRENT_VERSION)).isFile() ? installRoot : packageDir;
+    statSync(join(installRoot, MANAGED_CURRENT_VERSION));
+    return installRoot;
   } catch (error) {
     if (error instanceof Error && "code" in error
       && (error.code === "ENOENT" || error.code === "ENOTDIR")) return packageDir;
@@ -120,9 +121,9 @@ async function explicitPiPackageDir(explicit: string): Promise<string> {
   if (managed !== undefined) return managed;
   const installRoot = managedInstallRootFromPath(directory);
   if (installRoot !== undefined) {
-    throw new Error(`It names managed Pi release ${JSON.stringify(basename(dirname(dirname(dirname(directory)))))}, which is missing; \`pi update\` removes old releases. Re-run \`/pi-web install\` from Pi, or set it to the managed install root ${installRoot}.`);
+    throw new Error(`Managed Pi release ${JSON.stringify(basename(dirname(dirname(dirname(directory)))))} is missing; \`pi update\` removes old releases. Re-run \`/pi-web install\` from Pi, or use the managed install root ${installRoot}.`);
   }
-  throw new Error(`Expected a package.json named ${SDK_PACKAGE}, or a managed Pi install root containing ${MANAGED_CURRENT_VERSION}.`);
+  throw new Error(`Expected a Pi npm SDK package root (package.json named ${SDK_PACKAGE}) or a managed Pi install root (containing ${MANAGED_CURRENT_VERSION}), not a standalone binary.`);
 }
 
 /** Prefer an explicit Pi host, then ordinary npm resolution, then the Pi command. */
@@ -134,8 +135,9 @@ export async function selectPiRuntimePackageDir(options: PiRuntimeSelectionOptio
     try {
       return await explicitPiPackageDir(explicit);
     } catch (cause) {
-      const reason = cause instanceof Error ? ` ${cause.message}` : "";
-      throw new Error(`Invalid ${PI_WEB_PI_PACKAGE_DIR_ENV}=${JSON.stringify(explicit)}.${reason} Point it to the hosting Pi npm SDK package root or managed install root, not a standalone binary.`, { cause });
+      // Keep the specific reason, including unexpected filesystem errors, in the message.
+      const reason = cause instanceof Error ? cause.message : String(cause);
+      throw new Error(`Invalid ${PI_WEB_PI_PACKAGE_DIR_ENV}=${JSON.stringify(explicit)}: ${reason}`, { cause });
     }
   }
 

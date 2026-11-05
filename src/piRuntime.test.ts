@@ -206,7 +206,7 @@ describe("Pi package selection", () => {
       env: { [PI_WEB_PI_PACKAGE_DIR_ENV]: removed },
       resolveLocalSdk: () => { throw new Error("Must not fall back"); },
     });
-    await expect(selection).rejects.toThrow("managed Pi release \"1.0.0\", which is missing");
+    await expect(selection).rejects.toThrow("Managed Pi release \"1.0.0\" is missing");
     await expect(selection).rejects.toThrow(installRoot);
   });
 

@@ -184,6 +184,7 @@
               <h2>Install through Pi</h2>
               <p>PI WEB is also published as a Pi package. This exposes a <code>/pi-web</code> command inside Pi.</p>
               <p>You do not need a separate global npm install; manage the services with <code>/pi-web</code> inside Pi. The commands and installed services use that same Pi installation. If you move Pi to a different installation path, run <code>/pi-web install</code> again to update the service definitions.</p>
+              <p>With Pi's managed installer (<code>pi.dev/install.sh</code>), the services follow the version Pi selects after <code>pi update</code>. Services installed from a managed Pi by earlier PI WEB versions point at one Pi release and stop starting once <code>pi update</code> removes it; run <code>/pi-web install</code> once to switch them.</p>
               <div class="code-card">
                 <div class="copy-row">
                   <strong>Pi package path</strong>
