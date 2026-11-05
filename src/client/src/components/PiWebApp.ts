@@ -239,6 +239,7 @@ export class PiWebApp extends LitElement {
     {
       notifications: this.notifications,
       isChatVisible: () => this.isChatVisible(),
+      canRejoinSelectedSession: () => this.canRejoinSelectedSession(),
       observeSessionSnapshot: (machineId, sessionId) => {
         const observe = this.sessionWorkTransitions.snapshotObserver(machineId, sessionId);
         const discoveringWork = this.state.conversationRefreshedAt === undefined || !isSessionActive(this.state.status);
@@ -1225,7 +1226,7 @@ export class PiWebApp extends LitElement {
         || (this.routeLocationMatchesUrl(options.requestedRoute)
           && (options.requestedRoute.workspaceId === undefined || this.navigationSurfaceMatchesUrl(surface))))) {
       const contributionQuery = this.restoredContributionQueryForSelectedWorkspace(surface, options.restoredWorkspaceIdentity);
-      this.updateUrl(undefined, contributionQuery);
+      this.updateUrl({ completingSelection: true }, contributionQuery);
     }
   }
 
@@ -1266,11 +1267,17 @@ export class PiWebApp extends LitElement {
     return operation.scope.every((field) => this.navigationFieldGenerations[field] <= operation.generation);
   }
 
-  private syncNavigationFreshness(): void {
+  private syncNavigationFreshness(options: { completingSelection?: boolean } = {}): void {
     const route = readRoute();
     const previous = this.observedNavigationRoute;
     if (previous !== undefined) {
-      const changedFields = NAVIGATION_SCOPES.filter((field) => navigationRouteValue(previous, field) !== navigationRouteValue(route, field));
+      // Resolving omitted workspace/session IDs is still the same destination.
+      // Its deferred chat join may already be running while tool panels load.
+      // Explicit navigation (including naming the same session) still retires
+      // scoped work; only the shell's completion publication gets this exemption.
+      const completesSelection = options.completingSelection === true && completesNavigationSelection(previous, route);
+      const changedFields = NAVIGATION_SCOPES.filter((field) => navigationRouteValue(previous, field) !== navigationRouteValue(route, field)
+        && !(completesSelection && (field === "workspace" || field === "session")));
       if (changedFields.length > 0) {
         const generation = ++this.navigationGeneration;
         for (const field of changedFields) this.navigationFieldGenerations[field] = generation;
@@ -1437,6 +1444,18 @@ export class PiWebApp extends LitElement {
     return this.state.selectedMachine?.id === routeMachineId;
   }
 
+  private canRejoinSelectedSession(): boolean {
+    // A fresh token alone cannot authorize the old rendered row while a newer
+    // destination is still resolving. Let that restore own its replacement join.
+    if (this.routeRestoreInProgress) return false;
+    const route = readRoute();
+    return this.state.selectedWorkspace !== undefined && this.state.selectedSession !== undefined
+      && (route.machineId ?? "local") === selectedMachineId(this.state)
+      && route.projectId === this.state.selectedProject?.id
+      && (route.workspaceId === undefined || route.workspaceId === this.state.selectedWorkspace.id)
+      && (route.sessionId === undefined || route.sessionId === this.state.selectedSession.id);
+  }
+
   private routeMatchesCurrentSelection(route: Pick<AppRoute, "machineId" | "projectId" | "workspaceId" | "sessionId">): boolean {
     const workspace = this.state.selectedWorkspace;
     if ((route.machineId ?? "local") !== selectedMachineId(this.state)
@@ -1487,7 +1506,7 @@ export class PiWebApp extends LitElement {
   }
 
   private updateUrl(
-    options?: { replace?: boolean | undefined },
+    options?: { replace?: boolean | undefined; completingSelection?: boolean },
     contributionQuery: Readonly<ContributionQueryRecord> = this.currentContributionQueryForState(),
   ): void {
     this.commitMachineNavigationSnapshot(machineNavigationSnapshotFromState(this.state, contributionQuery), options);
@@ -1497,7 +1516,7 @@ export class PiWebApp extends LitElement {
   private replaceNavigationUrl(
     contributionQuery: Readonly<ContributionQueryRecord> = this.currentContributionQueryForState(),
   ): void {
-    this.replaceMachineNavigationSnapshot(machineNavigationSnapshotFromState(this.state, contributionQuery));
+    this.replaceMachineNavigationSnapshot(machineNavigationSnapshotFromState(this.state, contributionQuery), { completingSelection: true });
   }
 
   /**
@@ -1505,11 +1524,14 @@ export class PiWebApp extends LitElement {
    * that already know the destination can publish a complete snapshot before
    * applying its corresponding UI state.
    */
-  private commitMachineNavigationSnapshot(snapshot: MachineNavigationSnapshot, options?: { replace?: boolean | undefined }): void {
+  private commitMachineNavigationSnapshot(
+    snapshot: MachineNavigationSnapshot,
+    options?: { replace?: boolean | undefined; completingSelection?: boolean },
+  ): void {
     this.syncNavigationFreshness();
     this.machineNavigation.remember(snapshot);
-    writeRoute(routeFromMachineNavigationSnapshot(snapshot), { ...options, contributionQuery: snapshot.surface.contributionQuery ?? {} });
-    this.syncNavigationFreshness();
+    writeRoute(routeFromMachineNavigationSnapshot(snapshot), { replace: options?.replace, contributionQuery: snapshot.surface.contributionQuery ?? {} });
+    this.syncNavigationFreshness(options);
   }
 
   private rememberCurrentMachineNavigation(): void {
@@ -1530,14 +1552,14 @@ export class PiWebApp extends LitElement {
     return { machineId: machine.id, projectId: workspace.projectId, workspaceId: workspace.id };
   }
 
-  private replaceMachineNavigationSnapshot(snapshot: MachineNavigationSnapshot): void {
+  private replaceMachineNavigationSnapshot(snapshot: MachineNavigationSnapshot, options: { completingSelection?: boolean } = {}): void {
     this.syncNavigationFreshness();
     this.machineNavigation.remember(snapshot);
     const route = routeFromMachineNavigationSnapshot(snapshot);
     const routeMatches = this.navigationRouteMatchesUrl(route);
     if (!this.navigationSurfaceMatchesUrl(snapshot.surface)) this.writeWorkspaceRouteSurfaceToUrl(snapshot.surface);
     if (!routeMatches) writeRoute(route, { replace: true });
-    this.syncNavigationFreshness();
+    this.syncNavigationFreshness(options);
   }
 
   private navigationRouteMatchesUrl(route: AppRoute): boolean {
@@ -4544,6 +4566,13 @@ function sameWorkspaceRouteIdentity(left: WorkspaceRouteIdentity, right: Workspa
   return left.machineId === right.machineId
     && left.projectId === right.projectId
     && left.workspaceId === right.workspaceId;
+}
+
+function completesNavigationSelection(previous: ParsedAppRoute, next: ParsedAppRoute): boolean {
+  return (previous.machineId ?? "local") === (next.machineId ?? "local")
+    && previous.projectId !== undefined && previous.projectId === next.projectId
+    && (previous.workspaceId === undefined || previous.workspaceId === next.workspaceId)
+    && (previous.sessionId === undefined || previous.sessionId === next.sessionId);
 }
 
 function navigationRouteValue(route: ParsedAppRoute, scope: NavigationScope): string | undefined {
