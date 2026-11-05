@@ -118,6 +118,28 @@ describe("initial HTML theme bootstrap", () => {
     expect(JSON.parse(/>(.*?)<\/script>/u.exec(html)?.[1] ?? "")).toEqual(bootstrap);
   });
 
+  it("never embeds unvalidated loading-screen values in executable CSS", () => {
+    const data = catalog();
+    data.themes = data.themes.map((theme) => ({
+      ...theme, loadingScreen: { background: "#fff", foreground: "#000", logo: "</style><script>alert(1)</script>" },
+    }));
+    const html = injectThemeBootstrap('<style id="pi-web-startup-theme"></style>', { catalog: data, stylesheets: [] });
+    expect(html).toBe('<style id="pi-web-startup-theme"></style>');
+  });
+
+  it("uses the delivered Classic loading colours when the configured default requires runtime activation", async () => {
+    const data = catalog();
+    const dark = data.themes[1];
+    if (dark === undefined) throw new Error("Missing fixture theme");
+    data.defaultTheme = { themeId: "legacy:runtime", auto: true };
+    data.themes = [{ ...dark, id: "themes:classic", loadingScreen: { background: "#123", foreground: "#fff", logo: "#abc" } }];
+    data.themePairs = [];
+    const bootstrap = await createThemeBootstrap(() => Promise.resolve(data), { readAsset });
+    const html = injectThemeBootstrap('<style id="pi-web-startup-theme"></style>', bootstrap);
+    expect(html).toContain("--pi-startup-background:#123");
+    expect(html).not.toContain("@media");
+  });
+
   it("fails open on catalog errors, missing CSS and oversized CSS", async () => {
     expect(await createThemeBootstrap(() => Promise.reject(new Error("offline")), { readAsset })).toBeUndefined();
     expect(await createThemeBootstrap(() => Promise.resolve(catalog()), { readAsset: () => Promise.resolve(undefined) })).toBeUndefined();

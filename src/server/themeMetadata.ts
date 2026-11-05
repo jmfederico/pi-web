@@ -1,7 +1,16 @@
-import type { PiWebThemeMetadata, PiWebThemePairMetadata } from "../shared/themeCatalog.js";
+import type { PiWebThemeLoadingScreen, PiWebThemeMetadata, PiWebThemePairMetadata } from "../shared/themeCatalog.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** A narrow colour grammar also makes these values safe inside inline HTML CSS. */
+export function parseThemeLoadingScreen(value: unknown): PiWebThemeLoadingScreen | undefined {
+  if (!isRecord(value)) return undefined;
+  const { background, foreground, logo } = value;
+  const hex = (colour: unknown): colour is string => typeof colour === "string" && /^#(?:[\da-f]{3}|[\da-f]{6})$/iu.test(colour);
+  if (!hex(background) || !hex(foreground) || !hex(logo)) return undefined;
+  return { background, foreground, logo };
 }
 
 /** Package metadata is data only; no browser or server module is evaluated. */
@@ -52,7 +61,9 @@ export function parseThemeMetadata(entry: Record<string, unknown>, source: strin
       return { id: id(sheet["id"]), path, ...(typeof order === "number" ? { order } : {}) };
     });
     if (stylesheets === undefined || stylesheets.length === 0) return fail("stylesheets must not be empty");
-    return { ...common(value), colorScheme, stylesheets };
+    const loadingScreen = parseThemeLoadingScreen(value["loadingScreen"]);
+    if (value["loadingScreen"] !== undefined && loadingScreen === undefined) return fail("loadingScreen requires background, foreground and logo as #RGB or #RRGGBB colours");
+    return { ...common(value), colorScheme, stylesheets, ...(loadingScreen === undefined ? {} : { loadingScreen }) };
   });
   const themePairs = list(entry["themePairs"], (value): PiWebThemePairMetadata => ({ ...common(value), light: id(value["light"]), dark: id(value["dark"]) }));
   const allIds = [...(themes ?? []), ...(themePairs ?? [])].map((item) => item.id);

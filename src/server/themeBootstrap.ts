@@ -2,6 +2,7 @@ import type { PiWebThemeBootstrap, PiWebThemeCatalogResponse } from "../shared/t
 import { DEFAULT_THEME_PREFERENCE } from "../shared/themePreference.js";
 import type { PiWebThemePreference } from "../shared/apiTypes.js";
 import type { PiWebThemeCatalog } from "./themeCatalog.js";
+import { parseThemeLoadingScreen } from "./themeMetadata.js";
 
 const STATIC_THEME_FALLBACK_PREFERENCE: PiWebThemePreference = { themeId: "themes:classic", auto: false };
 
@@ -34,7 +35,28 @@ export function injectThemeBootstrap(html: string, bootstrap: PiWebThemeBootstra
   const json = serializeThemeBootstrap(bootstrap);
   if (json === undefined) return html;
   return html.replace(/(<script\b[^>]*\bid=["']pi-web-theme-data["'][^>]*>)[\s\S]*?<\/script\s*>/iu,
-    (_match, opening: string) => `${opening}${json}</script>`);
+    (_match, opening: string) => `${opening}${json}</script>`)
+    .replace('<style id="pi-web-startup-theme"></style>', () => `<style id="pi-web-startup-theme">${startupThemeCss(bootstrap.catalog)}</style>`);
+}
+
+/** Only the delivered server default styles first paint; browser overrides load later. */
+function startupThemeCss(catalog: PiWebThemeCatalogResponse): string {
+  const desired = catalog.defaultTheme ?? DEFAULT_THEME_PREFERENCE;
+  const preference = catalog.themes.some((theme) => theme.id === desired.themeId) ? desired : STATIC_THEME_FALLBACK_PREFERENCE;
+  const pair = preference.auto ? catalog.themePairs.find((pair) => pair.light === preference.themeId || pair.dark === preference.themeId) : undefined;
+  const rule = (id: string): string => {
+    const theme = catalog.themes.find((theme) => theme.id === id);
+    // Validate again at the HTML boundary, including Vite's backend response.
+    const colours = parseThemeLoadingScreen(theme?.loadingScreen);
+    if (colours === undefined || (theme?.colorScheme !== "light" && theme?.colorScheme !== "dark")) return "";
+    return `#pi-web-startup{--pi-startup-background:${colours.background};--pi-startup-foreground:${colours.foreground};--pi-startup-logo:${colours.logo};--pi-startup-scheme:${theme.colorScheme}}`;
+  };
+  if (pair === undefined) return rule(preference.themeId);
+  // Keep each branch independent: a missing contribution uses the system fallback.
+  return (["light", "dark"] as const).map((scheme) => {
+    const css = rule(pair[scheme]);
+    return css === "" ? "" : `@media(prefers-color-scheme:${scheme}){${css}}`;
+  }).join("");
 }
 
 export function createThemeBootstrap(
