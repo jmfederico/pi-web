@@ -10,15 +10,11 @@ import {
   installSelectedNotificationSnapshot,
   notificationAnnouncementLabel,
   notificationDismissLabel,
-  notificationFocusTargetAfterDismiss,
   notificationInboxOverflowLabel,
   notificationInboxTotalCount,
   notificationMessageTruncationLabel,
-  notificationTargetKey,
   notificationTrayHeading,
-  notificationTrayIsCollapsed,
   selectedNotificationView,
-  setNotificationTrayCollapsed,
   type SessionNotificationAnnouncement,
   type SessionNotificationTarget,
 } from "./sessionNotifications";
@@ -151,25 +147,6 @@ describe("selected notification projection", () => {
 });
 
 describe("notification presentation helpers", () => {
-  it("chooses next, previous, then header focus targets", () => {
-    const notifications = [notification(3), notification(2), notification(1)];
-
-    expect(notificationFocusTargetAfterDismiss(notifications, "daemon-a:2")).toEqual({ kind: "notification", notificationId: "daemon-a:1" });
-    expect(notificationFocusTargetAfterDismiss(notifications, "daemon-a:1")).toEqual({ kind: "notification", notificationId: "daemon-a:2" });
-    expect(notificationFocusTargetAfterDismiss([notification(1)], "daemon-a:1")).toEqual({ kind: "header" });
-  });
-
-  it("retains collapse state by exact machine, cwd, and session identity", () => {
-    const collapsed = setNotificationTrayCollapsed(new Set(), target, true);
-
-    expect(notificationTrayIsCollapsed(collapsed, target)).toBe(true);
-    expect(notificationTrayIsCollapsed(collapsed, { ...target, machineId: "remote" })).toBe(false);
-    expect(notificationTrayIsCollapsed(collapsed, { ...target, cwd: "/other" })).toBe(false);
-    expect(notificationTrayIsCollapsed(collapsed, { ...target, sessionId: "session-2" })).toBe(false);
-    expect(notificationTargetKey(target)).not.toBe(notificationTargetKey({ ...target, cwd: "/repo|session-1" }));
-    expect(notificationTrayIsCollapsed(setNotificationTrayCollapsed(collapsed, target, false), target)).toBe(false);
-  });
-
   it("derives compact tray copy and a count that includes older unseen notifications", () => {
     const counts = { retainedCount: 2, discardedCount: 23 };
 

@@ -10,6 +10,7 @@ import { ServerNoticesController } from "../serverNotices";
 import type { Machine, Workspace } from "../api";
 import type { ParsedAppRoute } from "../route";
 import { PiWebApp } from "./PiWebApp";
+import { NotificationArea } from "./NotificationArea";
 import { localization } from "../localization/browser";
 import { BrowserErrorReporter, type BrowserError } from "../browserErrors";
 import { navigationOrderPort } from "../api/navigationOrder";
@@ -281,16 +282,21 @@ describe("PiWebApp workspace removal browser error boundary", () => {
     document.body.append(container);
     for (const language of ["en", "en-XA", "ar-XB"]) {
       await localization.setPreferences({ language, formatLocale: "en" });
-      render(invoke(app, "renderServerNoticeBanners"), container);
-      const banners = container.querySelectorAll(".error-text");
-      expect(banners).toHaveLength(3);
-      expect(banners[0]?.textContent).toContain(diagnostic);
-      expect(banners[0]?.textContent === notices[0]?.message).toBe(language === "en");
-      expect(banners[1]?.textContent === notices[1]?.message).toBe(language === "en");
-      expect(banners[2]?.textContent).toBe(notices[2]?.message);
-      expect(container.querySelector("img")).toBeNull();
+      render(invoke(app, "renderNotificationArea", appState(app)), container);
+      const area = container.querySelector("notification-area");
+      if (!(area instanceof NotificationArea)) throw new Error("Missing unified notifications");
+      await area.updateComplete;
+      const items = area.groups.flatMap((group) => group.items);
+      expect(items).toHaveLength(3);
+      expect(items[0]?.message).toContain(diagnostic);
+      expect(items[0]?.message === notices[0]?.message).toBe(language === "en");
+      expect(items[1]?.message === notices[1]?.message).toBe(language === "en");
+      expect(items[2]?.message).toBe(notices[2]?.message);
+      expect(area.renderRoot.querySelector("img")).toBeNull();
     }
-    container.querySelector("button")?.click();
+    const area = container.querySelector("notification-area");
+    if (!(area instanceof NotificationArea)) throw new Error("Missing unified notifications");
+    await area.groups.flatMap((group) => group.items)[0]?.dismiss?.();
     expect(dismiss).toHaveBeenCalledWith("local", "start");
   });
 

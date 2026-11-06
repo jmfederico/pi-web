@@ -1,11 +1,10 @@
 // @vitest-environment happy-dom
 import { afterEach, expect, it, vi } from "vitest";
-import { render } from "lit";
 import { localization } from "../localization/browser";
 import { BrowserErrorReporter, browserErrorScopeKey, machineBrowserErrorScope } from "../browserErrors";
 import { initialAppState } from "../appState";
 import { AuthController } from "../controllers/authController";
-import { errorBanner } from "./errorBanner";
+import { NotificationArea } from "./NotificationArea";
 
 const releases: (() => void)[] = [];
 afterEach(async () => {
@@ -20,19 +19,24 @@ it("translates whole dismiss labels and retry controls while preserving the diag
     dismissError: "Fehler ausblenden", dismissWarning: "Warnung ausblenden", dismissInfo: "Hinweis ausblenden", retry: "Erneut versuchen",
   }) }));
   await localization.setPreferences({ language: "de", formatLocale: "en" });
-  for (const [severity, label] of [["error", "Fehler ausblenden"], ["warning", "Warnung ausblenden"], ["info", "Hinweis ausblenden"]] as const) {
-    const dismiss = vi.fn();
-    const retry = vi.fn();
-    render(errorBanner("Unchanged diagnostic", dismiss, severity, retry), document.body);
-    expect(document.querySelector("[role='alert']")?.textContent).toContain("Unchanged diagnostic");
-    const retryButton = document.querySelector<HTMLButtonElement>(".error-retry");
-    const dismissButton = document.querySelector<HTMLButtonElement>(".error-dismiss");
+  releases.push(localization.registerCatalog({ id: "notification-test", namespace: "core.sessionNotifications", locale: "de", load: () => Promise.resolve({
+    dismiss: "Benachrichtigung ausblenden: {summary}",
+  }) }));
+  await localization.ready;
+  for (const severity of ["error", "warning", "info"] as const) {
+    const dismiss = vi.fn(); const retry = vi.fn();
+    const area = new NotificationArea();
+    area.groups = [{ id: "browser", items: [{ id: severity, source: "browser", severity, message: "Unchanged diagnostic", dismiss, retry }] }];
+    document.body.append(area); await area.updateComplete;
+    const retryButton = area.renderRoot.querySelector<HTMLButtonElement>(".notification-retry");
+    const dismissButton = area.renderRoot.querySelector<HTMLButtonElement>(".notification-row-dismiss");
+    expect(area.renderRoot.querySelector(".notification-message")?.textContent).toBe("Unchanged diagnostic");
     expect(retryButton?.textContent).toBe("Erneut versuchen");
-    expect(dismissButton?.getAttribute("aria-label")).toBe(label);
-    retryButton?.click();
+    expect(dismissButton?.getAttribute("aria-label")).toBe("Benachrichtigung ausblenden: Unchanged diagnostic");
+    retryButton?.click(); await area.updateComplete; await area.updateComplete;
     dismissButton?.click();
-    expect(retry).toHaveBeenCalledOnce();
-    expect(dismiss).toHaveBeenCalledOnce();
+    expect(retry).toHaveBeenCalledOnce(); expect(dismiss).toHaveBeenCalledOnce();
+    area.remove();
   }
 });
 

@@ -48,7 +48,8 @@ import type { SessionNoticeDismissDetail } from "./SessionNoticesPanel";
 import { RealtimeSocket, type BrowserRealtimeEvent } from "../sessionSocket";
 import { serverNoticeMessage } from "../serverNoticeMessages";
 import { ServerNoticesController, visibleServerNotices } from "../serverNotices";
-import type { ServerNotice } from "../../../shared/apiTypes";
+import type { NotificationGroup, NotificationItem } from "../notificationArea";
+import { sessionNotificationGroup as adaptSessionNotifications } from "../notificationAdapters";
 import type { ApplicationPanelContext, MaintenanceTerminal, PluginNavigationPatchDestination, PluginNavigationOptions, ContributionQueryValue, PiWebPluginRegistration, PluginMachine, PluginPromptEditor, QualifiedContributionId, QualifiedThemeContribution, PluginRuntimeContext, SessionLabelContext, SessionLabelItem, WorkspaceFilesCapabilityV1, WorkspaceHost, WorkspaceInvalidation, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePanelNavigationV1, WorkspacePanelTerminal, WorkspacePluginBinding, WorkspaceTerminalCommandInput } from "../plugins/types";
 import { applyPiWebTheme, clearPiWebTheme, clearStoredThemePreference, configureThemePolicy, effectiveThemePreference, getThemePolicy, readStoredThemePreference, resolveThemePreference, writeStoredThemePreference, type ThemePreference, type ThemePreferenceResolution } from "../theme";
 import { corePlugin } from "../plugins/core";
@@ -117,7 +118,7 @@ import { appFeedbackMessages as appFeedback } from "../appFeedbackMessages";
 import { PluginRecoveryError, pluginRecoveryMessages as pluginRecovery } from "../pluginRecoveryMessages";
 import { renderPanelToggleButton } from "./appShell/panelToggleButton";
 import "./appShell/AppRefreshControl";
-import { errorBanner } from "./errorBanner";
+import "./NotificationArea";
 import { deprecatedAgentInputsBanner, deprecatedAgentInputsWarnings } from "./deprecatedAgentInputsBanner";
 import { appStyles } from "./shared";
 
@@ -181,6 +182,9 @@ export class PiWebApp extends LitElement {
   @property({ attribute: false }) chatBehaviors: ChatBehaviors = DEFAULT_CHAT_BEHAVIORS;
   @state() private state: AppState = initialAppState();
   private readonly browserErrors = new BrowserErrorReporter(() => this.state, (patch) => { this.setState(patch); });
+  private readonly notificationOccurrenceIds = new WeakMap<object, number>();
+  private nextNotificationOccurrenceId = 0;
+  private legacyErrorRevision = 0;
   @query("chat-view") private chatView?: ChatView;
   @state() private machineNameEditTarget: Machine | undefined;
   @state() private chatNavigation: TemplateResult | undefined;
@@ -333,6 +337,9 @@ export class PiWebApp extends LitElement {
     },
     onBackgroundError: (operation, machineId, error) => {
       console.warn(`Failed to ${operation} server notices for ${machineId}`, error);
+      if (operation === "dismiss") {
+        this.browserErrors.reportLocalized(machineBrowserErrorScope(machineId), () => appFeedback.t("actionFailed", { detail: errorMessage(error) }));
+      }
     },
   });
   private readonly machineRealtimeSockets = new Map<string, RealtimeSocket>();
@@ -770,6 +777,10 @@ export class PiWebApp extends LitElement {
   }
 
   private setState(patch: Partial<AppState>) {
+    if (patch.error !== undefined) {
+      this.legacyErrorRevision += 1;
+      this.requestUpdate();
+    }
     if (!patchChangesState(this.state, patch)) return;
     const previous = this.state;
     this.state = { ...this.state, ...patch };
@@ -4045,14 +4056,6 @@ export class PiWebApp extends LitElement {
     this.sessions.dismissClosedDialog(dialogId);
   };
 
-  private readonly handleDismissNotification = (notificationId: string): void => {
-    void this.notifications.dismissNotification(notificationId);
-  };
-
-  private readonly handleDismissAllNotifications = (): void => {
-    void this.notifications.dismissAll();
-  };
-
   private readonly handleSelectModel = (): void => {
     void this.openModelDialog();
   };
@@ -4224,8 +4227,6 @@ export class PiWebApp extends LitElement {
     };
   }
   private readonly handleLoadEarlierMessages = () => this.withChatPrependTransition(() => this.sessions.loadEarlierMessages());
-  private notificationViewInput: AppState["selectedNotificationInbox"];
-  private notificationView: ReturnType<typeof selectedNotificationView>;
   private chatWorkspaceContext: MarkdownWorkspaceContext | undefined;
   private chatWorkspaceContextKey: string | undefined;
 
@@ -4237,12 +4238,8 @@ export class PiWebApp extends LitElement {
       this.chatWorkspaceContextKey = contextKey;
       this.chatWorkspaceContext = workspaceContext;
     }
-    if (this.notificationViewInput !== state.selectedNotificationInbox) {
-      this.notificationViewInput = state.selectedNotificationInbox;
-      this.notificationView = selectedNotificationView(state.selectedNotificationInbox);
-    }
     return html`
-      <chat-view .onNavigationChange=${this.handleChatNavigationChange} .quietMode=${this.quietMode} .behaviors=${this.chatBehaviors} .contentRendering=${this.plugins.getChatContentRendering(selectedMachineId(state))} .transcriptRenderers=${this.plugins.getTranscriptRenderers(selectedMachineId(state))} .machineId=${selectedMachineId(state)} @workspace-file-open=${this.handleWorkspaceFileOpen} .workspaceContext=${this.chatWorkspaceContext} .sessionId=${session.id} .sessionCwd=${session.cwd} .onMessageAction=${this.handleMessageAction} .onDisplayedMessageAction=${this.handleDisplayedMessageAction} .messageActions=${this.plugins.getMessageActions(selectedMachineId(state))} .messageActionContext=${this.messageActionContext(state)} .messages=${state.messages} .messageStart=${state.messagePageStart} .messageEnd=${state.messagePageEnd} .messageTotal=${state.messagePageTotal} .hasMore=${state.messagePageStart > 0} .historyReady=${this.readyChatIdentity === selectedChatIdentity(state)} .loadingMore=${state.isLoadingEarlierMessages} .isSendingPrompt=${state.sendingPrompts[session.id] === true} .isCompacting=${state.status?.isCompacting === true} .pendingMessageCount=${state.status?.pendingMessageCount ?? 0} .clientQueuedMessages=${state.clientQueuedSessionMessages[session.id] ?? this.emptyClientQueue} .status=${state.status} .activity=${state.activity} .pendingDialogs=${state.pendingDialogs} .closedDialogs=${state.closedDialogs} .onAnswerDialog=${this.handleAnswerDialog} .onCancelDialog=${this.handleCancelDialog} .onDismissClosedDialog=${this.handleDismissClosedDialog} .askDraftSessionId=${machineSessionKey(selectedMachineId(state), session.id)} .onSubmitAsk=${session.archived === true ? undefined : this.handleSubmitAsk} .notificationInbox=${this.notificationView} .onClearServerQueue=${this.handleClearServerQueue} .onQueuedMessageAction=${session.archived === true ? undefined : this.handleQueuedMessageAction} .queuedMessageActionPending=${this.queuedMessageActionTarget !== undefined || this.messageRevertTarget !== undefined} .onDismissNotification=${this.handleDismissNotification} .onDismissAllNotifications=${this.handleDismissAllNotifications} .onLoadMore=${this.handleLoadEarlierMessages}></chat-view>
+      <chat-view .onNavigationChange=${this.handleChatNavigationChange} .quietMode=${this.quietMode} .behaviors=${this.chatBehaviors} .contentRendering=${this.plugins.getChatContentRendering(selectedMachineId(state))} .transcriptRenderers=${this.plugins.getTranscriptRenderers(selectedMachineId(state))} .machineId=${selectedMachineId(state)} @workspace-file-open=${this.handleWorkspaceFileOpen} .workspaceContext=${this.chatWorkspaceContext} .sessionId=${session.id} .sessionCwd=${session.cwd} .onMessageAction=${this.handleMessageAction} .onDisplayedMessageAction=${this.handleDisplayedMessageAction} .messageActions=${this.plugins.getMessageActions(selectedMachineId(state))} .messageActionContext=${this.messageActionContext(state)} .messages=${state.messages} .messageStart=${state.messagePageStart} .messageEnd=${state.messagePageEnd} .messageTotal=${state.messagePageTotal} .hasMore=${state.messagePageStart > 0} .historyReady=${this.readyChatIdentity === selectedChatIdentity(state)} .loadingMore=${state.isLoadingEarlierMessages} .isSendingPrompt=${state.sendingPrompts[session.id] === true} .isCompacting=${state.status?.isCompacting === true} .pendingMessageCount=${state.status?.pendingMessageCount ?? 0} .clientQueuedMessages=${state.clientQueuedSessionMessages[session.id] ?? this.emptyClientQueue} .status=${state.status} .activity=${state.activity} .pendingDialogs=${state.pendingDialogs} .closedDialogs=${state.closedDialogs} .onAnswerDialog=${this.handleAnswerDialog} .onCancelDialog=${this.handleCancelDialog} .onDismissClosedDialog=${this.handleDismissClosedDialog} .askDraftSessionId=${machineSessionKey(selectedMachineId(state), session.id)} .onSubmitAsk=${session.archived === true ? undefined : this.handleSubmitAsk} .onClearServerQueue=${this.handleClearServerQueue} .onQueuedMessageAction=${session.archived === true ? undefined : this.handleQueuedMessageAction} .queuedMessageActionPending=${this.queuedMessageActionTarget !== undefined || this.messageRevertTarget !== undefined} .onLoadMore=${this.handleLoadEarlierMessages}></chat-view>
     `;
   }
 
@@ -4372,38 +4369,126 @@ export class PiWebApp extends LitElement {
     return html`<app-refresh-control .onReload=${this.handleReloadApp}></app-refresh-control>`;
   }
 
-  private renderServerNoticeBanners(): TemplateResult | null {
-    const machineId = selectedMachineId(this.state);
-    const projection = this.serverNotices.projection(machineId);
-    const notices = projection?.status === "fresh" ? visibleServerNotices(projection.notices, browserErrorContext(this.state)) : [];
-    if (notices.length === 0) return null;
-    return html`${notices.map((notice: ServerNotice) => errorBanner(serverNoticeMessage(notice), () => {
-      void this.serverNotices.dismiss(machineId, notice.id);
-    }, notice.severity))}`;
+  private notificationOccurrenceId(owner: object): number {
+    const existing = this.notificationOccurrenceIds.get(owner);
+    if (existing !== undefined) return existing;
+    const id = ++this.nextNotificationOccurrenceId;
+    this.notificationOccurrenceIds.set(owner, id);
+    return id;
   }
 
-  private renderBrowserErrorBanners(state: AppState): TemplateResult | null {
+  private notificationScopeLabel(scope: { machineId?: string; projectId?: string; workspaceId?: string; sessionId?: string }): string {
+    const state = this.state;
+    return [
+      scope.machineId === undefined ? undefined : state.machines.find((machine) => machine.id === scope.machineId)?.name ?? scope.machineId,
+      scope.projectId === undefined ? undefined : state.projects.find((project) => project.id === scope.projectId)?.name ?? scope.projectId,
+      scope.workspaceId === undefined ? undefined : state.workspaces.find((workspace) => workspace.id === scope.workspaceId)?.label ?? scope.workspaceId,
+      scope.sessionId === undefined ? undefined : state.sessions.find((session) => session.id === scope.sessionId)?.name ?? scope.sessionId,
+    ].filter((value) => value !== undefined).join(" / ");
+  }
+
+  private browserNotificationGroup(state: AppState): NotificationGroup {
     const errors = this.visibleBrowserErrorsForCurrentRoute(state);
-    if (errors.length === 0) return null;
-    return html`${errors.map((error) => errorBanner(
-      error.displayMessage?.() ?? error.message,
-      () => { this.dismissBrowserError(error); },
-      "error",
-      error.recovery === undefined ? undefined : () => { this.retryBrowserError(error); },
-    ))}`;
+    const items: NotificationItem[] = errors.map((error) => ({
+      id: JSON.stringify(["browser", browserErrorScopeKey(error.scope), this.notificationOccurrenceId(error)]),
+      source: "browser",
+      severity: "error",
+      message: error.displayMessage?.() ?? error.message,
+      ...(error.scope.kind === "global" ? {} : { scopeLabel: this.notificationScopeLabel(error.scope) }),
+      dismiss: () => { this.dismissBrowserError(error); },
+      ...(error.recovery === undefined ? {} : { retry: () => this.retryBrowserError(error) }),
+    }));
+    const message = this.displayedError();
+    if (message !== "") {
+      const machineId = selectedMachineId(state);
+      const legacyError = state.error;
+      const revision = this.legacyErrorRevision;
+      const failure = this.requiredPluginFailureByMachine.get(machineId);
+      items.push({
+        id: JSON.stringify(["browser", machineId, legacyError !== "" ? ["legacy", revision, legacyError] : ["plugin", failure === undefined ? 0 : this.notificationOccurrenceId(failure)]]),
+        source: "browser", severity: "error", message,
+        scopeLabel: this.notificationScopeLabel({ machineId }),
+        dismiss: () => {
+          if (selectedMachineId(this.state) !== machineId || this.state.error !== legacyError) return;
+          if (legacyError !== "" ? this.legacyErrorRevision !== revision : this.requiredPluginFailureByMachine.get(machineId) !== failure) return;
+          this.dismissDisplayedError();
+        },
+      });
+    }
+    return { id: "browser", items, clear: async () => { await Promise.all(items.map(async (item) => { await item.dismiss?.(); })); } };
   }
 
-  private retryBrowserError(error: BrowserError): void {
+  private serverNotificationGroup(state: AppState): NotificationGroup {
+    const machineId = selectedMachineId(state);
+    const projection = this.serverNotices.projection(machineId);
+    const notices = projection?.status === "fresh" ? visibleServerNotices(projection.notices, browserErrorContext(state)) : [];
+    const items: NotificationItem[] = notices.map((notice) => ({
+      id: JSON.stringify(["server", machineId, projection?.daemonInstanceId, notice.id]),
+      source: "server", severity: notice.severity, message: serverNoticeMessage(notice), receivedAt: notice.createdAt,
+      scopeLabel: [this.notificationScopeLabel({ machineId, ...notice.scope }), notice.source].filter(Boolean).join(" / "),
+      dismiss: () => {
+        const current = this.serverNotices.projection(machineId);
+        if (selectedMachineId(this.state) !== machineId || current?.status !== "fresh" || current.daemonInstanceId !== projection?.daemonInstanceId) return;
+        return this.serverNotices.dismiss(machineId, notice.id);
+      },
+    }));
+    return {
+      id: JSON.stringify(["server", machineId, projection?.daemonInstanceId]), items,
+      // Dispatch the captured IDs together: awaiting each would let refreshed snapshots change the clear target.
+      clear: async () => { await Promise.all(items.map(async (item) => { await item.dismiss?.(); })); },
+    };
+  }
+
+  private sessionNotificationGroup(state: AppState): NotificationGroup | undefined {
+    const inbox = state.selectedNotificationInbox;
+    const view = selectedNotificationView(inbox);
+    const session = state.selectedSession;
+    if (view === undefined || session === undefined || session.archived === true
+      || view.machineId !== selectedMachineId(state) || view.sessionId !== session.id || view.cwd !== session.cwd) return undefined;
+    const isCurrentTarget = () => {
+      const current = this.state;
+      return selectedMachineId(current) === view.machineId && current.selectedSession?.id === view.sessionId
+        && current.selectedSession.archived !== true && current.selectedSession.cwd === view.cwd
+        && current.selectedNotificationInbox?.status === "fresh" && current.selectedNotificationInbox.daemonInstanceId === view.daemonInstanceId
+        && current.selectedNotificationInbox.machineId === view.machineId && current.selectedNotificationInbox.sessionId === view.sessionId
+        && current.selectedNotificationInbox.cwd === view.cwd;
+    };
+    return adaptSessionNotifications(view, {
+      scopeLabel: this.notificationScopeLabel({ machineId: view.machineId, sessionId: view.sessionId }),
+      dismiss: (notificationId) => isCurrentTarget() ? this.notifications.dismissNotification(notificationId) : undefined,
+      clear: () => {
+        // dismissAll captures the controller's watermark, so do not invoke it on a newer projection.
+        return isCurrentTarget() && this.state.selectedNotificationInbox === inbox ? this.notifications.dismissAll() : undefined;
+      },
+    });
+  }
+
+  private renderNotificationArea(state: AppState) {
+    const session = this.sessionNotificationGroup(state);
+    const groups = [this.browserNotificationGroup(state), this.serverNotificationGroup(state), ...(session === undefined ? [] : [session])];
+    return html`<notification-area
+      .contextKey=${JSON.stringify(browserErrorContextForRoute(state, readRoute()))}
+      .groups=${groups}
+      .onActionError=${this.handleNotificationActionError}
+    ></notification-area>`;
+  }
+
+  private readonly handleNotificationActionError = (error: unknown): void => {
+    this.browserErrors.reportLocalized({ kind: "global" }, () => appFeedback.t("actionFailed", { detail: errorMessage(error) }));
+  };
+
+  private retryBrowserError(error: BrowserError): void | Promise<void> {
     if (this.state.browserErrors[browserErrorScopeKey(error.scope)] !== error) return;
     const scope = error.scope;
     if (scope.kind === "session" && error.recovery === "session-refresh" && scope.machineId === selectedMachineId(this.state)) {
-      void this.sessions.refreshSelectedSession(scope.sessionId, { recoverNetwork: true });
+      return this.sessions.refreshSelectedSession(scope.sessionId, { recoverNetwork: true });
     } else if (scope.kind === "workspace" && error.recovery === "workspace-sessions-refresh"
       && scope.machineId === selectedMachineId(this.state)
       && scope.workspaceId === this.state.selectedWorkspace?.id
       && scope.projectId === this.state.selectedWorkspace.projectId) {
-      void this.sessions.refreshCurrentWorkspaceSessions(scope.machineId, { recoverNetwork: true });
+      return this.sessions.refreshCurrentWorkspaceSessions(scope.machineId, { recoverNetwork: true });
     }
+    return undefined;
   }
 
   private visibleBrowserErrorsForCurrentRoute(state: AppState): BrowserError[] {
@@ -4411,6 +4496,7 @@ export class PiWebApp extends LitElement {
   }
 
   private dismissBrowserError(error: BrowserError): void {
+    if (this.state.browserErrors[browserErrorScopeKey(error.scope)] !== error) return;
     const browserErrors = clearBrowserError(this.state.browserErrors, error.scope, error.message);
     if (browserErrors !== this.state.browserErrors) this.setState({ browserErrors });
   }
@@ -4427,9 +4513,7 @@ export class PiWebApp extends LitElement {
           ${this.renderContextBar()}
           ${guard([...this.workspaceSurfaceInputs(), state.sessions, this.unreadSessionIds, this.panelCollapse.navigationPanelCollapsed, this.panelCollapse.workspacePanelCollapsed], () => this.renderMobileMainTabs())}
           ${this.unknownRouteView() === undefined ? null : html`<div class="error warning" role="alert"><span class="error-text">${routeFeedback.t("unknownView", { view: this.unknownRouteView() ?? "" })}</span></div>`}
-          ${this.renderServerNoticeBanners()}
-          ${errorBanner(this.displayedError(), () => { this.dismissDisplayedError(); })}
-          ${this.renderBrowserErrorBanners(state)}
+          ${this.renderNotificationArea(state)}
           ${deprecatedAgentInputsBanner(deprecatedAgentInputsWarnings(state.machines, state.machineRuntimes))}
           <div class="mobile-navigation-panel">${this.appShell.isMobileNavigationLayout ? this.renderNavigationPanel() : null}</div>
           ${state.selectedSession && !this.sessions.isChatLoadDeferred && (this.isChatVisible() || this.displayedChatIdentity === selectedChatIdentity(state)) ? html`

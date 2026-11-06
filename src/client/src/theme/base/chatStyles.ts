@@ -13,9 +13,6 @@ export const chatStyles = css`
   @layer pi-web-base {
   :host { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: visible; color: var(--pi-text); font: 14px var(--pi-font, system-ui, sans-serif); }
   .chat-wrap { --pi-chat-jump-size: 28px; position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: visible; display: flex; flex-direction: column; }
-  .top-notices { box-sizing: border-box; flex: 0 0 auto; max-height: 40%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; border-bottom: 1px solid var(--pi-border); background: var(--pi-bg-overlay); }
-  /* Empty notification hosts retain live regions without leaving a visible stack boundary. */
-  .top-notices:has(> session-notification-tray[empty]) { border-bottom: 0; }
   .visually-hidden { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0 0 0 0) !important; clip-path: inset(50%) !important; white-space: nowrap !important; border: 0 !important; }
   /* Contain sticky headers below the overlay scrollbar. Disable native anchoring
      to avoid browser-driven jumps; ChatScrollFlows anchors history prepends. */

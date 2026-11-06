@@ -1119,8 +1119,7 @@ describe("application rendering boundaries", () => {
     const refreshSelected = vi.spyOn(sessions, "refreshSelectedSession").mockResolvedValue();
     const refreshWorkspace = vi.spyOn(sessions, "refreshCurrentWorkspaceSessions").mockResolvedValue();
     await settle(app);
-    const retry = [...app.shadowRoot?.querySelectorAll<HTMLButtonElement>("main .error button") ?? []].find((button) => button.textContent.trim() === "Retry");
-    if (retry === undefined) throw new Error("Expected a recovery Retry button");
+    const retry = namedButton(app.shadowRoot?.querySelector("notification-area")?.shadowRoot, "Retry");
     retry.click();
 
     if (recovery === "session-refresh") {
@@ -1140,9 +1139,9 @@ describe("application rendering boundaries", () => {
       browserErrors: reportBrowserError({}, sessionBrowserErrorScope("local", session.id), "Prompt delivery could not be confirmed"),
     });
     await settle(app);
-    expect(app.shadowRoot?.textContent).toContain("Prompt delivery could not be confirmed");
-    const retry = [...app.shadowRoot?.querySelectorAll<HTMLButtonElement>("main .error button") ?? []].find((button) => button.textContent.trim() === "Retry");
-    expect(retry).toBeUndefined();
+    const notifications = app.shadowRoot?.querySelector("notification-area")?.shadowRoot;
+    expect(notifications?.textContent).toContain("Prompt delivery could not be confirmed");
+    expect(notifications?.querySelector(".notification-retry")).toBeNull();
   });
 
   it("updates the workspace empty state as project loading completes", async () => {

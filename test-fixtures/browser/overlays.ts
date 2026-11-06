@@ -1,4 +1,9 @@
 import { html, render } from "lit";
+import { parse } from "@formatjs/icu-messageformat-parser";
+import { printAST } from "@formatjs/icu-messageformat-parser/printer.js";
+import { localization } from "../../src/client/src/localization/browser";
+import { pseudoLocalize } from "../../src/client/src/localization/catalog";
+import notificationMessages from "../../src/client/src/components/sessionNotifications.messages";
 import { api, type Machine, type SessionStatus } from "../../src/client/src/api";
 import { ConversationLayout } from "../../src/client/src/components/ConversationLayout";
 import { ChatView } from "../../src/client/src/components/ChatView";
@@ -15,6 +20,8 @@ import playgroundDefinitions from "../../plugins/playground/package.json";
 import { pluginStyles } from "../../src/client/src/plugins/styles";
 import { applyPiWebTheme } from "../../src/client/src/theme";
 import type { QualifiedThemeContribution } from "../../src/client/src/plugins/types";
+import { NotificationArea } from "../../src/client/src/components/NotificationArea";
+import type { NotificationGroup, NotificationItem } from "../../src/client/src/notificationArea";
 
 api.commands = () => Promise.resolve([{ name: "tree", source: "builtin" }]);
 api.files = () => Promise.resolve([{ path: "README.md", kind: "tracked" }]);
@@ -124,12 +131,55 @@ render(html`
 `, application);
 await Promise.all([layout.updateComplete, editor.updateComplete, clippedSwitcher.updateComplete, messageActions.updateComplete]);
 
+let notificationArea: NotificationArea | undefined;
+let notificationItems: NotificationItem[] = [];
+let notificationSequence = 24;
+const notificationActions: string[] = [];
+type NotificationRetryOutcome = "remove" | "replace" | "reject";
+let finishNotificationRetry: (() => void) | undefined;
+
+function projectNotifications(): void {
+  if (!notificationArea) throw new Error("Notifications are not mounted");
+  notificationArea.groups = (["browser", "server", "session"] as const).map((source): NotificationGroup => {
+    const items = notificationItems.filter((item) => item.source === source);
+    const capturedIds = new Set(items.map((item) => item.id));
+    return {
+      id: source,
+      items,
+      clear: () => {
+        notificationActions.push(`clear:${source}`);
+        notificationItems = notificationItems.filter((item) => !capturedIds.has(item.id));
+        projectNotifications();
+      },
+    };
+  });
+}
+
+function fixtureNotification(index: number): NotificationItem {
+  const source = index === 0 ? "browser" : index === 1 ? "server" : "session";
+  const id = `${source}:${String(24 - index)}`;
+  return {
+    id, source,
+    severity: index < 3 ? "error" : index < 10 ? "warning" : "info",
+    ...(source === "browser" ? {} : { scopeLabel: source === "server" ? "Local machine" : "Fixture session" }),
+    message: `Notification ${String(24 - index)}: ${"long-resource-name/".repeat(12)}`,
+    receivedAt: "2026-10-21T12:00:00Z",
+    dismiss: () => {
+      notificationActions.push(`dismiss:${id}`);
+      notificationItems = notificationItems.filter((item) => item.id !== id);
+      projectNotifications();
+    },
+    ...(source === "session" ? {} : { retry: () => { notificationActions.push(`retry:${id}`); } }),
+  };
+}
+
 declare global {
   interface Window {
-    overlayFixture: { complete: () => Promise<void>; openModal: () => void; openPluginModal: () => void; hideConversation: () => void; mountRenderer: () => Promise<void>; applyTheme: (id: string) => Promise<void>; mountStatistics: (safeArea: number) => Promise<void>; mountNotices: () => Promise<void> };
+    overlayFixture: { complete: () => Promise<void>; openModal: () => void; openPluginModal: () => void; hideConversation: () => void; mountRenderer: () => Promise<void>; applyTheme: (id: string) => Promise<void>; mountStatistics: (safeArea: number) => Promise<void>; mountNotices: () => Promise<void>; mountNotifications: (pseudo?: boolean, withSession?: boolean, shortCount?: 1 | 9) => Promise<void>; addNotificationError: () => Promise<void>; notificationActions: string[]; prepareNotificationRetry: (outcome: NotificationRetryOutcome) => Promise<void>; finishNotificationRetry: () => void };
   }
 }
 window.overlayFixture = {
+  notificationActions,
   complete: async () => {
     const view = editor.view;
     if (view === undefined) throw new Error("Editor is not mounted");
@@ -173,6 +223,89 @@ window.overlayFixture = {
     application.replaceChildren(shellStyles, shell);
     root.style.setProperty("--pi-app-safe-area-bottom", `${String(safeArea)}px`);
     await Promise.all([layout.updateComplete, editor.updateComplete, footer.updateComplete]);
+  },
+  mountNotifications: async (pseudo = false, withSession = true, shortCount) => {
+    if (pseudo) {
+      // Built fixtures deliberately disable dev-only locale switches. Exercise the
+      // same literal expansion via a test-only catalog, without changing the build.
+      localization.registerCatalog({
+        id: "notification-pseudo", namespace: "core.sessionNotifications", locale: "de",
+        load: () => Promise.resolve(Object.fromEntries(Object.entries(notificationMessages).map(([key, definition]) => {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-enum-assignment -- FormatJS's public printer redeclares the parser's numeric TYPE enum.
+          return [key, printAST(pseudoLocalize(parse(definition.message), false))];
+        }))),
+      });
+      await localization.setPreferences({ language: "de", formatLocale: "en" });
+    }
+    await window.overlayFixture.mountStatistics(0);
+    // Reparenting the shell tears down CodeMirror; mount a fresh composer in the
+    // final containing block rather than testing a disconnected editor instance.
+    const composer = new PromptEditor();
+    composer.slot = "composer";
+    composer.sessionId = "browser-fixture";
+    composer.projectId = "fixture";
+    composer.workspaceId = "fixture";
+    composer.cwd = "/repo";
+    editor.replaceWith(composer);
+    await composer.updateComplete;
+    chat.sessionId = "browser-fixture";
+    chat.messages = Array.from({ length: 40 }, (_, index) => ({
+      role: "user", parts: [{ type: "text", text: `Transcript entry ${String(index)}. ${"Enough conversation content to exercise independent transcript scrolling. ".repeat(4)}` }],
+    }));
+    notificationArea = new NotificationArea();
+    notificationArea.contextKey = withSession ? "local:/repo:browser-fixture" : "local:no-session";
+    notificationArea.onActionError = (error) => { notificationActions.push(`error:${String(error)}`); };
+    notificationActions.length = 0;
+    notificationItems = Array.from({ length: shortCount ?? 24 }, (_, index): NotificationItem => {
+      const item = fixtureNotification(index);
+      if (shortCount === undefined) return item;
+      const severity = index === 0 ? "error" : index < 3 ? "warning" : "info";
+      return { ...item, severity, message: `Test ${severity} #${String(index + 1)} — no real failure occurred.` };
+    }).filter((item) => withSession || item.source !== "session");
+    projectNotifications();
+    layout.before(notificationArea);
+    if (!withSession) layout.remove();
+    const outside = document.createElement("input");
+    outside.id = "outside-notifications";
+    outside.setAttribute("aria-label", "Outside notifications");
+    outside.style.cssText = "box-sizing: border-box; width: 100%;";
+    notificationArea.before(outside);
+    await Promise.all([chat.updateComplete, notificationArea.updateComplete]);
+  },
+  prepareNotificationRetry: async (outcome) => {
+    if (!notificationArea) throw new Error("Notifications are not mounted");
+    const item: NotificationItem = {
+      id: "browser:async-retry", source: "browser", severity: "error", message: "Connection failed",
+      retry: async () => {
+        notificationActions.push("retry:async");
+        await new Promise<void>((resolve) => { finishNotificationRetry = resolve; });
+        if (outcome === "reject") throw new Error("Retry failed");
+        notificationItems = outcome === "remove"
+          ? notificationItems.filter((item) => item.id !== "browser:async-retry")
+          : [{ id: "browser:retry-failure", source: "browser", severity: "error", message: "Connection still unavailable" }];
+        projectNotifications();
+      },
+    };
+    notificationItems = outcome === "remove"
+      ? [item, { id: "server:adjacent", source: "server", severity: "warning", message: "Machine needs attention" }]
+      : [item];
+    projectNotifications();
+    await notificationArea.updateComplete;
+  },
+  finishNotificationRetry: () => {
+    if (!finishNotificationRetry) throw new Error("No pending notification retry");
+    finishNotificationRetry();
+    finishNotificationRetry = undefined;
+  },
+  addNotificationError: async () => {
+    if (!notificationArea) throw new Error("Notifications are not mounted");
+    const notification: NotificationItem = {
+      id: `browser:latest-error-${String(++notificationSequence)}`, source: "browser", severity: "error",
+      message: "Latest error requires attention", receivedAt: "2026-10-21T12:01:00Z",
+    };
+    notificationItems = [notification, ...notificationItems];
+    projectNotifications();
+    await notificationArea.updateComplete;
   },
   mountNotices: async () => {
     const panel = new SessionNoticesPanel();
