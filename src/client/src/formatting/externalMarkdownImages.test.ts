@@ -82,6 +82,8 @@ describe("external Markdown image dimension hints", () => {
     const shadow = nativeImage(source);
     shadowHost.attachShadow({ mode: "open" }).append(shadow);
     const frame = document.createElement("iframe");
+    // An inline empty document keeps frame traversal coverage without page loading.
+    frame.srcdoc = "<!doctype html><html><body></body></html>";
     const custom = document.createElement("pi-web-markdown-image");
     custom.setAttribute("src", source);
     const nonHtmlImage = document.createElementNS("http://www.w3.org/2000/svg", "img");

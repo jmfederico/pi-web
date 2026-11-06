@@ -1,5 +1,38 @@
 # @jmfederico/pi-web
 
+## 1.202611.1
+
+### Patch Changes
+
+- 5a8181c: Add one `hostAccess` policy for production and development: restrict access to local addresses and listed hostnames, or explicitly allow any hostname. Configure it in General settings or with `PI_WEB_HOST_ACCESS`. A persistent notice prompts new and existing installations to choose; until then, production hostname restrictions remain off and development retains its legacy `allowedHosts` behavior. Allowing any hostname or leaving the decision unresolved lacks application-level DNS-rebinding protection.
+
+  Reject malformed Host headers and cross-origin browser mutations and WebSocket upgrades regardless of hostname policy. These checks do not replace authentication or restricted backend access.
+
+  **Upgrade guidance:** Reverse proxies must preserve public Host (including nonstandard ports) and browser Origin unchanged. Restart web/API and the development UI server, if running, after changing the policy; no session-daemon restart is needed for this change. See [browser request security](https://pi-web.dev/config#browser-request-security) for configuration, proxy requirements, and restart details.
+- 3806bbd: Keep a session's **Needs input** state and its open question form in step. Both now close when the conversation continues, including a message sent before the question that is delivered after it. Passive entries, such as extension notices or shell output, leave both open.
+- 569f070: Clarify agent guidance to separate user actions from questions and approvals, and keep intervention requests short with detailed instructions in chat.
+- 028ec93: Ask for confirmation before saving or resetting a hostname policy in Settings that would block the current browser hostname after restart. Cancel preserves the draft; Save anyway keeps the requested policy unchanged.
+- b1e4ca0: Make automatic model availability explicit in the model picker's All models view, keeping the Enabled view focused on choosing a model. Enabling all current and future models clears the saved manual selection and disables individual availability controls. Turning it off starts a new manual selection containing every currently available model; newly discovered models stay disabled. Catalog refreshes preserve the saved manual selection, even when it includes every current model, instead of silently enabling newly discovered models.
+- 5edf6bf: Style the Allowed hostnames select as a form field, consistent with the other settings inputs.
+- d6d1159: Keep a federated machine's language pack on that machine. Its translations no longer change the interface language while another machine is selected. Gateway language packs still apply on every machine.
+- 4460f0c: Support Pi installed with the managed installer (`pi.dev/install.sh`). PI WEB now finds that Pi's SDK from the `pi` command on `PATH`. Services installed with `/pi-web install` from a managed Pi keep working after `pi update`, because they follow the install's current version instead of one release. Installation preflight verifies any explicit Pi selection retained for services and reports specific failures before changing configuration or services. Services installed earlier from a managed Pi need `/pi-web install` again.
+- 52bc7ad: Give system messages a consistent, readable chat presentation. Show sender attribution once for new session messages using structured sender and body information, while preserving existing messages and agent-facing history.
+- Update HTTP, static-file, and URI parsing dependencies to address reported security vulnerabilities without changing the supported Node.js requirement.
+- Keep bundled Relay and scheduled task tools compatible with Pi 1.5 by using Pi-provided TypeBox schema imports.
+- a756302: Combine browser errors, server notices, and session notifications in one pinned notification area, including when no session is selected. Keep the header compact with severity icons and counts in both expanded and collapsed states, with full labels for screen readers. Show notification sources, preserve each item's dismissal and retry behavior, and reopen collapsed notifications for new errors without moving keyboard focus. Persistent session conditions remain in the Notices tab. Keep short notification messages visible on small screens instead of letting the transcript squeeze the list out of view.
+- 31539bd: Acknowledge question answers and skips without waiting for the agent to finish working, preventing misleading remote-machine timeout errors during long runs.
+- c95aef4: Add a Restart action that confirms the selected services and runs the existing restart command in the gateway's maintenance terminal. Show a simple activity warning for daemon restarts, and link hostname-policy notices to web restart confirmation. Only offer per-service restarts when a targeted command is available; never substitute a full restart.
+- 5f3c99e: Open a session from a link that contains only its ID, such as `?session=${PI_SESSION_ID}`. PI WEB finds the machine, project, and workspace that list the session and redirects to its full link.
+- 74e4d5a: Add `archive_self` so agents can end their run and request archival of their own session once idle, preserving its transcript. New conversation work cancels the request. Archival conditions stay in user instructions, including for scheduled tasks; the scheduler does not infer when to archive.
+- 5fb2259: Let plugins extend Markdown syntax across chat and Files previews, with host-owned sanitization and rendering that supports streaming. Add a shared Markdown rendering capability for plugin views.
+- fb81d25: Keep assistant message menus in the same corner layout inside event groups and ordinary replies, without an empty menu-only row. Show expanded message metadata below its content.
+- e42938f: Limit community plugin listings to packages with the project-specific `pi-web.dev-plugin` npm keyword. Plugin authors must include this keyword to appear in listings; the broader `pi-web-plugin` tag is no longer used for discovery.
+- 2d18142: Fix Sign in with ChatGPT from the web UI by supplying Pi's persistent installation device ID during OAuth login.
+- a21b7e6: Keep chat streaming when switching projects or workspaces, and let Refresh messages restore an abandoned session connection without reloading the page.
+- b000bbb: Let themes contribute loading-screen colours that appear before JavaScript runs, following the gateway's delivered default theme rather than a browser-local theme preference. Replace the pulsing logo glow with a small sweeping activity line, respecting reduced-motion preferences. Keep the development logo and activity line purple when themes contribute colours.
+- 7b4cff9: Allow subsession lifecycle notices to wake an idle parent after Stop or an earlier error. Retry notices missing from the conversation up to three times with backoff, without replaying notices already inserted or retrying agent failures. Show delivery errors when retries are exhausted and retain unread notices for later recovery.
+- 3aa6cdb: Keep the session activity indicator on "running tool" while a tool streams output, rather than showing an internal event name. Preserve the current activity when entries are added during a turn.
+
 ## 1.202611.0
 
 ### Patch Changes
