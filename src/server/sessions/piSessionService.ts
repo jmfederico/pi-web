@@ -2344,7 +2344,7 @@ export class PiSessionService implements SessionRouteService {
         customType: "session.message",
         content: `Message from session ${input.sendingSessionId}:\n\n${message}`,
         display: true,
-        details: { sendingSessionId: input.sendingSessionId },
+        details: { sendingSessionId: input.sendingSessionId, body: message },
       }, { triggerTurn: true, deliverAs: "steer" });
     }).catch((error: unknown) => {
       const detail = error instanceof Error ? error.message : String(error);

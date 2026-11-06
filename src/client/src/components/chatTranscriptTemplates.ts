@@ -1,4 +1,6 @@
 import { html, nothing, type TemplateResult } from "lit";
+import { resolveAppUrl } from "../appUrl";
+import { sessionMessagePresentation } from "../chatSessionMessages";
 import { localizedArgumentSummary, localizedChatText } from "../localizedChatPresentation";
 import { chatTranscriptMessages as messages } from "../chatTranscriptMessages";
 import { live } from "lit/directives/live.js";
@@ -183,11 +185,26 @@ function renderFramedMessage(context: TranscriptRenderContext, message: ChatLine
   options: { actionPlacement: "corner" | "header"; conversation?: boolean; label?: string }) {
   return renderMessageFrame({
     ...options,
-    heading: options.label ?? messages.t("role", { role: message.role }),
+    heading: options.label ?? renderMessageHeading(context, message),
     ...(body === undefined ? {} : { body }),
     actions: renderMessageMenu(context, message, key, index, entryActionHeaders),
     metadata: renderMessageMetadata(context, message, key),
   });
+}
+
+function renderMessageHeading(context: TranscriptRenderContext, message: ChatLine): string | TemplateResult {
+  if (message.role !== "system") return messages.t("role", { role: message.role });
+  const part = message.parts.length === 1 ? message.parts[0] : undefined;
+  const presentation = part?.type === "customMessage" ? sessionMessagePresentation(part.customType, part.content, part.details) : undefined;
+  if (presentation !== undefined) {
+    const sender = presentation.sendingSessionId;
+    // Session-only links resolve the sender's workspace on the original machine.
+    const href = resolveAppUrl(`?${new URLSearchParams({ machine: context.machineId, session: sender, view: "chat" })}`);
+    return html`${messages.rich("sessionMessage", {
+      sender, link: (chunks) => html`<a class="system-message-sender" href=${href}><bdi>${chunks}</bdi></a>`,
+    })}`;
+  }
+  return messages.t("system");
 }
 
 function renderMessageMenu(context: TranscriptRenderContext, message: ChatLine, key: string, index: number, entryActionHeaders: ReadonlySet<ChatLine>) {

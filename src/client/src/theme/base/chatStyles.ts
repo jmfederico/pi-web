@@ -28,7 +28,14 @@ export const chatStyles = css`
   .msg.tool { color: var(--pi-text); }
   .msg.tool-execution-shell, .msg.ask-user-record-shell { padding: 0; border: 0; background: transparent; color: var(--pi-text); }
   .msg.ask-user-record-shell ask-user-card { margin: 0 auto; }
-  .msg.system { --ui-transcript-bg: var(--pi-chat-system-bg, color-mix(in srgb, var(--pi-surface) 40%, var(--pi-bg))); color: var(--pi-text-secondary); }
+  .msg.system, .group-msg.system { --ui-transcript-bg: var(--pi-chat-system-bg, color-mix(in srgb, var(--pi-surface) 40%, var(--pi-bg))); color: var(--pi-text); }
+  .msg.system { --message-frame-header-padding: 8px 12px; --message-frame-meta-padding: 6px 12px; padding: 0; border-inline-start: 3px solid var(--pi-border); }
+  .system > .message-frame-content > .message-frame-header { margin-bottom: 0; }
+  .system > .message-frame-content > .message-frame-header > .label { color: var(--pi-text-secondary); font-weight: 600; }
+  .msg.system > .message-frame-content > .message-frame-body { padding: 0 12px 12px; }
+  .system-message-sender { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+  .system-message-sender:hover { color: var(--pi-text); }
+  .system-message-sender:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 2px; }
   .msg.event-group { --ui-activity-tone: var(--pi-border); --ui-transcript-bg: var(--pi-bg); --ui-transcript-heading-bg: var(--pi-bg); padding: 0; color: var(--pi-text); }
   .msg.event-group > summary { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px; padding-inline: 13px; }
   .msg.event-group > summary:hover { background: var(--pi-surface-hover); }
@@ -46,7 +53,6 @@ export const chatStyles = css`
   .image-output-source { padding: 4px 12px; }
   .image-output-source + .image-output-source { border-top: 1px solid var(--pi-border-muted); }
   .group-msg { --message-frame-header-padding: 8px 12px; --message-frame-meta-padding: 6px 12px; display: flow-root; max-width: 100%; min-width: 0; padding: 0; color: var(--pi-text); overflow: visible; }
-  .group-msg.system { color: var(--pi-text-secondary); }
   .history-boundary { position: relative; z-index: 5; display: grid; gap: 3px; justify-items: center; margin: 0 0 14px; color: var(--pi-muted); font-size: 12px; text-align: center; }
   .history-load-button { color: var(--pi-text-secondary); }
   .queued-messages { --ui-transcript-bg: color-mix(in srgb, var(--pi-warning) 5%, var(--pi-bg)); max-width: 100%; min-width: 0; display: grid; gap: 8px; margin: 0; padding: 12px 16px; color: var(--pi-text); overflow: hidden; }

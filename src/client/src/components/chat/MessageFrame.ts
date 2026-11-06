@@ -1,7 +1,7 @@
 import { html, nothing, type TemplateResult } from "lit";
 
 interface MessageFrameOptions {
-  heading: string;
+  heading: string | TemplateResult;
   actions?: TemplateResult;
   body?: TemplateResult;
   metadata?: TemplateResult;

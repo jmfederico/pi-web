@@ -413,7 +413,8 @@ export class ChatView extends LitElement {
     this.groupedMessagesStart = this.messageStart;
     this.groupedRenderers = this.transcriptRenderers;
     this.groupedMessagesCache = groupChatMessages(this.messages, this.messageStart,
-      (customType) => this.transcriptRenderers.some((renderer) => renderer.target === "custom-message" && renderer.customType === customType));
+      (customType) => customType === "session.message"
+        || this.transcriptRenderers.some((renderer) => renderer.target === "custom-message" && renderer.customType === customType));
     return this.groupedMessagesCache;
   }
 

@@ -1,4 +1,4 @@
-import { message } from "../localization/service";
+import { message, type RichMessageTag } from "../localization/service";
 
 export default {
   modelAuthRemoved: message<{ provider: string; model: string }>("Authentication for {provider}/{model} was removed. Use /model to select another model.", "Active model lost authentication. Provider/model identifiers and the /model command stay unchanged"),
@@ -17,6 +17,8 @@ export default {
   argsItems: message<{ count: number }>("{count, plural, one {# item} other {# items}}", "Size of an array in a compact tool argument summary"),
   argsObject: message("object", "Compact summary of an object-valued tool argument"),
   role: message<{ role: string }>("{role, select, user {user} assistant {assistant} tool {tool} system {system} bash {shell} other {skill}}", "Message role heading; role is user, assistant, tool, system, bash or skill"),
+  system: message("System", "Default heading for system and custom transcript messages"),
+  sessionMessage: message<{ sender: string; link: RichMessageTag }>("Message from session <link>{sender}</link>", "Session-message heading; sender is an untranslated session ID linked on the message's machine"),
   toolOutput: message<{ name: string; named: string }>("{named, select, yes {{name} output} other {tool output}}", "Tool-image output heading; name is a raw tool identifier"),
   toolImage: message<{ name: string; named: string; index: number; total: number }>("{named, select, yes {{name} output image {index, number} of {total, number}} other {Tool output image {index, number} of {total, number}}}", "Tool-image accessible description, including its position across all outputs"),
   sources: message<{ count: number }>("Sources ({count, number})", "Disclosure of tool-image source messages"),
