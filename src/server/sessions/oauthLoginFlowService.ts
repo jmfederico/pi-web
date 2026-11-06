@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { AuthEvent, AuthInteraction, AuthPrompt, AuthType } from "@earendil-works/pi-ai";
+import type { AuthEvent, AuthInteraction, AuthPrompt, AuthType, LoginOptions } from "@earendil-works/pi-ai";
 import type { ModelRuntime } from "../../piSdk.js";
 import type { CommandOption, OAuthFlowState } from "../../shared/apiTypes.js";
 
@@ -67,6 +67,7 @@ export class OAuthLoginFlowService {
     runtime: OAuthLoginRuntime;
     /** Defaults to OAuth so established callers retain their existing behavior. */
     authType?: AuthType;
+    loginOptions?: LoginOptions;
     onComplete?: () => void | Promise<void>;
   }): OAuthFlowState {
     const flowId = crypto.randomUUID();
@@ -95,7 +96,12 @@ export class OAuthLoginFlowService {
       notify: (event) => { this.handleEvent(record, event); },
     };
 
-    void options.runtime.login(options.providerId, options.authType ?? "oauth", interaction).then(
+    const loginOptions: LoginOptions = {
+      getDeviceId: () => crypto.randomUUID(),
+      ...options.loginOptions,
+    };
+
+    void options.runtime.login(options.providerId, options.authType ?? "oauth", interaction, loginOptions).then(
       () => this.reconcileCommittedLogin(record, options.onComplete),
       (error: unknown) => {
         if (!this.isCurrent(record)) return;

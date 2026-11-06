@@ -1,9 +1,9 @@
-import type { AuthInteraction, AuthType } from "@earendil-works/pi-ai";
+import type { AuthInteraction, AuthType, LoginOptions } from "@earendil-works/pi-ai";
 import type { ModelRuntime } from "../../piSdk.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OAuthLoginFlowService } from "./oauthLoginFlowService.js";
 
-type LoginHandler = (providerId: string, interaction: AuthInteraction) => Promise<void>;
+type LoginHandler = (providerId: string, interaction: AuthInteraction, options?: LoginOptions) => Promise<void>;
 
 afterEach(() => {
   vi.useRealTimers();
@@ -409,13 +409,53 @@ describe("OAuthLoginFlowService", () => {
     expect(() => { service.get(state.flowId); }).toThrow("Login flow not found");
     service.dispose();
   });
+
+  it("passes default getDeviceId in login options for OAuth providers", async () => {
+    let capturedOptions: LoginOptions | undefined;
+    const service = new OAuthLoginFlowService();
+    service.start({
+      providerId: "openai",
+      providerName: "OpenAI",
+      runtime: fakeRuntime(async (_providerId, _interaction, options) => {
+        capturedOptions = options;
+      }),
+    });
+
+    await flushAsyncLogin();
+    expect(capturedOptions?.getDeviceId).toBeDefined();
+    const deviceId = capturedOptions?.getDeviceId?.();
+    expect(deviceId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    service.dispose();
+  });
+
+  it("preserves explicitly provided loginOptions", async () => {
+    let capturedOptions: LoginOptions | undefined;
+    const customDeviceId = "11111111-2222-3333-4444-555555555555";
+    const service = new OAuthLoginFlowService();
+    service.start({
+      providerId: "openai",
+      providerName: "OpenAI",
+      loginOptions: {
+        getDeviceId: () => customDeviceId,
+        agentName: "custom-agent",
+      },
+      runtime: fakeRuntime(async (_providerId, _interaction, options) => {
+        capturedOptions = options;
+      }),
+    });
+
+    await flushAsyncLogin();
+    expect(capturedOptions?.getDeviceId?.()).toBe(customDeviceId);
+    expect(capturedOptions?.agentName).toBe("custom-agent");
+    service.dispose();
+  });
 });
 
 function fakeRuntime(login: LoginHandler, authTypes?: AuthType[]): Pick<ModelRuntime, "login"> {
   return {
-    login: (providerId, type, interaction) => {
+    login: (providerId, type, interaction, options) => {
       authTypes?.push(type);
-      return login(providerId, interaction).then(() => type === "api_key"
+      return login(providerId, interaction, options).then(() => type === "api_key"
         ? { type: "api_key", key: "test" }
         : { type: "oauth", refresh: "r", access: "a", expires: 0 });
     },
