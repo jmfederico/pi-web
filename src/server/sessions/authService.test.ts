@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CredentialSynchronizationError, ModelRuntime } from "../../piSdk.js";
+import { CredentialSynchronizationError, ModelRuntime, SettingsManager } from "../../piSdk.js";
 import { InMemoryCredentialStore, type Credential, type OAuthAuth, type Provider } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OAuthFlowState } from "../../shared/apiTypes.js";
@@ -16,6 +16,95 @@ afterEach(async () => {
 });
 
 describe("AuthService", () => {
+  it.each([undefined, "11111111-2222-4333-8444-555555555555"])(
+    "reuses the installation device ID across logins and service recreation (existing: %s)",
+    async (existingDeviceId) => {
+      const agentDir = await tempAgentDir();
+      const settingsPath = join(agentDir, "settings.json");
+      const initialSettings = { defaultThinkingLevel: "high", ...(existingDeviceId === undefined ? {} : { deviceId: existingDeviceId }) };
+      await writeFile(settingsPath, JSON.stringify(initialSettings));
+      const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null, allowModelNetwork: false });
+      const deviceIds: string[] = [];
+      const provider = fakeOAuthProvider("test-device-id", (_interaction, options) => {
+        if (options?.getDeviceId === undefined) throw new Error("Missing installation device ID");
+        deviceIds.push(options.getDeviceId(), options.getDeviceId());
+        return Promise.resolve({ type: "oauth", refresh: "r", access: "a", expires: 0 });
+      });
+      const refresh = vi.spyOn(runtime, "refresh");
+      runtime.registerNativeProvider(provider);
+      const registrationRefresh = refresh.mock.results.at(0);
+      if (registrationRefresh?.type !== "return") throw new Error("Expected the registration refresh");
+      await registrationRefresh.value;
+      refresh.mockRestore();
+
+      for (let instance = 0; instance < 2; instance++) {
+        const auth = await AuthService.create({ runtime, agentDir });
+        try {
+          // Constructing the service must not create an identity before a provider requests it.
+          expect(JSON.parse(await readFile(settingsPath, "utf8"))).toEqual(instance === 0
+            ? initialSettings
+            : { ...initialSettings, deviceId: deviceIds[0] });
+          for (let login = 0; login < 2; login++) {
+            const state = await auth.startOAuthLogin(provider.id);
+            await vi.waitFor(() => { expect(auth.oauthFlow(state.flowId).status).toBe("complete"); });
+          }
+        } finally {
+          auth.dispose();
+        }
+      }
+
+      expect(deviceIds).toHaveLength(8);
+      expect(new Set(deviceIds).size).toBe(1);
+      expect(deviceIds[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+      if (existingDeviceId !== undefined) expect(deviceIds[0]).toBe(existingDeviceId);
+      expect(JSON.parse(await readFile(settingsPath, "utf8"))).toEqual({ ...initialSettings, deviceId: deviceIds[0] });
+    },
+  );
+
+  it("fails device-ID login without overwriting unreadable installation settings", async () => {
+    const agentDir = await tempAgentDir();
+    const settingsPath = join(agentDir, "settings.json");
+    await writeFile(settingsPath, "invalid json");
+    const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null, allowModelNetwork: false });
+    const login = vi.spyOn(runtime, "login").mockImplementation((_provider, _type, _interaction, options) => Promise.resolve().then(() => {
+      options?.getDeviceId?.();
+      return { type: "oauth", refresh: "r", access: "a", expires: 0 };
+    }));
+    const auth = await AuthService.create({ runtime, agentDir });
+    try {
+      const state = await auth.startOAuthLogin("openai");
+      await vi.waitFor(() => { expect(auth.oauthFlow(state.flowId).status).toBe("error"); });
+      expect(await readFile(settingsPath, "utf8")).toBe("invalid json");
+    } finally {
+      auth.dispose();
+      login.mockRestore();
+    }
+  });
+
+  it("reports device ID persistence failures", async () => {
+    const failure = new Error("settings write failed");
+    const settings = SettingsManager.fromStorage({
+      withLock: (_scope, update) => {
+        if (update(undefined) !== undefined) throw failure;
+      },
+    }, { projectTrusted: false });
+    const createSettings = vi.spyOn(SettingsManager, "create").mockReturnValue(settings);
+    const error = vi.fn();
+    const { auth, runtime } = await createAuthService({}, { error });
+    const login = vi.spyOn(runtime, "login").mockImplementation((_provider, _type, _interaction, options) => Promise.resolve().then(() => {
+      options?.getDeviceId?.();
+      return { type: "oauth", refresh: "r", access: "a", expires: 0 };
+    }));
+    try {
+      await auth.startOAuthLogin("openai");
+      await vi.waitFor(() => { expect(error).toHaveBeenCalledWith({ err: failure, path: undefined }, "login device ID persistence failed"); });
+    } finally {
+      auth.dispose();
+      login.mockRestore();
+      createSettings.mockRestore();
+    }
+  });
+
   it("logs out providers and emits the removed provider id after the runtime syncs", async () => {
     const credential: Credential = {
       type: "oauth",

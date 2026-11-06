@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { ModelRuntime } from "../../piSdk.js";
+import { ModelRuntime, SettingsManager } from "../../piSdk.js";
 import type { AuthProvidersResponse, AuthType, ModelSelectionResponse, OAuthFlowState } from "../../shared/apiTypes.js";
 import { getLoginProviderOptions, getLogoutProviderOptions } from "./authProviderOptions.js";
 import { OAuthLoginFlowService } from "./oauthLoginFlowService.js";
@@ -56,7 +56,9 @@ export class AuthService {
   private readonly logger: AuthServiceLogger;
   private readonly listeners = new Set<AuthChangeListener>();
 
-  private constructor(runtime: ModelRuntime, authFlows: OAuthLoginFlowService, logger: AuthServiceLogger) {
+  private deviceSettings: SettingsManager | undefined;
+
+  private constructor(runtime: ModelRuntime, authFlows: OAuthLoginFlowService, logger: AuthServiceLogger, private readonly agentDir?: string) {
     this.runtime = runtime;
     this.authFlows = authFlows;
     this.logger = logger;
@@ -66,7 +68,7 @@ export class AuthService {
     const runtime = deps.runtime ?? (deps.agentDir === undefined ? await ModelRuntime.create({ allowModelNetwork: false }) : await createModelRuntimeForAgentDir(deps.agentDir));
     const logger = deps.logger ?? noopLogger;
     const authFlows = deps.authFlows ?? new OAuthLoginFlowService({ logger });
-    return new AuthService(runtime, authFlows, logger);
+    return new AuthService(runtime, authFlows, logger, deps.agentDir);
   }
 
   subscribe(listener: AuthChangeListener): () => void {
@@ -125,6 +127,7 @@ export class AuthService {
       providerName: provider.name,
       runtime: this.runtime,
       authType: "oauth",
+      loginOptions: { getDeviceId: () => this.getDeviceId() },
       onComplete: () => this.emit({}, { operation: "login", providerId, authType: "oauth" }),
     });
   }
@@ -139,6 +142,26 @@ export class AuthService {
 
   cancelOAuthFlow(flowId: string): OAuthFlowState {
     return this.authFlows.cancel(flowId);
+  }
+
+  private getDeviceId(): string {
+    if (this.deviceSettings === undefined) {
+      // Use Pi's installation identity, never project settings or a per-login UUID.
+      const settings = SettingsManager.create(process.cwd(), this.agentDir, { projectTrusted: false });
+      const loadError = settings.drainErrors()[0];
+      if (loadError !== undefined) throw loadError.error;
+      this.deviceSettings = settings;
+    }
+    const settings = this.deviceSettings;
+    const deviceId = settings.getOrCreateDeviceId();
+    // Pi queues settings writes; surface persistence failures rather than silently
+    // claiming that the generated identity will survive a daemon restart.
+    void settings.flush().then(() => {
+      for (const { error, path } of settings.drainErrors()) {
+        this.logErrorNoThrow({ err: error, path }, "login device ID persistence failed");
+      }
+    });
+    return deviceId;
   }
 
   private async emit(change: AuthChange, context: AuthChangeContext): Promise<void> {
