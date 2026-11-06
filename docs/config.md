@@ -478,6 +478,14 @@ New sessions inherit the parent's model and thinking level unless another model 
 
 In **Settings → Session daemon**, these keys are saved on the selected machine. Restart the session daemon on that machine after changing them.
 
+#### Self-archival
+
+Agents can call `archive_self` with no arguments to end their run and archive their own session. The transcript is preserved and can be restored through the normal archive controls. Other sessions, descendants, and scheduled task definitions are unchanged. The tool is available independently of spawning, messaging, and question-form settings.
+
+Archival policy belongs in your instructions. The tool does not check task outcomes or decide whether a result needs your review. Agents should finish reports and any final summary before calling it, alone and last.
+
+The tool acknowledges a request, not completed archival. PI WEB waits for the saved tool result and an idle session before archiving. New conversation work, queued work, interruption, or a branch change cancels the pending request; it is not replayed when a session reopens. Failures appear in session notifications and daemon logs rather than triggering an automatic retry. Restart the session daemon after upgrading to activate the tool.
+
 #### Human intervention
 
 An agent can call `request_human_intervention` with a short, self-contained `reason` to mark the session **Needs input** and end its run. The reason appears in the transcript as an **Input requested** card, so the request is visible even when the agent wrote nothing else. This tool is always available, independently of the spawning, messaging, and question-form settings. It also covers approvals and actions outside PI WEB; questions in text alone do not set the indicator.

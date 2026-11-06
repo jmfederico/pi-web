@@ -20,6 +20,8 @@ export interface SessionServiceDependencyInput {
   logger: NonNullable<PiSessionServiceDependencies["logger"]>;
   notificationStore: NonNullable<PiSessionServiceDependencies["notificationStore"]>;
   unreadStore: NonNullable<PiSessionServiceDependencies["unreadStore"]>;
+  /** Invalidates browser session lists after agent-requested archival. */
+  onSessionArchived: NonNullable<PiSessionServiceDependencies["onSessionArchived"]>;
   /** Notifies the machine status projection that unread state changed. */
   onUnreadChanged: NonNullable<PiSessionServiceDependencies["onUnreadChanged"]>;
   /** Read-only view of the background refresher; see the assembly below. */
@@ -73,6 +75,7 @@ export function sessionServiceDependencies(input: SessionServiceDependencyInput)
     notificationStore: input.notificationStore,
     unreadStore: input.unreadStore,
     onUnreadChanged: input.onUnreadChanged,
+    onSessionArchived: input.onSessionArchived,
     // Read-only, so session startup can tell a waiting user that provider
     // model lists are refreshing at the same time.
     catalogRefreshStatus: input.catalogRefreshStatus,

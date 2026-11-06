@@ -101,6 +101,7 @@ import { readSessionHeaderSummary } from "./sessionFileHeader.js";
 import type { WorkspaceActivityService } from "../activity/workspaceActivityService.js";
 import { createAskUserToolDefinition } from "./askUserTool.js";
 import { createRequestHumanInterventionToolDefinition } from "./requestHumanInterventionTool.js";
+import { createArchiveSelfToolDefinition } from "./archiveSelfTool.js";
 import { continuesConversation, requestsHumanIntervention, SESSION_INTERVENTION_CUSTOM_TYPE, sessionInterventionRequired } from "./sessionIntervention.js";
 import { createAskUserOutcome, renderAskUserAnswersText, resolveAskUserRequest } from "./askUserDomain.js";
 import { PendingExtensionDialogStore, type ExtensionDialogCancelReason } from "./pendingExtensionDialogStore.js";
@@ -822,6 +823,7 @@ export function createPiWebCustomToolDefinitions(
   return [
     createPiWebEditToolDefinition(cwd),
     createRequestHumanInterventionToolDefinition(),
+    createArchiveSelfToolDefinition(),
     // Messaging does not grant delegation or child-management capabilities.
     ...(messaging === undefined ? [] : [createSendSessionMessageToolDefinition(cwd, messaging)]),
     ...(delegationEnabled && spawn !== undefined ? [createSpawnSessionToolDefinition(cwd, { spawn })] : []),
@@ -1143,6 +1145,8 @@ export interface PiSessionServiceDependencies {
   createAgentRuntime?: CreateAgentRuntime;
   modelRuntime: ModelRuntime;
   heartbeatIntervalMs?: number;
+  /** Refresh browser session lists after agent-requested archival. */
+  onSessionArchived?: (cwd: string) => void | Promise<void>;
   workspaceActivity?: Pick<WorkspaceActivityService, "applySessionStatus" | "applySessionActivity" | "removeSession" | "reconcileSessionActivity" | "applySessionIntervention">;
   /**
    * When provided, `spawn_session` is available to sessions whose creation
@@ -1245,6 +1249,13 @@ export class PiSessionService implements SessionRouteService {
   readonly mcpAuthFlows = new McpAuthFlowService();
   private readonly runtimeMessageCounts = new WeakMap<PiAgentSession, number>();
   private readonly interventionStates = new WeakMap<PiAgentSession, boolean>();
+  /** Fresh tool intent only: reopening a transcript never replays archival. */
+  private readonly selfArchiveRequests = new WeakMap<PiAgentSession, { sessionId: string; toolCallId: string; persisted: boolean; settled: boolean }>();
+  private readonly selfArchiveScheduled = new WeakSet<PiAgentSession>();
+  private readonly selfArchivingSessionIds = new Set<string>();
+  private readonly selfArchiveOperations = new Set<Promise<void>>();
+  private selfArchiveStopped = false;
+  private readonly onSessionArchived: PiSessionServiceDependencies["onSessionArchived"];
   private readonly snapshotMessageCounts = new WeakMap<readonly unknown[], number>();
   private readonly pendingPromptEchoes = new WeakMap<PiAgentSession, { userIndex: number; message: ReturnType<typeof userMessage> }[]>();
   private readonly publishedAssistantPartials = new WeakMap<PiAgentSession, unknown>();
@@ -1324,6 +1335,7 @@ export class PiSessionService implements SessionRouteService {
 
   constructor(private readonly events: SessionEventHub, deps: PiSessionServiceDependencies) {
     this.archiveStore = deps.archiveStore ?? new SessionArchiveStore();
+    this.onSessionArchived = deps.onSessionArchived;
     this.sessionPins = deps.sessionPins;
     this.agentDir = deps.agentDir;
     this.sessionManager = deps.sessionManager;
@@ -1513,6 +1525,8 @@ export class PiSessionService implements SessionRouteService {
   }
 
   async dispose(): Promise<void> {
+    this.selfArchiveStopped = true;
+    await Promise.all(this.selfArchiveOperations);
     this.mcpAuthFlows.dispose();
     this.unreadPublicationStopped = true;
     this.clearUnreadPublicationRetry();
@@ -3654,7 +3668,10 @@ export class PiSessionService implements SessionRouteService {
   }
 
   async archive(ref: PiSessionRef): Promise<void> {
-    const session = await this.getOrOpen(ref);
+    return this.archiveSession(await this.getOrOpen(ref));
+  }
+
+  private async archiveSession(session: PiAgentSession): Promise<void> {
     if (this.hasActiveWork(session)) throw new Error("Stop current session activity before archiving");
     await this.runTreeExclusiveOperation(
       [{ sessionId: session.sessionId, session }],
@@ -3981,6 +3998,7 @@ export class PiSessionService implements SessionRouteService {
     const active = this.activeForRef(ref);
     if (active === undefined) return;
     const sessionId = active.runtime.session.sessionId;
+    this.selfArchiveRequests.delete(active.runtime.session);
     this.clearCompactionPromptQueue(sessionId);
     this.subsessionStoppedParents.add(active.runtime.session);
     clearSessionQueue(active.runtime.session);
@@ -4326,6 +4344,7 @@ export class PiSessionService implements SessionRouteService {
   }
 
   private async getActive(ref: PiSessionRef, options: Pick<CreateSessionRuntimeOptions, "notificationGeneration"> = {}): Promise<ActiveSession<PiSessionRuntime>> {
+    this.assertSelfArchiveInactive(ref.id);
     const active = this.activeForRef(ref);
     const pending = this.pendingSessionOpens.get(JSON.stringify([canonicalizeStoredCwd(ref.cwd), active?.runtime.session.sessionId ?? ref.id]));
     if (pending !== undefined) return pending.promise;
@@ -4357,6 +4376,7 @@ export class PiSessionService implements SessionRouteService {
     openSessionManager: () => PiSessionManager,
     options: Pick<CreateSessionRuntimeOptions, "notificationGeneration" | "notifications"> = {},
   ): Promise<ActiveSession<PiSessionRuntime>> {
+    this.assertSelfArchiveInactive(sessionId);
     const key = JSON.stringify([canonicalizeStoredCwd(cwd), sessionId]);
     const existing = this.pendingSessionOpens.get(key);
     if (existing !== undefined) return existing.promise;
@@ -4436,6 +4456,7 @@ export class PiSessionService implements SessionRouteService {
     cwd: string,
     options: CreateSessionRuntimeOptions = {},
   ): Promise<ActiveSession<PiSessionRuntime>> {
+    this.assertSelfArchiveInactive(sessionManager.getSessionId());
     const startup = this.startupProgress(sessionManager, options.startupIntent ?? "open", options.startupToken);
     const key = JSON.stringify([canonicalizeStoredCwd(cwd), sessionManager.getSessionId()]);
     // Early native observation must not admit ordinary operations before
@@ -4448,6 +4469,8 @@ export class PiSessionService implements SessionRouteService {
     pending.promise = pending.promise.finally(() => {
       startup.end();
       if (this.pendingSessionOpens.get(key) === pending) this.pendingSessionOpens.delete(key);
+      const session = this.active.get(pending.sessionId)?.runtime.session;
+      if (session !== undefined) this.scheduleSelfArchive(session);
     });
     this.pendingSessionOpens.set(key, pending);
     return pending.promise;
@@ -4515,6 +4538,7 @@ export class PiSessionService implements SessionRouteService {
         await this.recoverSubsessionTrackingForOpenedSession(runtime.session);
       }
       startupSignal?.throwIfAborted();
+      this.assertSelfArchiveInactive(runtime.session.sessionId);
       startup.report("extensions");
       // session_start hooks use the same native agent as ordinary prompts.
       // Observe them before binding extensions, including startup messages.
@@ -4949,6 +4973,7 @@ export class PiSessionService implements SessionRouteService {
       // Regular message_end precedes persistence; boundary drafts instead emit
       // entry_appended. Only message entries contribute to the transcript count.
       const role = getString(message, "role");
+      this.observeSelfArchiveRequest(session, eventType, message, event);
       if (eventType === "message_end") {
         if (requestsHumanIntervention(message)) this.setInterventionRequired(session, true);
         // The transcript alone decides, matching the client's open-question
@@ -5010,8 +5035,100 @@ export class PiSessionService implements SessionRouteService {
       unsubscribe();
       this.publishedAssistantPartials.delete(session);
       this.assistantStreamIds.delete(session);
+      this.selfArchiveRequests.delete(session);
     };
     this.active.set(session.sessionId, active);
+  }
+
+  private observeSelfArchiveRequest(session: PiAgentSession, eventType: string | undefined, message: unknown, event: unknown): void {
+    if (eventType === "message_end" && getString(message, "role") === "toolResult"
+      && getString(message, "toolName") === "archive_self" && getBoolean(message, "isError") === false
+      && getBoolean(getProperty(message, "details"), "archiveSelf") === true) {
+      const toolCallId = getString(message, "toolCallId");
+      if (toolCallId !== undefined) this.selfArchiveRequests.set(session, { sessionId: session.sessionId, toolCallId, persisted: false, settled: false });
+      return;
+    }
+    const request = this.selfArchiveRequests.get(session);
+    if (request === undefined) return;
+    const role = getString(message, "role");
+    if (eventType === "agent_start" || eventType === "session_tree"
+      || (eventType === "message_start" && (role === "user" || role === "assistant" || role === "custom"))
+      || (eventType === "agent_settled" && getBoolean(event, "aborted") === true)) {
+      this.selfArchiveRequests.delete(session);
+      this.notifySelfArchive(session, "Self-archival canceled because the conversation continued or was interrupted.", "warning");
+    } else if (eventType === "turn_end") {
+      request.persisted = true;
+    } else if (eventType === "agent_settled") {
+      if (!request.persisted) {
+        this.selfArchiveRequests.delete(session);
+        this.notifySelfArchive(session, "Self-archival canceled because the tool result was not committed.", "error");
+        return;
+      }
+      // message_end precedes SDK persistence; settlement follows committed tool
+      // results and all automatic continuations. Never act on agent_end alone.
+      request.settled = true;
+      this.scheduleSelfArchive(session);
+    }
+  }
+
+  private scheduleSelfArchive(session: PiAgentSession): void {
+    if (this.selfArchiveStopped) return;
+    if (this.selfArchiveRequests.get(session)?.settled !== true || this.selfArchiveScheduled.has(session)) return;
+    this.selfArchiveScheduled.add(session);
+    // Leave the SDK event stack and let the host prompt receipt release before
+    // closing the runtime. A still-held receipt rechecks in endSessionEntryMutation.
+    setTimeout(() => {
+      this.selfArchiveScheduled.delete(session);
+      const request = this.selfArchiveRequests.get(session);
+      if (this.selfArchiveStopped || request?.settled !== true) return;
+      if (!this.isCurrentActiveSession(session) || request.sessionId !== session.sessionId) {
+        this.selfArchiveRequests.delete(session);
+        return;
+      }
+      if (this.isSessionEntryMutationActive(session) || this.pendingSessionOpenPromises(session.sessionId).length > 0) return;
+      this.selfArchiveRequests.delete(session);
+      if (this.hasActiveWork(session)) {
+        this.notifySelfArchive(session, "Self-archival canceled because this session has active or queued work.", "warning");
+        return;
+      }
+      // Reserve before the first await. New submissions must not enter the
+      // gap between runtime teardown and the archive store's durable write.
+      this.selfArchivingSessionIds.add(session.sessionId);
+      const operation = this.archiveSession(session).then(async () => {
+        try {
+          await this.onSessionArchived?.(session.sessionManager.getCwd());
+        } catch (error: unknown) {
+          this.logger.info({ sessionId: request.sessionId, error: errorMessage(error) }, "could not refresh session lists after self-archival");
+          this.notifySelfArchive(session, "Session archived, but the session list could not refresh. Reload the browser.", "warning");
+        }
+      }).catch((error: unknown) => {
+        const message = `Self-archival did not finish: ${errorMessage(error)}`;
+        this.logger.info({ sessionId: request.sessionId, toolCallId: request.toolCallId, error: errorMessage(error) }, "self-archival failed");
+        this.events.publish(request.sessionId, { type: "session.error", message });
+        this.notifySelfArchive(session, message, "error");
+      }).finally(() => {
+        this.selfArchivingSessionIds.delete(request.sessionId);
+        this.selfArchiveOperations.delete(operation);
+      });
+      this.selfArchiveOperations.add(operation);
+    }, 0);
+  }
+
+  private notifySelfArchive(session: PiAgentSession, message: string, severity: "warning" | "error"): void {
+    const cwd = session.sessionManager.getCwd();
+    let generation = this.notificationStore.currentGeneration(session.sessionId, cwd);
+    // Archive closes the runtime before persistence; its extension generation
+    // may already be gone. Keep failures visible even without an open browser.
+    if (generation === undefined) {
+      const registration = this.notificationStore.registerSession(session.sessionId, cwd);
+      generation = registration.generation;
+      this.publishNotificationMutations(registration.mutations);
+    }
+    this.publishNotificationMutations(this.notificationStore.addNotification(generation, message, severity).mutations);
+  }
+
+  private assertSelfArchiveInactive(sessionId: string): void {
+    if (this.selfArchivingSessionIds.has(sessionId)) throw new Error("Session archival is in progress. Wait for it to finish before continuing.");
   }
 
   private publishCompactionOutcome(session: PiAgentSession, event: unknown): void {
@@ -5268,6 +5385,10 @@ export class PiSessionService implements SessionRouteService {
   }
 
   private beginSessionEntryMutation(session: PiAgentSession, action: string): void {
+    this.assertSelfArchiveInactive(session.sessionId);
+    if (this.selfArchiveRequests.delete(session)) {
+      this.notifySelfArchive(session, "Self-archival canceled because new session work was submitted.", "warning");
+    }
     this.mcpAuthFlows.assertSessionAvailable(session.sessionId);
     this.assertTreeNavigationInactive(session, action);
     this.sessionEntryMutationCounts.set(session, (this.sessionEntryMutationCounts.get(session) ?? 0) + 1);
@@ -5280,6 +5401,7 @@ export class PiSessionService implements SessionRouteService {
     else this.sessionEntryMutationCounts.set(session, remaining);
     this.observeUnreadActivityState(session);
     if (remaining <= 0 && !this.subsessionDeliveringParents.has(session)) this.scheduleSubsessionDelivery(session);
+    if (remaining <= 0) this.scheduleSelfArchive(session);
   }
 
   private isSessionEntryMutationActive(session: PiAgentSession, ignoredReceipts = 0): boolean {

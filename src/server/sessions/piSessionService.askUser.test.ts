@@ -61,9 +61,9 @@ describe("ask_user registration", () => {
   it("offers the stateless tool when enabled, including to restricted children", () => {
     for (const delegationEnabled of [true, false]) {
       expect(createPiWebCustomToolDefinitions("/workspace", delegationEnabled, undefined, undefined, true).map((tool) => tool.name))
-        .toEqual(["edit", "request_human_intervention", "ask_user"]);
+        .toEqual(["edit", "request_human_intervention", "archive_self", "ask_user"]);
     }
-    expect(createPiWebCustomToolDefinitions("/workspace", true).map((tool) => tool.name)).toEqual(["edit", "request_human_intervention"]);
+    expect(createPiWebCustomToolDefinitions("/workspace", true).map((tool) => tool.name)).toEqual(["edit", "request_human_intervention", "archive_self"]);
   });
 });
 

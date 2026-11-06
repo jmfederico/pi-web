@@ -103,6 +103,14 @@ The initial message tells a dispatched agent its task and execution IDs, how to 
 
 The plugin does not pause, resume, cancel, supervise, or change the capabilities of dispatched conversations. Continue or manage them through ordinary PI WEB session controls.
 
+## Archive routine results
+
+To keep routine executions out of your active session list, include archival conditions in the task's prompt. For example:
+
+> Report the outcome first. If the task completed successfully and nothing needs my review, call `archive_self` alone and last. Otherwise, leave the session unarchived and request my attention when needed.
+
+This is an instruction for the agent, not a scheduler rule. Reporting `completed` or `errored` alone never archives the conversation, and the self-archive tool does not enforce these outcome or review conditions. [Self-archival](config.md#self-archival) preserves the transcript and leaves the task's schedule and execution history unchanged. Existing tasks keep their current instructions until you explicitly update them.
+
 ## Read-only dashboard
 
 The **Scheduled tasks** tab opens a read-only overview grouped by what needs review:

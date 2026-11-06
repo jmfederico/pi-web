@@ -384,6 +384,10 @@ async function createSessionDaemonRuntime() {
         if (hasNewCompletion) projectLifecycle.scheduleCleanup();
       },
       catalogRefreshStatus: catalogRefresher,
+      onSessionArchived: async (cwd) => {
+        const owner = (await statusAttribution.attribute([cwd])).get(cwd);
+        if (owner !== undefined) workspaceChanges.notify(owner.projectId);
+      },
       sessionManager: createPiSessionManagerGateway({
         agentDir: activeAgentProfile.dir,
         env: daemonEnvironment,
