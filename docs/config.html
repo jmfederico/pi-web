@@ -645,14 +645,33 @@
 <td>Web/API restart</td>
 </tr>
 <tr>
-<th scope="row">Development hosts<br><code>allowedHosts</code></th>
-<td>Gateway dev server</td>
-<td><code>[]</code> (Vite built-ins)</td>
-<td>Additional trusted hostnames accepted by the development UI server.</td>
-<td>Dev web/UI restart</td>
+<th scope="row">Allowed request hosts<br><code>allowedHosts</code></th>
+<td>Gateway web/API + dev UI</td>
+<td><code>[]</code> (localhost, .localhost subdomains, literal IPv4/IPv6)</td>
+<td>Additional trusted hostnames for all routes and WebSocket upgrades, including the production UI.</td>
+<td>Web/API restart; also Vite for dev UI. No sessiond restart.</td>
 </tr>
 </tbody></table></div>
 <p id="deployment-paths"><strong>Serving at a URL prefix?</strong> No config key is needed. The proxy must redirect to a trailing slash and strip the prefix before forwarding HTTP and WebSocket traffic. <a href="install#reverse-proxy-prefix">Reverse-proxy example →</a></p>
+<h3 id="browser-request-security">Browser request security</h3>
+<p>The shared web/API server checks <code>Host</code> before handling any route or WebSocket upgrade, including the production UI. <code>allowedHosts</code> (or <code>PI_WEB_ALLOWED_HOSTS</code>) supplies additional trusted hostnames:</p>
+<ul>
+<li>The default <code>[]</code> allows <code>localhost</code>, subdomains of <code>.localhost</code>, and literal IPv4/IPv6 addresses.</li>
+<li>An exact hostname such as <code>pi.example.com</code> allows only that hostname. A Vite-style leading-dot entry such as <code>.example.com</code> allows both <code>example.com</code> and its subdomains. Use hostnames, not URLs or host:port pairs.</li>
+<li><code>true</code> disables only the host allowlist. Prefer explicit hosts; allowing every host weakens protection against DNS rebinding. It does not disable the Origin guard below.</li>
+</ul>
+<p><strong>Before upgrading a custom DNS deployment</strong>, add its hostname to <code>allowedHosts</code>, for example <code>{ "allowedHosts": ["pi.example.com"] }</code>. This setting previously applied only to the Vite development UI; production requests to unlisted DNS names now receive <code>403</code>.</p>
+<p>The web/API process snapshots <code>allowedHosts</code> at startup. Restart that process after changing the setting; also restart Vite for the development UI. This security fix and setting need no session-daemon restart.</p>
+<h4 id="origin-checks">Origin checks</h4>
+<p>All WebSocket upgrades and HTTP methods other than <code>GET</code>, <code>HEAD</code>, and <code>OPTIONS</code> also pass an Origin guard:</p>
+<ul>
+<li>A missing <code>Origin</code> is allowed for CLI and Fleet clients; host validation still applies.</li>
+<li>A present <code>Origin</code> must be a single well-formed HTTP(S) origin, not a URL with credentials, a path, query, or fragment. <code>null</code>, malformed origins, and origins with a different hostname or port are rejected with <code>403</code>.</li>
+<li>The origin's hostname and effective port must match the raw preserved <code>Host</code> header. An explicit Host port must equal the Origin port (including its scheme default when omitted). If Host omits a port, it is interpreted using the Origin scheme's default: <code>80</code> for HTTP or <code>443</code> for HTTPS. Thus <code>Origin: https://pi.example.com:8443</code> requires <code>Host: pi.example.com:8443</code>.</li>
+</ul>
+<p>Scheme comparison is intentionally omitted so a TLS-terminating proxy can forward to HTTP. These checks use neither <code>Forwarded</code> nor <code>X-Forwarded-*</code> headers. There is no <code>allowedOrigins</code> setting or added CORS permission; listing two hosts does not permit cross-origin requests between them.</p>
+<h4>Proxy responsibilities</h4>
+<p>Preserve the original <code>Host</code>, including any nonstandard port, and the browser's <code>Origin</code>. For Nginx, use <code>$http_host</code>, not <code>$host</code>. The proxy owns TLS and must authenticate both HTTP and WebSocket traffic, reject unrecognized public hosts, and restrict direct backend access. Host/Origin checks are not authentication. See the <a href="install#reverse-proxy-prefix">reverse proxy installation guide</a>.</p>
 <h3>Daemon transport (environment only)</h3>
 <div class="table-scroll" role="region" aria-label="Web/API ↔ session daemon connection" tabindex="0">
 <table class="reference-table settings-table">
@@ -897,7 +916,7 @@ PI_WEB_PLUGINS='{"git":{"settings":{"workspaceDiscoveryHooks":false}}}'</code></
 <tr>
 <th scope="row"><code>allowedHosts</code></th>
 <td><code>PI_WEB_ALLOWED_HOSTS</code></td>
-<td>JSON <code>true</code> or string array; legacy <code>true</code>/comma-separated hosts also accepted. Prefer explicit hosts; allowing all is unsafe on an exposed dev server.</td>
+<td>JSON <code>true</code> or string array; legacy <code>true</code>/comma-separated hosts also accepted. Prefer explicit hosts; <code>true</code> disables the web/API and development UI host allowlists, not the <a href="#origin-checks">Origin guard</a>.</td>
 </tr>
 <tr>
 <th scope="row"><code>maxUploadBytes</code></th>

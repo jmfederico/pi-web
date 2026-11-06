@@ -8,6 +8,7 @@ import fastifyCompress from "@fastify/compress";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import { ProjectStore } from "./storage/projectStore.js";
+import { registerBrowserRequestGuard } from "./browserRequestGuard.js";
 import { NavigationPreferenceStore } from "./storage/navigationPreferenceStore.js";
 import { registerNavigationPreferenceRoutes } from "./navigationPreferenceRoutes.js";
 import { ProjectService } from "./projects/projectService.js";
@@ -181,6 +182,7 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
   const projects = deps.projects ?? new ProjectService(new ProjectStore());
   const configService = deps.config ?? createFilePiWebConfigService();
   const readConfig = () => readEffectiveConfig(configService);
+  registerBrowserRequestGuard(app, (await readConfig()).allowedHosts);
   const readInstallationName = async () => installationDisplayName((await readConfig()).installationName);
   const sessionDaemon = deps.sessionDaemon ?? new SessionDaemonClient();
   const daemonWorkspaces = new SessionDaemonWorkspaceCatalog(sessionDaemon);

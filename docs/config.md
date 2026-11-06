@@ -1,6 +1,6 @@
 # PI WEB configuration reference
 
-PI WEB configuration covers the machine-local and project-local settings you usually need: the web/API bind address, trusted development-host settings, UI preferences, desired plugin enablement/settings, server-plugin recovery, file-explorer path access, manual upload defaults, upload limits, the Pi agent state directory, and session-daemon tools.
+PI WEB configuration covers the machine-local and project-local settings you usually need: the web/API bind address, trusted request-host settings, UI preferences, desired plugin enablement/settings, server-plugin recovery, file-explorer path access, manual upload defaults, upload limits, the Pi agent state directory, and session-daemon tools.
 
 Settings below describe available choices, scope, limitations, and restart requirements. An HTML version is available at <https://pi-web.dev/config>.
 
@@ -58,6 +58,32 @@ The deployment path is not a PI WEB config-file key or environment setting. The 
 
 For a nested deployment, redirect the slashless prefix to the trailing-slash URL, strip the prefix before forwarding to PI WEB, and proxy authenticated HTTP and WebSocket traffic through the same location. Relative browser and PWA URLs then stay within that prefix. See the [reverse proxy installation guide](https://pi-web.dev/install#reverse-proxy-prefix) for a complete Nginx example.
 
+## Browser request security
+
+The shared web/API server checks `Host` before handling any route or WebSocket upgrade, including the production UI. `allowedHosts` (or `PI_WEB_ALLOWED_HOSTS`) supplies additional trusted hostnames:
+
+- The default `[]` allows `localhost`, subdomains of `.localhost`, and literal IPv4/IPv6 addresses.
+- An exact hostname such as `pi.example.com` allows only that hostname. A Vite-style leading-dot entry such as `.example.com` allows both `example.com` and its subdomains. Use hostnames, not URLs or host:port pairs.
+- `true` disables only the host allowlist. Prefer explicit hosts; allowing every host weakens protection against DNS rebinding. It does not disable the Origin guard below.
+
+**Before upgrading a custom DNS deployment**, add its hostname to `allowedHosts`, for example `{ "allowedHosts": ["pi.example.com"] }`. This setting previously applied only to the Vite development UI; production requests to unlisted DNS names now receive `403`.
+
+The web/API process snapshots `allowedHosts` at startup. Restart that process after changing the setting; also restart Vite for the development UI. This security fix and setting need no session-daemon restart.
+
+### Origin checks
+
+All WebSocket upgrades and HTTP methods other than `GET`, `HEAD`, and `OPTIONS` also pass an Origin guard:
+
+- A missing `Origin` is allowed for CLI and Fleet clients; host validation still applies.
+- A present `Origin` must be a single well-formed HTTP(S) origin, not a URL with credentials, a path, query, or fragment. `null`, malformed origins, and origins with a different hostname or port are rejected with `403`.
+- The origin's hostname and effective port must match the raw preserved `Host` header. An explicit Host port must equal the Origin port (including its scheme default when omitted). If Host omits a port, it is interpreted using the Origin scheme's default: `80` for HTTP or `443` for HTTPS. Thus `Origin: https://pi.example.com:8443` requires `Host: pi.example.com:8443`.
+
+Scheme comparison is intentionally omitted so a TLS-terminating proxy can forward to HTTP. These checks use neither `Forwarded` nor `X-Forwarded-*` headers. There is no `allowedOrigins` setting or added CORS permission; listing two hosts does not permit cross-origin requests between them.
+
+### Proxy responsibilities
+
+Preserve the original `Host`, including any nonstandard port, and the browser's `Origin`. For Nginx, use `$http_host`, not `$host`. The proxy owns TLS and must authenticate both HTTP and WebSocket traffic, reject unrecognized public hosts, and restrict direct backend access. Host/Origin checks are not authentication. See the [reverse proxy installation guide](https://pi-web.dev/install#reverse-proxy-prefix).
+
 ## Precedence and reloads
 
 Highest priority first, for layers applicable to that setting:
@@ -85,7 +111,7 @@ PI_WEB_DEFAULT_LOCALIZATION='{"timeZone":"UTC"}'
 PI_WEB_PLUGINS='{"git":{"settings":{"workspaceDiscoveryHooks":false}}}'
 ```
 
-Container JSON variables keep their existing names: `PI_WEB_UPLOADS`, `PI_WEB_ATTACHMENTS`, `PI_WEB_SESSION_NAMING`, `PI_WEB_SESSION_ARCHIVE`, `PI_WEB_PATH_ACCESS`, and `PI_WEB_DEFAULT_LOCALIZATION`. Only supplied namespace leaves are enforced, including `pathAccess.allowedPaths` and plugin leaves; `{}` enforces none. Atomic settings lock the whole value. `PI_WEB_PORT` retains the `PORT` fallback; a nonempty `PI_WEB_SESSION_ARCHIVE_DIR` alias wins over `PI_WEB_SESSION_ARCHIVE` JSON. `PI_WEB_ALLOWED_HOSTS` accepts JSON `true` or a string array, plus legacy `true`/comma-separated hosts. Allowing all hosts is unsafe for an exposed development server; prefer an explicit list.
+Container JSON variables keep their existing names: `PI_WEB_UPLOADS`, `PI_WEB_ATTACHMENTS`, `PI_WEB_SESSION_NAMING`, `PI_WEB_SESSION_ARCHIVE`, `PI_WEB_PATH_ACCESS`, and `PI_WEB_DEFAULT_LOCALIZATION`. Only supplied namespace leaves are enforced, including `pathAccess.allowedPaths` and plugin leaves; `{}` enforces none. Atomic settings lock the whole value. `PI_WEB_PORT` retains the `PORT` fallback; a nonempty `PI_WEB_SESSION_ARCHIVE_DIR` alias wins over `PI_WEB_SESSION_ARCHIVE` JSON. `PI_WEB_ALLOWED_HOSTS` accepts JSON `true` or a string array, plus legacy `true`/comma-separated hosts. Prefer an explicit list; `true` disables the web/API and development UI host allowlists, not the [Origin guard](#origin-checks).
 
 Boolean environment inputs accept only `true`/`false` (case-insensitive) or `1`/`0`. Invalid supplied policy values fail startup instead of being ignored. Unknown fields in declared core containers are errors, including misspellings in `pathAccess`, `uploads`, and `attachments`. Plugin environment envelopes accept only `enabled` and `settings`; keys inside `settings` remain plugin-owned. Unset a variable to remove enforcement; empty strings are not a general reset syntax. Legacy empty host, port, allowed-hosts, upload-limit, and archive-directory overrides remain ignored. Runtime-only variables have their own contracts; see offline flags below. Markers such as `PI_WEB_SESSION` are not config policy.
 
@@ -111,6 +137,7 @@ Use `PATCH /api/config` for explicit updates, or `PATCH /api/machines/<machineId
 Process restarts depend on the key:
 
 - `host` / `port`: restart the gateway web/API service or process.
+- `allowedHosts`: restart web/API to replace its startup snapshot; also restart Vite for the development UI. No session-daemon restart is needed.
 - `maxUploadBytes`: restart both the web/API process and the session daemon on that machine.
 - `spawnSessions` / `subsessions` / `sessionMessages` / `askUser` / `extensionDialogsTimeoutMs` / `environmentFacts`: restart the session daemon on that machine.
 - `sessionArchive.directory`: restart the session daemon on that machine; changes only the destination for new archives.
@@ -241,7 +268,7 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 | Machine name | `installationName` | `PI_WEB_INSTALLATION_NAME` | Global | Not supported locally | Config refresh; reload other windows |
 | Web/API bind host | `host` | `PI_WEB_HOST` | Global | Not supported locally | Restart web/API |
 | Web/API port | `port` | `PI_WEB_PORT`, `PORT` | Global | Not supported locally | Restart web/API |
-| Dev-server allowed hosts | `allowedHosts` | `PI_WEB_ALLOWED_HOSTS` | Global | Not supported locally | Restart dev web/UI |
+| Web/API and dev UI allowed hosts | `allowedHosts` | `PI_WEB_ALLOWED_HOSTS` | Global | Not supported locally | Restart web/API; also Vite for dev UI |
 | Base filesystem roots | `basePaths` | `PI_WEB_BASE_PATHS` (JSON array) | Global | Not supported locally; default `[]` | Next file request |
 | Additional filesystem roots | `pathAccess.allowedPaths` | `PI_WEB_PATH_ACCESS` (JSON object) | Global + project | **Adds** after base roots; global then project, deduplicated; env replaces effective additions | Next file request; refresh existing views if needed |
 | Manual file upload default folder | `uploads.defaultFolder` | `PI_WEB_UPLOADS` (JSON object) | Global + project | **Overrides**: project value wins for workspaces in that project; otherwise global/default applies | New Upload dialogs and direct drag/drop batches after config/workspace refresh |

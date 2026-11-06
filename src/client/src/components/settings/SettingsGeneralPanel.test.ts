@@ -84,7 +84,8 @@ describe("General settings", () => {
     for (const id of ["allowed-hosts-mode", "allowed-hosts-list"]) {
       const control = required(panel.shadowRoot?.getElementById(id));
       expect(panel.shadowRoot?.querySelector(`label[for="${id}"]`)?.textContent).toBeTruthy();
-      expect(panel.shadowRoot?.getElementById(required(control.getAttribute("aria-describedby")))?.textContent).toContain("Enter one host per line");
+      expect(control.getAttribute("aria-describedby")).toBe("allowed-hosts-help");
+      expect(panel.shadowRoot?.getElementById("allowed-hosts-help")?.textContent.trim()).toBeTruthy();
     }
     const mode = required(panel.shadowRoot?.querySelector<HTMLSelectElement>("select"));
     mode.value = "all";

@@ -260,6 +260,21 @@
 
             <section id="reverse-proxy-prefix">
               <h2>Reverse proxy root and path-prefix deployments</h2>
+              <div class="callout">
+                Before upgrading a custom DNS deployment, add its hostname to <code>allowedHosts</code>, for example
+                <code>{ "allowedHosts": ["pi.example.com"] }</code> in global config. Previously Vite-only, this setting
+                now protects all production web/API routes and WebSocket upgrades; unlisted DNS names receive <code>403</code>.
+                Changes require a web/API restart (also Vite for dev UI), not a session-daemon restart.
+                See <a href="config#browser-request-security">host and Origin validation</a> for defaults and matching rules.
+              </div>
+              <p>
+                For both root and nested deployments, the proxy owns TLS and must authenticate HTTP and WebSocket
+                traffic, reject unrecognized public hosts, and restrict direct backend access. Configure a rejecting
+                default virtual host; <code>server_name</code> alone does not reject unmatched hosts. Preserve the original
+                <code>Host</code>, including nonstandard ports, and <code>Origin</code>. In Nginx, use <code>$http_host</code>,
+                not <code>$host</code>, which loses the port. PI WEB does not trust <code>Forwarded</code> or
+                <code>X-Forwarded-*</code> for these checks. Host/Origin validation is not authentication.
+              </p>
               <p>
                 The published PI WEB client is deployment-independent. The same package works at the origin root
                 (<code>/</code>) or at canonical nested prefixes such as <code>/ai/</code> and <code>/test/ai/</code>;
@@ -305,7 +320,8 @@ server {
         proxy_pass http://127.0.0.1:8504/;
         proxy_http_version 1.1;
 
-        proxy_set_header Host $host;
+        proxy_set_header Host $http_host;
+        proxy_set_header Origin $http_origin;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header Authorization $http_authorization;
