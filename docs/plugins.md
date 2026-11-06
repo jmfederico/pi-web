@@ -18,6 +18,7 @@ This is the documentation entry point for agents and developers building PI WEB 
 - [Contracts, examples, and design boundaries](#agent-development)
 - [Shared UI styles](#host-provided-ui-styles), [CSS integration](#css-files-and-shadow-roots), and [themes](#css-first-themes)
 - [Transcript renderers](#transcript-renderers)
+- [Shared Markdown and syntax extensions](#shared-markdown-and-syntax-extensions)
 - [Read-only catalogs and scoped backends](#read-only-catalogs-and-scoped-backends-v5)
 - [Binary resources and media delivery](#binary-resources-and-media-delivery)
 - [Trust and recovery](#trust-and-recovery)
@@ -34,6 +35,7 @@ This is the documentation entry point for agents and developers building PI WEB 
 | Run builds, tests, or development servers | Workspace terminal commands |
 | Customize the appearance | Themes and light/dark theme pairs |
 | Preview diagrams or other text formats in chat and Files | Browser content renderers |
+| Add Markdown syntax shared by chat and document previews | Browser v5 Markdown extensions |
 | Customize tool results and displayed custom messages in chat | Browser v5 transcript renderers, including built-in tool overrides |
 | Add file-type previews to Files, including binary files | Browser v5 file previewers |
 | Highlight additional programming languages in Files and chat | Syntax highlighters |
@@ -198,6 +200,92 @@ The last matching automatic renderer in plugin discovery order is the default. B
 **Raw** shows source; **Copy** copies source even while a rendered view is visible. Files puts the view buttons beside **Download** and remembers your Raw/rendered preference; rendered Markdown also permits manual renderers in its code blocks. Chat choices are temporary and clear on reload.
 
 Incomplete, truncated, or oversized input is not rendered. Files also limits the size of inline previews. Failed previews fall back to source. Renderers must treat text as untrusted, sanitize output, and avoid executing source. For implementation, see the [Files consumer](https://github.com/jmfederico/pi-web/blob/main/pi-web-plugins/files/pi-web-plugin.ts) and [Mermaid contribution](https://github.com/jmfederico/pi-web/tree/main/pi-web-plugins/mermaid).
+
+### Shared Markdown and syntax extensions
+
+Browser v5 plugins can add Markdown syntax shared by chat and host-rendered documents, including Files previews. Plugins that display Markdown can use the host's `pi-web/markdown-rendering@1` capability instead of maintaining a parser. Code fences still use the existing [content-preview pipeline](#content-previews-in-chat-and-files).
+
+Public types `MarkdownExtensionContribution`, `MarkdownExtensionToken`, `MarkdownRenderRequest`, and `MarkdownRenderingCapability` are exported from `@jmfederico/pi-web/plugin-api`; their source is [`src/shared/markdownTypes.ts`](https://github.com/jmfederico/pi-web/blob/main/src/shared/markdownTypes.ts). Use declarations matching your host version. Require `{ pluginId: "pi-web", id: "markdown-rendering", version: 1 }` when the plugin depends on this feature, so an older host reports the missing capability rather than silently ignoring its syntax.
+
+#### Add syntax
+
+Return `markdownExtensions` in `activate().contributions`, using the public `MarkdownExtensionContribution` type. Choose `level: "inline"` for syntax within text or `level: "block"` for standalone blocks.
+
+- `id` is a unique local contribution ID. The first matching extension at each level wins in plugin discovery order, then declaration order; asynchronous module loading does not change precedence.
+- `start` returns the earliest possible match as a UTF-16 offset into `source`, or `undefined` when absent. Return an offset inside the string, not `-1`.
+- `tokenize` recognizes syntax only at the beginning of its input. Return `undefined` for an incomplete or nonmatching token. `raw` must be the nonempty, exact prefix consumed from `source`; `text` holds its text and optional `data` is opaque plugin-owned data.
+- `render` returns presentation HTML as a string, not a Lit template, DOM node, or Promise. Escape untrusted text before interpolating it. Treat tokens and their data as immutable.
+
+All callbacks must be synchronous, deterministic, and free of side effects. Return only complete tokens: streaming input can end before a closing delimiter, and later updates may parse it again. The host may cache sanitized output by extension and exact `raw` text; identical `raw` must produce identical output, including any derived `text` or `data`. Do not depend on machine/workspace context, selection, mutable configuration, time, or network data. Cache reuse does not guarantee that callbacks run once, or on every render.
+
+Native inline code, fenced code, and indented code are protected from syntax extensions. Use `contentRenderers` for code-fence presentations. Doubled backslashes remain escaped; an extension may explicitly recognize other backslash-prefixed syntax, such as `\(...\)`. Version 1 adds new syntax only: it does not expose an arbitrary parser, global parser mutation, or overrides for standard Markdown node renderers. A syntax extension must not claim ordinary Markdown just to replace its rendering.
+
+A thrown error or invalid callback result is logged with the extension ID and callback phase. The host skips that extension for the rest of the current parse, allowing later extensions or ordinary Markdown to handle the source. Synchronous callbacks cannot be interrupted; keep matching and rendering bounded.
+
+Extensions follow [plugin machine eligibility](#remote-machines). When the enabled extensions change, the host refreshes affected rendered content and parser caches. Pass the content's actual `machineId` when using the host renderer.
+
+Browser-only syntax plugins need a browser reload after installation or rebuilding, not a session-daemon restart. Follow the [plugin installation guidance](#install-and-manage) for local development and package installation.
+
+#### Render Markdown in a plugin
+
+Declare the capability in `requires`, resolve it in `start`, and return its template from your view:
+
+```ts
+import type {
+  MarkdownRenderingCapability, PiWebPluginV5, PluginCapability,
+} from "@jmfederico/pi-web/plugin-api";
+
+const markdownCapability: PluginCapability<MarkdownRenderingCapability> = {
+  pluginId: "pi-web", id: "markdown-rendering", version: 1,
+  parse(value) {
+    if (typeof value !== "object" || value === null
+        || !("render" in value) || typeof value.render !== "function") {
+      throw new Error("Markdown rendering v1 is unavailable");
+    }
+    return value as MarkdownRenderingCapability;
+  },
+};
+
+export default {
+  apiVersion: 5,
+  name: "Markdown notes",
+  requires: [markdownCapability],
+  activate() {
+    let markdown: MarkdownRenderingCapability;
+    return {
+      start({ capabilities }) {
+        markdown = capabilities.resolve(markdownCapability);
+      },
+      contributions: {
+        workspacePanels: [{
+          id: "notes", title: "Notes",
+          render(context) {
+            return markdown.render({
+              machineId: context.machine.id,
+              text: "# Notes\n\nContent from your plugin goes here.",
+              allowManualPreview: true,
+            });
+          },
+        }],
+      },
+    };
+  },
+} satisfies PiWebPluginV5;
+```
+
+`render({ machineId, text, truncated?, allowManualPreview?, labels? })` synchronously returns a Lit `TemplateResult`. Parsing is deferred until the mounted content is visible; calling `render` alone does not parse. The host applies eligible syntax extensions and code-fence previews, with readable source as fallback on failure. Set `truncated` when the source was cut short, and `allowManualPreview` to offer manual fence renderers. Optional `labels` supplies both `imageOmitted(alt): string` and `table: string` for localized annotations; values are rendered as text.
+
+This capability uses the host's **document policy**: raw source HTML is escaped, images are omitted, and links allow safe external destinations (`http:`, `https:`, and `mailto:`), not workspace-relative navigation. Chat uses the same syntax engine with its own link and image policy, including [workspace file links](#opening-workspace-files-from-chat). Sharing syntax does not make those presentation policies interchangeable.
+
+The existing `pi-web/content-rendering@1.renderMarkdown` API with a caller-supplied `toSafeHtml` remains compatible. It still owns code-preview integration for that caller, but a caller-owned parser does not automatically gain Markdown syntax extensions. Use `markdown-rendering@1.render` for the shared host parser and document policy.
+
+#### Presentation HTML and styles
+
+The host sanitizes extension HTML separately from raw Markdown source. It accepts presentation HTML such as `span`, `div`, and `mark`, plus selected MathML elements and inert SVG geometry. Inline styles accept selected numeric dimensions and literal colours. Scripts, event handlers, custom elements, resource-loading elements, links, SVG references, and animation are removed.
+
+The [presentation sanitizer](https://github.com/jmfederico/pi-web/blob/main/src/client/src/formatting/markdownExtensionHtml.ts) defines the exact element, attribute, class, and style rules; inspect the version matching your host when integrating a renderer. Unsupported markup is removed, so verify the resulting formulas or other output in the browser rather than assuming full library compatibility.
+
+Ship CSS, fonts, and other plugin assets through the existing [stylesheet contribution mechanism](#css-files-and-shadow-roots). Host rendering roots already participate; register any plugin-owned containing shadow root through [stylesheet integration](#integrating-plugin-components). Do not inject stylesheet or resource elements through extension HTML. Sanitization constrains returned markup, not the plugin's JavaScript: install only trusted plugins.
 
 ### Contribute file previewers
 

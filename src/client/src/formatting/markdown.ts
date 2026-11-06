@@ -1,4 +1,5 @@
-import { marked, type Renderer } from "marked";
+import { Renderer } from "marked";
+import { defaultMarkdownEngine, type MarkdownEngine, type MarkdownParseResult } from "./markdownEngine";
 import messages from "../components/formattedText.messages";
 import { DEFAULT_CODE_BLOCK_POLICY, type CodeBlockPolicy } from "./codeBlockPolicy";
 import { replaceLocalMarkdownImages } from "./markdownImages";
@@ -6,10 +7,10 @@ import { workspaceFilePreviewUrl } from "../api/urls";
 import { resolveAppUrl } from "../appUrl";
 import { workspaceMarkdownFilePath, type MarkdownWorkspaceContext } from "./workspaceLinks";
 
-const nativeCodeRenderer = new marked.Renderer();
+const nativeCodeRenderer = new Renderer();
 
 function markdownRenderer(codeBlocks: CodeBlockPolicy): Renderer {
-  const renderer = new marked.Renderer();
+  const renderer = new Renderer();
   renderer.html = ({ text }) => escapeHtml(text);
   renderer.code = (token) => {
     const block = codeBlocks.presentation === "code"
@@ -32,9 +33,21 @@ function markdownRenderer(codeBlocks: CodeBlockPolicy): Renderer {
 }
 
 const MAX_MARKDOWN_CACHE_ENTRIES = 300;
-const markdownHtmlCache = new Map<string, string>();
+const MAX_MARKDOWN_CACHE_CHARACTERS = 2_000_000;
+const markdownCaches = new WeakMap<MarkdownEngine, { entries: Map<string, MarkdownParseResult>; characters: number }>();
 
 export function toSafeMarkdownHtml(text: string, workspace?: MarkdownWorkspaceContext, imageIntentKey?: string, imagesEnabled = true, codeBlocks: CodeBlockPolicy = DEFAULT_CODE_BLOCK_POLICY): string {
+  return parseChatMarkdown(text, workspace, imageIntentKey, imagesEnabled, codeBlocks).html;
+}
+
+/** Cache identity includes the active extension snapshot, never a mutable global parser. */
+export function parseChatMarkdown(text: string, workspace?: MarkdownWorkspaceContext, imageIntentKey?: string, imagesEnabled = true, codeBlocks: CodeBlockPolicy = DEFAULT_CODE_BLOCK_POLICY, engine: MarkdownEngine = defaultMarkdownEngine): MarkdownParseResult {
+  let cache = markdownCaches.get(engine);
+  if (cache === undefined) {
+    cache = { entries: new Map(), characters: 0 };
+    markdownCaches.set(engine, cache);
+  }
+  const markdownHtmlCache = cache.entries;
   // Overflow is applied at the component boundary; preview policy does not alter HTML.
   // Only workspace links depend on the effective application base, not route/query changes.
   const key = JSON.stringify([text, imagesEnabled, codeBlocks.presentation, codeBlocks.copy, workspace === undefined ? null : [
@@ -42,14 +55,20 @@ export function toSafeMarkdownHtml(text: string, workspace?: MarkdownWorkspaceCo
   ]]);
   const cached = markdownHtmlCache.get(key);
   if (cached !== undefined) return cached;
-  const html = marked.parse(text, { async: false, breaks: true, gfm: true, renderer: markdownRenderer(codeBlocks) });
-  const safeHtml = sanitizeHtml(html, workspace, imageIntentKey, imagesEnabled);
-  markdownHtmlCache.set(key, safeHtml);
-  if (markdownHtmlCache.size > MAX_MARKDOWN_CACHE_ENTRIES) {
-    const oldest = markdownHtmlCache.keys().next().value;
-    if (oldest !== undefined) markdownHtmlCache.delete(oldest);
+  const parsed = engine.parse(text, markdownRenderer(codeBlocks), (html) => sanitizeHtml(html, workspace, imageIntentKey, imagesEnabled));
+  markdownHtmlCache.set(key, parsed);
+  cache.characters += cachedCharacters(key, parsed);
+  while (markdownHtmlCache.size > MAX_MARKDOWN_CACHE_ENTRIES || cache.characters > MAX_MARKDOWN_CACHE_CHARACTERS) {
+    const oldest = markdownHtmlCache.entries().next().value;
+    if (oldest === undefined) break;
+    cache.characters -= cachedCharacters(...oldest);
+    markdownHtmlCache.delete(oldest[0]);
   }
-  return safeHtml;
+  return parsed;
+}
+
+function cachedCharacters(key: string, parsed: MarkdownParseResult): number {
+  return key.length + parsed.html.length + parsed.codeBlocks.reduce((size, token) => size + token.raw.length + token.text.length, 0);
 }
 
 function escapeHtml(text: string): string {

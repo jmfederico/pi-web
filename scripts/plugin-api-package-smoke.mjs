@@ -10,6 +10,7 @@ const publicApiDeclarationPaths = [
   "shared/pluginCatalogTypes.d.ts",
   "shared/pluginSessionLifecycleTypes.d.ts",
   "shared/localization.d.ts",
+  "shared/markdownTypes.d.ts",
   "shared/serverNoticePresentation.d.ts",
   "shared/terminalTitlePresentation.d.ts",
   "shared/thinkingLevels.d.ts",
@@ -76,6 +77,7 @@ export async function smokeInstalledPluginApi({ packageRoot, fixtureRoot, repoRo
       "dist/shared/pluginCatalogTypes.d.ts",
       "dist/shared/pluginSessionLifecycleTypes.d.ts",
       "dist/shared/localization.d.ts",
+      "dist/shared/markdownTypes.d.ts",
       "dist/shared/terminalTitlePresentation.d.ts",
       "dist/shared/workspaceRemovalPresentation.d.ts",
     ]);

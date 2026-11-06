@@ -8,7 +8,8 @@ import { ContentRendererHost } from "../components/ContentRendererHost";
 import { ContentRenderingBoundary } from "../components/ContentRenderingBoundary";
 import { writeClipboardText } from "../clipboard";
 import { PluginRegistry } from "../plugins/registry";
-import { renderWorkspaceMarkdownHtml } from "../../../../pi-web-plugins/files/workspaceMarkdown";
+import { createDocumentMarkdownRenderer, sanitizeDocumentMarkdownHtml } from "./documentMarkdown";
+import { defaultMarkdownEngine } from "./markdownEngine";
 import { createContentRenderingCapability, MAX_CONTENT_RENDERER_LENGTH } from "./contentRendering";
 import { PLAIN_CODE_BLOCK_POLICY } from "./codeBlockPolicy";
 
@@ -22,6 +23,10 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
 });
+
+function renderWorkspaceMarkdownHtml(text: string): string {
+  return defaultMarkdownEngine.parse(text, createDocumentMarkdownRenderer(), sanitizeDocumentMarkdownHtml).html;
+}
 
 function renderer(callback: ContentRendererContribution["render"] = ({ text }) => html`<div class="diagram">${text}</div>`): ContentRendererContribution {
   return { id: "diagram", renderMode: "automatic", languages: ["diagram"], fileExtensions: ["diag"], render: callback };

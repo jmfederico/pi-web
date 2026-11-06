@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { marked } from "marked";
+import { Parser } from "marked";
 import { toSafeMarkdownHtml } from "./markdown";
 import { DEFAULT_CODE_BLOCK_POLICY, PLAIN_CODE_BLOCK_POLICY } from "./codeBlockPolicy";
 import { markdownWorkspaceContext, type MarkdownWorkspaceContext } from "./workspaceLinks";
@@ -30,7 +30,7 @@ describe("final Markdown HTML cache", () => {
   it("reuses sanitized HTML without parsing or rebuilding DOM, including across route query changes", () => {
     vi.stubEnv("BASE_URL", "./");
     window.history.replaceState(null, "", "/nested/pi/?view=chat");
-    const parse = vi.spyOn(marked, "parse");
+    const parse = vi.spyOn(Parser, "parse");
     const createElement = vi.spyOn(document, "createElement");
     const text = "[cache reuse](./cached.txt)\n\n| A |\n| - |\n| B |";
     const first = toSafeMarkdownHtml(text, workspace);
@@ -55,7 +55,7 @@ describe("final Markdown HTML cache", () => {
     expect(toSafeMarkdownHtml(text, workspace)).toContain("/fixed/api/");
 
     const plain = toSafeMarkdownHtml(text);
-    const parse = vi.spyOn(marked, "parse");
+    const parse = vi.spyOn(Parser, "parse");
     vi.stubEnv("BASE_URL", "/elsewhere/");
     expect(toSafeMarkdownHtml(text)).toBe(plain);
     expect(parse).not.toHaveBeenCalled();
@@ -65,7 +65,7 @@ describe("final Markdown HTML cache", () => {
     const text = "cache eviction sentinel";
     toSafeMarkdownHtml(text);
     for (let index = 0; index < 300; index++) toSafeMarkdownHtml(`cache eviction ${String(index)}`);
-    const parse = vi.spyOn(marked, "parse");
+    const parse = vi.spyOn(Parser, "parse");
     toSafeMarkdownHtml(text);
     expect(parse).toHaveBeenCalledOnce();
   });
@@ -151,7 +151,7 @@ describe("plain Markdown code blocks", () => {
   it("reuses HTML across overflow and preview choices but not presentation or copy choices", () => {
     const text = "```text\nindependent block policy cache\n```";
     const plain = toSafeMarkdownHtml(text, undefined, undefined, true, PLAIN_CODE_BLOCK_POLICY);
-    const parse = vi.spyOn(marked, "parse");
+    const parse = vi.spyOn(Parser, "parse");
     expect(toSafeMarkdownHtml(text, undefined, undefined, true, { ...PLAIN_CODE_BLOCK_POLICY, overflow: "scroll", previews: true })).toBe(plain);
     expect(parse).not.toHaveBeenCalled();
     expect(toSafeMarkdownHtml(text, undefined, undefined, true, { ...PLAIN_CODE_BLOCK_POLICY, presentation: "code" })).toContain("<pre><code");

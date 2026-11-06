@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 
 import type { FilePreviewerInput, PluginActivationContextV5, PluginCapability, PluginRuntimeContextV5, WorkspacePanelContextV5, PluginCatalog } from "@jmfederico/pi-web/plugin-api";
-import { html, svg } from "lit";
+import { html, render, svg } from "lit";
+import { FilesDocumentPreview } from "./FilesDocumentPreview";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { filesLocalizationFixture } from "./filesLocalization.testSupport";
 import { FilesRuntime } from "./FilesRuntime";
@@ -31,13 +32,14 @@ describe("Files plugin activation", () => {
   it("requires stylesheet integration v1 and passes the start-resolved capability across the panel boundary", async () => {
     expect(plugin.requires.map(({ id, version }) => ({ id, version }))).toEqual([
       { id: "stylesheet-integration", version: 1 },
-      { id: "content-rendering", version: 1 },
+      { id: "markdown-rendering", version: 1 },
       { id: "file-previewing", version: 1 },
       { id: "file-icons", version: 1 },
     ]);
     const result = activateFilesPlugin(activationContext(), new FilesRuntime());
     const integration = { registerRoot: vi.fn(() => vi.fn()), createController: vi.fn(), subscribe: vi.fn(() => vi.fn()) };
     const icons = { resolveIcon: vi.fn(), subscribe: vi.fn(() => vi.fn()) };
+    const markdownRendering = { render: vi.fn(() => html`<b>Host Markdown</b>`) };
     const requests: string[] = [];
     const previewer = result.contributions.filePreviewers?.[0];
     const previewInput: FilePreviewerInput = {
@@ -49,14 +51,28 @@ describe("Files plugin activation", () => {
     await result.start?.({ signal: new AbortController().signal, capabilities: {
       resolve<Value>(token: PluginCapability<Value>): Value {
         requests.push(token.id);
-        return token.parse(token.id === "file-icons" ? icons : token.id === "stylesheet-integration" ? integration : token.id === "file-previewing" ? { listPreviewers: vi.fn(), renderPreview: vi.fn() } : { listRenderers: vi.fn(), renderText: vi.fn(), renderMarkdown: vi.fn() });
+        return token.parse(token.id === "file-icons" ? icons : token.id === "stylesheet-integration" ? integration : token.id === "file-previewing" ? { listPreviewers: vi.fn(), renderPreview: vi.fn() } : markdownRendering);
       },
     } });
-    expect(requests).toEqual(["content-rendering", "file-previewing", "file-icons", "stylesheet-integration"]);
+    expect(requests).toEqual(["markdown-rendering", "file-previewing", "file-icons", "stylesheet-integration"]);
     const panel = result.contributions.workspacePanels?.[0]?.render(createWorkspaceContext());
     expect(panel?.values).toContain(integration);
     expect(panel?.values).toContain(icons);
     expect(previewer?.render(previewInput).values).toContain(integration);
+    const markdownPreviewer = result.contributions.filePreviewers?.find(({ id }) => id === "markdown");
+    if (markdownPreviewer === undefined) throw new Error("Missing Markdown previewer");
+    render(markdownPreviewer.render({ ...previewInput, file: { ...previewInput.file, mediaType: "markdown", content: "# Notes", binary: false } }), document.body);
+    const documentPreview = document.body.querySelector("pi-web-files-document-preview");
+    if (!(documentPreview instanceof FilesDocumentPreview)) throw new Error("Missing document preview");
+    await documentPreview.updateComplete;
+    expect(markdownRendering.render).toHaveBeenCalledWith(expect.objectContaining({ text: "# Notes", machineId: "local" }));
+    expect(documentPreview.shadowRoot?.querySelector("b")?.textContent).toBe("Host Markdown");
+    const markdownRequirement = plugin.requires.find(({ id }) => id === "markdown-rendering");
+    if (markdownRequirement === undefined) throw new Error("Missing Markdown requirement");
+    expect(markdownRequirement).toMatchObject({ pluginId: "pi-web", version: 1 });
+    for (const value of [null, {}, { render: "not a function" }]) {
+      expect(() => markdownRequirement.parse(value)).toThrow("Files requires Markdown rendering capability v1");
+    }
     const requirement = plugin.requires.find(({ id }) => id === "stylesheet-integration");
     if (requirement === undefined) throw new Error("Missing stylesheet integration requirement");
     for (const value of [null, {}, { ...integration, registerRoot: undefined }, { ...integration, createController: undefined }, { ...integration, subscribe: undefined }]) {
