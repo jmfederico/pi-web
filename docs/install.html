@@ -261,17 +261,25 @@
             <section id="reverse-proxy-prefix">
               <h2>Reverse proxy root and path-prefix deployments</h2>
               <div class="callout">
-                Before upgrading a custom DNS deployment, add its hostname to <code>allowedHosts</code>, for example
-                <code>{ "allowedHosts": ["pi.example.com"] }</code> in global config. Previously Vite-only, this setting
-                now protects all production web/API routes and WebSocket upgrades; unlisted DNS names receive <code>403</code>.
-                Changes require a web/API restart (also Vite for dev UI), not a session-daemon restart.
-                See <a href="config#browser-request-security">host and Origin validation</a> for defaults and matching rules.
+                New and existing installations default to <code>hostValidation: "pending"</code>: web/API hostname
+                enforcement is off, so upgrading does not lock out custom DNS access to the production/default API.
+                A persistent notice in the Notices panel asks you to choose and opens the Host validation setting directly. To enable protection, add every public hostname to
+                <code>allowedHosts</code> and set <code>hostValidation</code> to <code>enabled</code>, for example
+                <code>{ "hostValidation": "enabled", "allowedHosts": ["pi.example.com"] }</code> in gateway global config.
+                Choose <code>disabled</code> to leave enforcement off explicitly and dismiss the decision warning.
+                Both off modes lack application-level DNS-rebinding protection; malformed Host rejection and the
+                Origin guard remain active in every mode.
+                Changes to either setting require a web/API restart; the UI flags pending enforcement changes,
+                but does not detect allowed-hosts-only changes.
+                Vite's development UI host policy remains independent; restart Vite after changing its allowed hosts.
+                No session-daemon restart is needed.
+                See <a href="config#browser-request-security">host and Origin validation</a> for matching rules and environment overrides.
               </div>
               <p>
                 For both root and nested deployments, the proxy owns TLS and must authenticate HTTP and WebSocket
                 traffic, reject unrecognized public hosts, and restrict direct backend access. Configure a rejecting
-                default virtual host; <code>server_name</code> alone does not reject unmatched hosts. Preserve the original
-                <code>Host</code>, including nonstandard ports, and <code>Origin</code>. In Nginx, use <code>$http_host</code>,
+                default virtual host; <code>server_name</code> alone does not reject unmatched hosts. Preserve the public
+                <code>Host</code>, including nonstandard ports, and browser <code>Origin</code> unchanged. In Nginx, use <code>$http_host</code>,
                 not <code>$host</code>, which loses the port. PI WEB does not trust <code>Forwarded</code> or
                 <code>X-Forwarded-*</code> for these checks. Host/Origin validation is not authentication.
               </p>
@@ -408,6 +416,7 @@ server {
                 <pre id="config-example"><code>{
   "host": "127.0.0.1",
   "port": 8504,
+  "hostValidation": "pending",
   "pathAccess": {
     "allowedPaths": ["~/SDKs", "/opt/reference"]
   },

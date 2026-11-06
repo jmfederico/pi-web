@@ -5,6 +5,7 @@ import { initialAppState } from "../../appState";
 import type { SessionStatus } from "../../api";
 import type { ApplicationPanelContext } from "../types";
 import { createCoreNoticesPanel, sessionNotices } from "./notices";
+import type { ChatSessionWarningRow } from "../../components/chat/SessionWarnings";
 
 function required<T>(value: T | null | undefined): T {
   if (value === null || value === undefined) throw new Error("Expected notices fixture value");
@@ -50,6 +51,43 @@ it("adds the opt-in DEV preview without changing actual session conditions", () 
   expect(status.warnings).toEqual([actual]);
 });
 
+it.each([false, true])("adds application notices and actions independently of session selection (session=%s)", async (withSession) => {
+  const ctx = context(withSession ? stateWithSession() : initialAppState());
+  if (ctx.state.status) ctx.state.status = { ...ctx.state.status, warnings: [{ severity: "error", message: "Session diagnostic" }] };
+  const run = vi.fn();
+  let notices: readonly ChatSessionWarningRow[] = [{
+    id: "application-condition", severity: "warning", severityClass: "session-warning warning",
+    message: "Application diagnostic", source: "Application", action: { label: "Resolve condition", run },
+  }];
+  const panel = createCoreNoticesPanel(() => notices);
+  expect(ctx.state.selectedWorkspace).toBeUndefined();
+  expect(panel.visible?.(ctx)).toBe(true);
+  expect(panel.badge?.(ctx)).toBe(withSession ? 2 : 1);
+  const container = document.createElement("div");
+  document.body.append(container);
+  render(panel.render(ctx), container);
+  const element = required(document.querySelector("session-notices-panel"));
+  await element.updateComplete;
+  const root = required(element.shadowRoot);
+  expect(root.textContent).toContain("Application diagnostic");
+  expect(root.textContent.includes("Session diagnostic")).toBe(withSession);
+  const action = required([...root.querySelectorAll("button")].find((button) => button.textContent.trim() === "Resolve condition"));
+  expect(root.querySelector(".session-warning-dismiss")).toBeNull();
+  action.click();
+  expect(run).toHaveBeenCalledOnce();
+  expect(root.textContent).toContain("Application diagnostic");
+
+  // Invoking an action does not resolve a condition. Its authoritative source
+  // must change, and the same panel getter must reflect that updated source.
+  notices = [];
+  expect(panel.visible?.(ctx)).toBe(withSession);
+  expect(panel.badge?.(ctx)).toBe(withSession ? 1 : undefined);
+  render(panel.render(ctx), container);
+  await element.updateComplete;
+  expect(root.textContent).not.toContain("Application diagnostic");
+  expect(root.textContent.includes("Session diagnostic")).toBe(withSession);
+});
+
 it("wires condition availability, count and current context into the panel contribution", async () => {
   const panel = createCoreNoticesPanel();
   const ctx = context();
@@ -58,7 +96,9 @@ it("wires condition availability, count and current context into the panel contr
   expect(panel.visible?.(ctx)).toBe(false); expect(panel.badge?.(ctx)).toBeUndefined();
   ctx.state.status = { ...required(ctx.state.status), warnings: [{ severity: "error", message: "Current" }] };
   expect(panel.visible?.(ctx)).toBe(true); expect(panel.badge?.(ctx)).toBe(1);
-  render(panel.render(ctx), document.body);
+  const container = document.createElement("div");
+  document.body.append(container);
+  render(panel.render(ctx), container);
   const element = required(document.querySelector("session-notices-panel"));
   await element.updateComplete;
   expect(element.status).toBe(ctx.state.status);

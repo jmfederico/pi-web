@@ -96,6 +96,20 @@ describe("API parsers", () => {
     expect(() => parsePiWebConfigResponse({ ...response, defaultsConfig: { basePaths: [42] } })).toThrow();
   });
 
+  it("preserves explicit Host decisions and active runtime state without inventing choices for older servers", () => {
+    const response = { path: "config.json", exists: true, config: {}, effectiveConfig: {}, envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false } };
+    expect(parsePiWebConfigResponse(response)).not.toHaveProperty("activeHostValidation");
+    for (const hostValidation of ["pending", "enabled", "disabled"] as const) {
+      for (const field of ["config", "effectiveConfig", "defaultsConfig"] as const) {
+        expect(parsePiWebConfigResponse({ ...response, [field]: { hostValidation } })[field]).toEqual({ hostValidation });
+        expect(() => parsePiWebConfigResponse({ ...response, [field]: { hostValidation: false } })).toThrow("hostValidation");
+        expect(() => parsePiWebConfigResponse({ ...response, [field]: { hostValidation: "enabled", allowedHosts: true } })).toThrow("allowedHosts list");
+      }
+      expect(parsePiWebConfigResponse({ ...response, activeHostValidation: hostValidation }).activeHostValidation).toBe(hostValidation);
+    }
+    expect(() => parsePiWebConfigResponse({ ...response, activeHostValidation: "unknown" })).toThrow("activeHostValidation");
+  });
+
   it("parses and validates installation identity in config responses", () => {
     const response = { path: "config.json", exists: true, config: { installationName: " Build lab " }, effectiveConfig: {}, envOverrides: { host: false, port: false, allowedHosts: false, maxUploadBytes: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false } };
     expect(parsePiWebConfigResponse(response).config.installationName).toBe("Build lab");

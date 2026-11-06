@@ -81,7 +81,7 @@ export class SettingsGeneralPanel extends LitElement {
       const submission = this.gatewaySubmission;
       const acknowledged = submission !== undefined && draftsEqual(incoming, submission.expected);
       this.gatewayDraft = reconcileConfigDraft(this.gatewayDraft, acknowledged ? submission.draft : this.gatewayBaseline, incoming);
-      for (const [field, setting] of [["host", "host"], ["port", "port"], ["allowedHostsMode", "allowedHosts"], ["allowedHostsText", "allowedHosts"]] as const) {
+      for (const [field, setting] of [["host", "host"], ["port", "port"], ["hostValidation", "hostValidation"], ["allowedHostsMode", "allowedHosts"], ["allowedHostsText", "allowedHosts"]] as const) {
         if (enforcedSetting(this.configResponse, `/${setting}`) !== undefined) Object.assign(this.gatewayDraft, { [field]: incoming[field] });
       }
       this.gatewayBaseline = incoming;
@@ -192,6 +192,20 @@ export class SettingsGeneralPanel extends LitElement {
             </label>
             ${this.renderOverrideBadge("port")}
 
+            <div class="field ui-form-field" data-settings-target="host-validation" tabindex="-1" role="group" aria-labelledby="host-validation-label">
+              <label id="host-validation-label" for="host-validation">${messages.t("hostValidation")}</label>
+              <select class="ui-input" id="host-validation" aria-describedby="host-validation-help" .value=${this.gatewayDraft.hostValidation} ?disabled=${enforcedSetting(config, "/hostValidation") !== undefined} @change=${(event: Event) => {
+                const value = selectValue(event);
+                if (value === "pending" || value === "enabled" || value === "disabled") this.updateGatewayDraft({ hostValidation: value });
+              }}>
+                <option value="pending">${messages.t("hostValidationPending")}</option>
+                <option value="enabled">${messages.t("hostValidationEnabled")}</option>
+                <option value="disabled">${messages.t("hostValidationDisabled")}</option>
+              </select>
+              <small id="host-validation-help">${messages.t("hostValidationHelp")}</small>
+              ${settingControls(config, "/hostValidation", this.loading || this.saving, this.onReset)}
+            </div>
+
             <div class="field ui-form-field">
               <span class="field-heading">
                 <label for="allowed-hosts-mode">${messages.t("allowedHosts")}</label>
@@ -199,7 +213,7 @@ export class SettingsGeneralPanel extends LitElement {
               </span>
               <select class="ui-input" ?disabled=${enforcedSetting(config, "/allowedHosts") !== undefined} id="allowed-hosts-mode" aria-describedby="allowed-hosts-help" .value=${this.gatewayDraft.allowedHostsMode} @change=${(event: Event) => { this.updateGatewayDraft({ allowedHostsMode: selectValue(event) === "all" ? "all" : "list" }); }}>
                 <option value="list">${messages.t("hostsList")}</option>
-                <option value="all">${messages.t("hostsAll")}</option>
+                <option value="all" ?disabled=${this.gatewayDraft.hostValidation === "enabled"}>${messages.t("hostsAll")}</option>
               </select>
               <label for="allowed-hosts-list">${messages.t("hostList")}</label>
               <textarea class="ui-input" id="allowed-hosts-list" aria-describedby="allowed-hosts-help" .value=${this.gatewayDraft.allowedHostsText} ?disabled=${this.gatewayDraft.allowedHostsMode === "all" || enforcedSetting(config, "/allowedHosts") !== undefined} rows="4" placeholder="example.local&#10;192.168.1.20" spellcheck="false" @input=${(event: Event) => { this.updateGatewayDraft({ allowedHostsText: textAreaValue(event) }); }}></textarea>
@@ -306,6 +320,8 @@ export class SettingsGeneralPanel extends LitElement {
         <dl>
           <div><dt>${messages.t("host")}</dt><dd><bdi>${effective.host ?? html`<span class="muted">${messages.t("defaultValue", { value: "127.0.0.1" })}</span>`}</bdi></dd></div>
           <div><dt>${messages.t("port")}</dt><dd>${effective.port === undefined ? html`<span class="muted">${messages.t("defaultValue", { value: "8504" })}</span>` : localization.number(effective.port)}</dd></div>
+          <div><dt>${messages.t("hostValidation")}</dt><dd>${messages.t("hostValidationStatus", { mode: effective.hostValidation ?? "pending" })}</dd></div>
+          <div><dt>${messages.t("hostValidationRunning")}</dt><dd>${messages.t("hostValidationStatus", { mode: this.configResponse?.activeHostValidation ?? "unknown" })}</dd></div>
           <div><dt>${messages.t("allowedHosts")}</dt><dd>${formatAllowedHosts(effective.allowedHosts)}</dd></div>
         </dl>
       </section>

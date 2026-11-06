@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 import { appTestContext, registerAppTestHooks } from "./app.testSupport.js";
 
-registerAppTestHooks();
+registerAppTestHooks({ hostValidation: "enabled" });
 
 describe("buildApp browser request guard wiring", () => {
   it("guards assets, APIs, and unknown routes before they run", async () => {
@@ -59,7 +59,7 @@ describe("buildApp browser request guard wiring", () => {
   });
 
   it("keeps host policy fixed until the web/API restarts", async () => {
-    const saved = await appTestContext.app.inject({ method: "PUT", url: "/api/config", payload: { config: { allowedHosts: true } } });
+    const saved = await appTestContext.app.inject({ method: "PUT", url: "/api/config", payload: { config: { hostValidation: "disabled" } } });
     expect(saved.statusCode).toBe(200);
     const response = await appTestContext.app.inject({ url: "/api/pi-web/health", headers: { host: "evil.example" } });
     expect(response.statusCode).toBe(403);

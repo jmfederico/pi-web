@@ -645,33 +645,51 @@
 <td>Web/API restart</td>
 </tr>
 <tr>
+<th scope="row">Host validation<br><code>hostValidation</code></th>
+<td>Gateway web/API</td>
+<td><code>pending</code></td>
+<td><code>pending</code>: off, decision warning; <code>enabled</code>: enforce allowed hosts; <code>disabled</code>: explicitly off, warning dismissed.</td>
+<td>Web/API restart. UI flags pending enforcement changes. No sessiond restart.</td>
+</tr>
+<tr>
 <th scope="row">Allowed request hosts<br><code>allowedHosts</code></th>
 <td>Gateway web/API + dev UI</td>
 <td><code>[]</code> (localhost, .localhost subdomains, literal IPv4/IPv6)</td>
-<td>Additional trusted hostnames for all routes and WebSocket upgrades, including the production UI.</td>
+<td>Additional trusted hostnames for web/API when host validation is enabled. Vite dev UI enforcement is independent.</td>
 <td>Web/API restart; also Vite for dev UI. No sessiond restart.</td>
 </tr>
 </tbody></table></div>
 <p id="deployment-paths"><strong>Serving at a URL prefix?</strong> No config key is needed. The proxy must redirect to a trailing slash and strip the prefix before forwarding HTTP and WebSocket traffic. <a href="install#reverse-proxy-prefix">Reverse-proxy example →</a></p>
 <h3 id="browser-request-security">Browser request security</h3>
-<p>The shared web/API server checks <code>Host</code> before handling any route or WebSocket upgrade, including the production UI. <code>allowedHosts</code> (or <code>PI_WEB_ALLOWED_HOSTS</code>) supplies additional trusted hostnames:</p>
+<p>The gateway's <code>hostValidation</code> setting has three explicit values:</p>
 <ul>
-<li>The default <code>[]</code> allows <code>localhost</code>, subdomains of <code>.localhost</code>, and literal IPv4/IPv6 addresses.</li>
-<li>An exact hostname such as <code>pi.example.com</code> allows only that hostname. A Vite-style leading-dot entry such as <code>.example.com</code> allows both <code>example.com</code> and its subdomains. Use hostnames, not URLs or host:port pairs.</li>
-<li><code>true</code> disables only the host allowlist. Prefer explicit hosts; allowing every host weakens protection against DNS rebinding. It does not disable the Origin guard below.</li>
+<li><code>pending</code> (default): the web/API hostname allowlist is off. A persistent notice in the Notices panel asks you to choose enabled or disabled, even without a selected workspace or session. Its action opens General settings directly at Host validation.</li>
+<li><code>enabled</code>: enforces <code>allowedHosts</code> for every route and WebSocket upgrade, including the production UI. The decision is resolved.</li>
+<li><code>disabled</code>: the web/API hostname allowlist is off by explicit choice, and the decision warning is dismissed.</li>
 </ul>
-<p><strong>Before upgrading a custom DNS deployment</strong>, add its hostname to <code>allowedHosts</code>, for example <code>{ "allowedHosts": ["pi.example.com"] }</code>. This setting previously applied only to the Vite development UI; production requests to unlisted DNS names now receive <code>403</code>.</p>
-<p>The web/API process snapshots <code>allowedHosts</code> at startup. Restart that process after changing the setting; also restart Vite for the development UI. This security fix and setting need no session-daemon restart.</p>
-<h4 id="origin-checks">Origin checks</h4>
-<p>All WebSocket upgrades and HTTP methods other than <code>GET</code>, <code>HEAD</code>, and <code>OPTIONS</code> also pass an Origin guard:</p>
+<p><strong>New and existing installations default to <code>pending</code>.</strong> New example configs include <code>"hostValidation": "pending"</code>; a missing saved key inherits lower-priority config, then the built-in <code>pending</code> default. An upgrade does not turn on hostname enforcement for the production/default API or lock out custom DNS deployments. Choose whether to enable protection before enforcement begins.</p>
+<p>In both <code>pending</code> and <code>disabled</code>, PI WEB remains without application-level DNS-rebinding protection. The Origin guard stays active in <strong>all three modes</strong>, and malformed <code>Host</code> headers are always rejected. Origin checks are not authentication.</p>
+<p>To enable protection, first include every public DNS name you use in <code>allowedHosts</code>, then set <code>hostValidation</code> to <code>enabled</code>, for example:</p>
+<pre><code>{ "hostValidation": "enabled", "allowedHosts": ["pi.example.com"] }</code></pre>
+<p>When enabled, unlisted hostnames receive <code>403</code>. Matching rules are:</p>
 <ul>
-<li>A missing <code>Origin</code> is allowed for CLI and Fleet clients; host validation still applies.</li>
+<li>The default <code>allowedHosts: []</code> allows <code>localhost</code>, subdomains of <code>.localhost</code>, and literal IPv4/IPv6 addresses.</li>
+<li>An exact hostname such as <code>pi.example.com</code> allows only that hostname. A Vite-style leading-dot entry such as <code>.example.com</code> allows both <code>example.com</code> and its subdomains. Use hostnames, not URLs or host:port pairs.</li>
+<li><code>hostValidation: "enabled"</code> with <code>allowedHosts: true</code> is invalid. To turn off application hostname enforcement explicitly, choose <code>hostValidation: "disabled"</code> instead.</li>
+</ul>
+<p>These settings are gateway-only, not project-local or selected-remote-machine settings. <code>PI_WEB_HOST_VALIDATION</code> accepts <code>pending</code>, <code>enabled</code>, or <code>disabled</code>; it overrides saved config and deployment defaults. <code>PI_WEB_ALLOWED_HOSTS</code> independently overrides the list. Environment-enforced settings are read-only in the UI.</p>
+<p>The web/API process snapshots both settings at startup. Restart web/API after changing <code>hostValidation</code> or <code>allowedHosts</code>; the UI reports a restart requirement when enabling or disabling enforcement would change the running behavior. Choosing <code>disabled</code> while enforcement is already off clears the decision warning immediately. The UI does not detect allowed-hosts-only changes. No session-daemon restart is needed.</p>
+<p><strong>Development UI:</strong> Vite's existing <code>allowedHosts</code> enforcement remains independent. Neither <code>pending</code> nor <code>disabled</code> turns off Vite's built-in host policy. Legacy <code>allowedHosts: true</code> remains accepted to disable Vite's allowlist when <code>hostValidation</code> is not <code>enabled</code>. Restart Vite after changing its allowed hosts.</p>
+<h4 id="origin-checks">Origin checks</h4>
+<p>In every host-validation mode, all WebSocket upgrades and HTTP methods other than <code>GET</code>, <code>HEAD</code>, and <code>OPTIONS</code> pass an Origin guard:</p>
+<ul>
+<li>A missing <code>Origin</code> is allowed for CLI and Fleet clients; Host syntax checks and any enabled hostname allowlist still apply.</li>
 <li>A present <code>Origin</code> must be a single well-formed HTTP(S) origin, not a URL with credentials, a path, query, or fragment. <code>null</code>, malformed origins, and origins with a different hostname or port are rejected with <code>403</code>.</li>
 <li>The origin's hostname and effective port must match the raw preserved <code>Host</code> header. An explicit Host port must equal the Origin port (including its scheme default when omitted). If Host omits a port, it is interpreted using the Origin scheme's default: <code>80</code> for HTTP or <code>443</code> for HTTPS. Thus <code>Origin: https://pi.example.com:8443</code> requires <code>Host: pi.example.com:8443</code>.</li>
 </ul>
 <p>Scheme comparison is intentionally omitted so a TLS-terminating proxy can forward to HTTP. These checks use neither <code>Forwarded</code> nor <code>X-Forwarded-*</code> headers. There is no <code>allowedOrigins</code> setting or added CORS permission; listing two hosts does not permit cross-origin requests between them.</p>
 <h4>Proxy responsibilities</h4>
-<p>Preserve the original <code>Host</code>, including any nonstandard port, and the browser's <code>Origin</code>. For Nginx, use <code>$http_host</code>, not <code>$host</code>. The proxy owns TLS and must authenticate both HTTP and WebSocket traffic, reject unrecognized public hosts, and restrict direct backend access. Host/Origin checks are not authentication. See the <a href="install#reverse-proxy-prefix">reverse proxy installation guide</a>.</p>
+<p>Preserve the public <code>Host</code>, including any nonstandard port, and the browser's <code>Origin</code> unchanged. For Nginx, use <code>$http_host</code>, not <code>$host</code>. The proxy owns TLS and must authenticate both HTTP and WebSocket traffic, reject unrecognized public hosts, and restrict direct backend access. Host/Origin checks are not authentication. See the <a href="install#reverse-proxy-prefix">reverse proxy installation guide</a>.</p>
 <h3>Daemon transport (environment only)</h3>
 <div class="table-scroll" role="region" aria-label="Web/API ↔ session daemon connection" tabindex="0">
 <table class="reference-table settings-table">
@@ -914,9 +932,14 @@ PI_WEB_PLUGINS='{"git":{"settings":{"workspaceDiscoveryHooks":false}}}'</code></
 <td>Port number</td>
 </tr>
 <tr>
+<th scope="row"><code>hostValidation</code></th>
+<td><code>PI_WEB_HOST_VALIDATION</code></td>
+<td><code>pending</code>, <code>enabled</code>, or <code>disabled</code>; default <code>pending</code>.</td>
+</tr>
+<tr>
 <th scope="row"><code>allowedHosts</code></th>
 <td><code>PI_WEB_ALLOWED_HOSTS</code></td>
-<td>JSON <code>true</code> or string array; legacy <code>true</code>/comma-separated hosts also accepted. Prefer explicit hosts; <code>true</code> disables the web/API and development UI host allowlists, not the <a href="#origin-checks">Origin guard</a>.</td>
+<td>JSON <code>true</code> or string array; legacy <code>true</code>/comma-separated hosts also accepted. Prefer an explicit host list; <code>true</code> is invalid with <code>enabled</code> and otherwise retains only its legacy Vite allowlist opt-out. Use <code>hostValidation: "disabled"</code> for an explicit web/API opt-out; the <a href="#origin-checks">Origin guard</a> remains active in every mode.</td>
 </tr>
 <tr>
 <th scope="row"><code>maxUploadBytes</code></th>

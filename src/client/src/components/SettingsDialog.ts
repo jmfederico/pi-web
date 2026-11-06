@@ -9,6 +9,7 @@ import { configApi, piPackagesApi, pluginsApi, type Machine, type MachineHealth,
 import type { McpAuthContext, McpAuthHandler } from "./settings/SettingsMcpPanel";
 import "./settings/SettingsMcpPanel";
 import type { SettingsSection } from "../settingsRoute";
+import { revealSettingsTarget } from "./settings/settingsTarget";
 import "./ModalSurface";
 import type { ModalSurface } from "./ModalSurface";
 import { uiDialogStyles, uiSelectionStyles } from "./ui/dialogStyles";
@@ -46,6 +47,10 @@ export class SettingsDialog extends LitElement {
   }
 
   @property({ attribute: false }) section: SettingsSection = "general";
+  /** Optional data-settings-target destination within the active section. */
+  @property({ attribute: false }) target: string | undefined;
+  private revealedTarget: string | undefined;
+  private targetRequest = 0;
   @property({ attribute: false }) actions: AppAction[] = [];
   @property({ attribute: false }) themes: readonly QualifiedThemeContribution[] = [];
   @property({ attribute: false }) onThemeCatalogLoaded: (catalog: BrowserThemeCatalog) => void = () => undefined;
@@ -74,6 +79,10 @@ export class SettingsDialog extends LitElement {
   @property({ attribute: false }) onNavigate?: (section: SettingsSection) => void;
   @property({ attribute: false }) onClose?: () => void;
   @property({ attribute: false }) onMachineConfigSaved?: (machineId: string) => void;
+  @property({ attribute: false }) onGatewayConfigLoaded?: (response: PiWebConfigResponse) => void;
+  /** A completed write from a closed dialog requires an authoritative refresh. */
+  @property({ attribute: false }) onGatewayConfigInvalidated?: () => void;
+  private gatewayPublisherRetired = false;
   @property({ attribute: false }) onConfigSaved?: (config: PiWebConfigValues) => void;
   @property({ attribute: false }) onRefreshMachineRuntime?: (machineId: string) => void | Promise<void>;
   @state() private configResponse: PiWebConfigResponse | undefined;
@@ -121,6 +130,7 @@ export class SettingsDialog extends LitElement {
   private packageMutationSeq = 0;
 
   override connectedCallback(): void {
+    this.gatewayPublisherRetired = false;
     super.connectedCallback();
     this.loadThemeCatalogForGeneral();
     void this.loadConfig();
@@ -131,12 +141,17 @@ export class SettingsDialog extends LitElement {
   }
 
   override disconnectedCallback(): void {
+    this.gatewayPublisherRetired = true;
+    // A closed dialog must not publish an old read over a newer dialog's save.
+    this.loadRequestSeq += 1;
     if (this.savedMessageTimer !== undefined) window.clearTimeout(this.savedMessageTimer);
     this.savedMessageTimer = undefined;
     super.disconnectedCallback();
   }
 
   protected override updated(changed: PropertyValues<this>): void {
+    if (changed.has("target") || changed.has("section")) this.revealedTarget = undefined;
+    void this.revealTarget();
     if (changed.has("section")) {
       this.loadThemeCatalogForGeneral();
       // The surface must render its slot before the mobile tab row has layout.
@@ -171,6 +186,16 @@ export class SettingsDialog extends LitElement {
     if (!this.pluginLifecycleSupportNeedsReload(previousRuntime, currentTarget)) return;
     this.resetPluginStateForTargetChange();
     if (this.isConnected) void this.loadPluginsForTarget(currentTarget);
+  }
+
+  private async revealTarget(): Promise<void> {
+    const request = ++this.targetRequest;
+    const target = this.target;
+    if (target === undefined || target === this.revealedTarget || !this.isConnected) return;
+    const isCurrent = () => this.isConnected && request === this.targetRequest && this.target === target;
+    if (await revealSettingsTarget(this.renderRoot, target, isCurrent)) this.revealedTarget = target;
+    // Missing targets can appear after a configuration load. The next render
+    // retries; a successful reveal is one-shot so saves do not steal focus.
   }
 
   private loadThemeCatalogForGeneral(): void {
@@ -427,11 +452,25 @@ export class SettingsDialog extends LitElement {
   }
 
   private publishGatewayConfig(response: PiWebConfigResponse): void {
+    if (this.gatewayPublisherRetired) {
+      // The write still happened, but this dialog no longer owns the snapshot.
+      // In particular, a selected-machine save may have merged into old config.
+      this.onGatewayConfigInvalidated?.();
+      return;
+    }
+    // An accepted write also supersedes reads started while it was in flight.
+    this.loadRequestSeq += 1;
+    this.loading = false;
     configureThemePolicy(response);
     void configureLocalizationPolicy(response).catch((error: unknown) => {
       console.warn("Failed to apply gateway localization policy", error);
     });
+    this.onGatewayConfigLoaded?.(response);
     this.onConfigSaved?.(response.effectiveConfig);
+  }
+
+  reloadGatewayConfig(): Promise<void> {
+    return this.loadConfig();
   }
 
   private async loadConfig(): Promise<void> {

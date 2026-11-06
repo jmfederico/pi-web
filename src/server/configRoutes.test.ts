@@ -27,6 +27,14 @@ afterEach(async () => {
 });
 
 describe("config routes", () => {
+  it("strips gateway Host policy metadata from selected-machine responses", async () => {
+    vi.mocked(service.read).mockReturnValue({ ...responseFor({ hostValidation: "enabled", allowedHosts: ["public.test"] }, true), activeHostValidation: "enabled" });
+    const selected = await app.inject("/api/machines/local/config");
+    expect(selected.statusCode).toBe(200);
+    expect(selected.json<PiWebConfigResponse>()).not.toHaveProperty("activeHostValidation");
+    expect(selected.json<PiWebConfigResponse>().effectiveConfig).not.toHaveProperty("hostValidation");
+  });
+
   it.each(["/api/config", "/api/machines/local/config"])("exposes and validates sessionMessages through %s", async (url) => {
     const saved = await app.inject({ method: "PUT", url, payload: { config: { sessionMessages: false } } });
     expect(saved.statusCode).toBe(200);

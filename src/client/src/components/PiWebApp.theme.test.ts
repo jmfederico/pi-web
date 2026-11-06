@@ -7,6 +7,7 @@ import { applyPiWebTheme, configureThemePolicy, THEME_STORAGE_KEY } from "../the
 import { PiWebApp } from "./PiWebApp";
 import { themeStylesheetFetch } from "./themeStylesheetFetch.testSupport";
 import { SettingsDialog } from "./SettingsDialog";
+import type { SettingsGeneralPanel } from "./settings/SettingsGeneralPanel";
 import { configResponse, pluginsResponse } from "./SettingsDialog.testSupport";
 import { SettingsThemePanel } from "./settings/SettingsThemePanel";
 import { SettingsFileIconThemePanel } from "./settings/SettingsFileIconThemePanel";
@@ -20,6 +21,8 @@ import * as themeCatalogApi from "../themeCatalog";
 import { setInitialThemeStylesheets } from "../plugins/styleSources";
 import { pluginStyles } from "../plugins/styles";
 import { loadExternalPlugins } from "../plugins/external";
+import { saveNavigationPreferences } from "../navigationPreferences";
+import type { WorkspacePanel } from "./WorkspacePanel";
 
 vi.mock("../plugins/external", () => ({ loadExternalPlugins: vi.fn() }));
 
@@ -336,6 +339,219 @@ async function discoverGatewayPlugins(app: PiWebApp): Promise<void> {
   if (typeof discover !== "function") throw new Error("Expected gateway discovery boundary");
   await Reflect.apply(discover, app, []);
 }
+
+it.each(["enabled", "disabled"] as const)("keeps the gateway Host warning until %s is saved, and only requires restart for an enforcement change", async (choice) => {
+  config = { hostValidation: "pending" };
+  vi.mocked(configApi.config).mockImplementation((machineId) => Promise.resolve(machineId === undefined
+    ? configResponse(config)
+    : { ...configResponse({ hostValidation: "disabled" }), activeHostValidation: "disabled" }));
+  if (choice === "disabled") {
+    vi.mocked(configApi.updateConfig).mockImplementation((update) => {
+      config = { ...config, ...update.set };
+      return Promise.resolve({ ...configResponse(config), activeHostValidation: "pending" });
+    });
+  }
+  saveNavigationPreferences({ pinnedIds: ["chat", "core:notices"], mobileCollapsed: false });
+  const app = await mountApp();
+  const state: unknown = Reflect.get(app, "state");
+  if (typeof state !== "object" || state === null) throw new Error("Expected app state");
+  expect(state).toMatchObject({ selectedSession: undefined, selectedWorkspace: undefined });
+  // Selecting a machine with no Host warning must not replace the gateway's condition.
+  const remote = { id: "remote", name: "Remote", kind: "remote" as const, baseUrl: "https://remote.invalid", status: "online" as const, createdAt: "", updatedAt: "" };
+  Reflect.set(app, "state", { ...state, selectedMachine: remote, machines: [remote] });
+  await app.updateComplete;
+  const workspace = app.shadowRoot?.querySelector<WorkspacePanel>("workspace-panel");
+  if (!workspace) throw new Error("Expected existing application panels");
+  await workspace.updateComplete;
+  expect(workspace.panels.find((panel) => panel.id === "core:notices")?.badge?.()).toBe(1);
+  const notice = () => workspace.shadowRoot?.querySelector("session-notices-panel")?.shadowRoot?.querySelector(".session-warning-message") ?? null;
+  await vi.waitFor(() => { expect(notice()).not.toBeNull(); });
+  expect(app.shadowRoot?.querySelector("[data-host-validation-notice]")).toBeNull();
+  const dialog = settings(app);
+  dialog.onClose?.();
+  await app.updateComplete;
+  expect(app.shadowRoot?.querySelector("settings-dialog")).toBeNull();
+  const open = workspace.shadowRoot?.querySelector("session-notices-panel")?.shadowRoot?.querySelector<HTMLButtonElement>("button");
+  if (open == null) throw new Error("Expected persistent Host decision action");
+  open.click();
+  await vi.waitFor(() => { expect(themePanel(app).loading).toBe(false); });
+  const panel = settings(app).shadowRoot?.querySelector<SettingsGeneralPanel>("settings-general-panel");
+  if (panel == null) throw new Error("Expected General settings");
+  await panel.updateComplete;
+  expect(panel.machineConfigResponse?.effectiveConfig.hostValidation).toBe("disabled");
+  expect(panel.configResponse?.effectiveConfig.hostValidation).toBe("pending");
+  const mode = panel.shadowRoot?.querySelector<HTMLSelectElement>("#host-validation");
+  if (mode == null) throw new Error("Expected Host validation selector");
+  await vi.waitFor(() => { expect(panel.shadowRoot?.activeElement).toBe(mode); });
+  expect(notice()).not.toBeNull();
+  expect(panel.shadowRoot?.querySelector("[data-host-validation-notice]")).toBeNull();
+  mode.value = choice;
+  mode.dispatchEvent(new Event("change", { bubbles: true }));
+  await panel.updateComplete;
+  expect(notice()).not.toBeNull();
+  panel.shadowRoot?.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  await vi.waitFor(() => { expect(config.hostValidation).toBe(choice); });
+  await app.updateComplete;
+  if (choice === "disabled") {
+    // Pending and disabled both leave enforcement off; the saved decision is enough.
+    await vi.waitFor(() => { expect(notice()).toBeNull(); });
+    return;
+  }
+  // No running snapshot is available: saving must not imply enforcement.
+  expect(notice()).not.toBeNull();
+  vi.mocked(configApi.config).mockResolvedValue({ ...configResponse(config), activeHostValidation: "enabled" });
+  await panel.onReload?.();
+  await vi.waitFor(() => { expect(notice()).toBeNull(); });
+});
+
+it.each(["closed Settings read", "app refresh read", "closed Settings machine save"] as const)("does not restore a resolved Host notice when an older %s completes after a Settings save", async (source) => {
+  config = { hostValidation: "pending" };
+  const gatewayResponse = () => ({ ...configResponse(config), activeHostValidation: "pending" as const });
+  vi.mocked(configApi.config).mockImplementation((machineId) => Promise.resolve(machineId === undefined ? gatewayResponse() : configResponse({})));
+  vi.mocked(configApi.updateConfig).mockImplementation((update) => {
+    config = { ...config, ...update.set };
+    return Promise.resolve(gatewayResponse());
+  });
+  saveNavigationPreferences({ pinnedIds: ["chat", "core:notices"], mobileCollapsed: false });
+  const app = await mountApp();
+  const workspace = app.shadowRoot?.querySelector<WorkspacePanel>("workspace-panel");
+  if (!workspace) throw new Error("Expected application panels");
+  const notice = () => workspace.shadowRoot?.querySelector("session-notices-panel")?.shadowRoot?.querySelector('[data-notice-id="gateway-host-validation"]') ?? null;
+  await vi.waitFor(() => { expect(notice()).not.toBeNull(); });
+
+  const originalDialog = settings(app);
+  const originalPanel = originalDialog.shadowRoot?.querySelector<SettingsGeneralPanel>("settings-general-panel");
+  if (!originalPanel) throw new Error("Expected General settings");
+  let releaseOlderOperation!: () => void;
+  const gate = new Promise<void>((resolve) => { releaseOlderOperation = resolve; });
+  let olderOperation: Promise<unknown>;
+  if (source === "closed Settings read") {
+    // Config has already returned its old snapshot, but the same gateway load
+    // cannot publish until its unrelated plugins request also completes.
+    vi.mocked(pluginsApi.plugins).mockImplementationOnce(async () => {
+      await gate;
+      return pluginsResponse([]);
+    });
+    if (!originalPanel.onReload) throw new Error("Expected Settings refresh callback");
+    olderOperation = Promise.resolve(originalPanel.onReload());
+  } else if (source === "closed Settings machine save") {
+    vi.mocked(configApi.updateConfig).mockImplementationOnce(async () => {
+      await gate;
+      return configResponse({ installationName: "Updated machine" });
+    });
+    if (!originalPanel.onSaveMachineConfig) throw new Error("Expected machine save callback");
+    olderOperation = Promise.resolve(originalPanel.onSaveMachineConfig({ installationName: "Updated machine" }));
+  } else {
+    const oldResponse = gatewayResponse();
+    vi.mocked(configApi.config).mockImplementationOnce(async () => {
+      await gate;
+      return oldResponse;
+    });
+    // This fixture omits transport startup. Invoke its real startup/refresh
+    // configuration boundary without starting session discovery or sockets.
+    const load: unknown = Reflect.get(app, "loadClientConfig");
+    if (typeof load !== "function") throw new Error("Expected app configuration loader");
+    olderOperation = Promise.resolve(Reflect.apply(load, app, []));
+  }
+
+  originalDialog.onClose?.();
+  await app.updateComplete;
+  expect(originalDialog.isConnected).toBe(false);
+  const open = notice()?.querySelector<HTMLButtonElement>("button");
+  if (!open) throw new Error("Expected Host notice settings action");
+  open.click();
+  await vi.waitFor(() => { expect(themePanel(app).loading).toBe(false); });
+  expect(settings(app)).not.toBe(originalDialog);
+  const panel = settings(app).shadowRoot?.querySelector<SettingsGeneralPanel>("settings-general-panel");
+  if (!panel) throw new Error("Expected reopened General settings");
+  await panel.updateComplete;
+  const mode = panel.shadowRoot?.querySelector<HTMLSelectElement>("#host-validation");
+  if (!mode) throw new Error("Expected Host validation selector");
+  mode.value = "disabled";
+  mode.dispatchEvent(new Event("change", { bubbles: true }));
+  await panel.updateComplete;
+  const form = mode.form;
+  if (!form) throw new Error("Expected gateway config form");
+  form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  await vi.waitFor(() => {
+    expect(configApi.updateConfig).toHaveBeenCalledWith(expect.objectContaining({ set: { hostValidation: "disabled" } }));
+    expect(panel.configResponse?.effectiveConfig.hostValidation).toBe("disabled");
+    expect(notice()).toBeNull();
+  });
+
+  releaseOlderOperation();
+  await olderOperation;
+  await app.updateComplete;
+  await workspace.updateComplete;
+  const noticesPanel = workspace.shadowRoot?.querySelector("session-notices-panel");
+  await noticesPanel?.updateComplete;
+  expect(workspace.panels.some((entry) => entry.id === "core:notices")).toBe(false);
+  expect(notice()).toBeNull();
+  expect(panel.configResponse?.effectiveConfig.hostValidation).toBe("disabled");
+});
+
+it.each([false, true])("refreshes an acknowledged save after its dialog closes without a newer save (reopened with older read=%s)", async (reopen) => {
+  config = { hostValidation: "pending" };
+  const gatewayResponse = () => ({ ...configResponse(config), activeHostValidation: "pending" as const });
+  vi.mocked(configApi.config).mockImplementation((machineId) => Promise.resolve(machineId === undefined ? gatewayResponse() : configResponse({})));
+  let completeSave!: () => void;
+  const saving = new Promise<void>((resolve) => { completeSave = resolve; });
+  vi.mocked(configApi.updateConfig).mockImplementation(async (update) => {
+    await saving;
+    config = { ...config, ...update.set };
+    return gatewayResponse();
+  });
+  saveNavigationPreferences({ pinnedIds: ["chat", "core:notices"], mobileCollapsed: false });
+  const app = await mountApp();
+  const workspace = app.shadowRoot?.querySelector<WorkspacePanel>("workspace-panel");
+  if (!workspace) throw new Error("Expected application panels");
+  const notice = () => workspace.shadowRoot?.querySelector("session-notices-panel")?.shadowRoot?.querySelector('[data-notice-id="gateway-host-validation"]') ?? null;
+  await vi.waitFor(() => { expect(notice()).not.toBeNull(); });
+  const originalDialog = settings(app);
+  const originalPanel = originalDialog.shadowRoot?.querySelector<SettingsGeneralPanel>("settings-general-panel");
+  if (!originalPanel?.onSave) throw new Error("Expected gateway save callback");
+  const save = originalPanel.onSave({ hostValidation: "disabled" });
+  originalDialog.onClose?.();
+  await app.updateComplete;
+  expect(originalDialog.isConnected).toBe(false);
+
+  let livePanel: SettingsGeneralPanel | undefined;
+  let releaseOlderRead: (() => void) | undefined;
+  let olderRead: void | Promise<void> = undefined;
+  if (reopen) {
+    const open = notice()?.querySelector<HTMLButtonElement>("button");
+    if (!open) throw new Error("Expected Host notice settings action");
+    open.click();
+    await vi.waitFor(() => { expect(themePanel(app).loading).toBe(false); });
+    livePanel = settings(app).shadowRoot?.querySelector<SettingsGeneralPanel>("settings-general-panel") ?? undefined;
+    if (!livePanel?.onReload) throw new Error("Expected gateway refresh callback");
+    const gate = new Promise<void>((resolve) => { releaseOlderRead = resolve; });
+    vi.mocked(pluginsApi.plugins).mockImplementationOnce(async () => {
+      await gate;
+      return pluginsResponse([]);
+    });
+    // Capture the pre-save config in the new dialog. The detached write's
+    // invalidation must replace this still-pending read, not merely await it.
+    olderRead = livePanel.onReload();
+  }
+
+  completeSave();
+  await save;
+  await vi.waitFor(() => {
+    expect(notice()).toBeNull();
+    if (livePanel) expect(livePanel.configResponse?.effectiveConfig.hostValidation).toBe("disabled");
+  });
+  expect(configApi.updateConfig).toHaveBeenCalledOnce();
+  releaseOlderRead?.();
+  await olderRead;
+  await app.updateComplete;
+  await workspace.updateComplete;
+  await workspace.shadowRoot?.querySelector("session-notices-panel")?.updateComplete;
+  expect(workspace.panels.some((entry) => entry.id === "core:notices")).toBe(false);
+  expect(notice()).toBeNull();
+  if (livePanel) expect(livePanel.configResponse?.effectiveConfig.hostValidation).toBe("disabled");
+  else expect(app.shadowRoot?.querySelector("settings-dialog")).toBeNull();
+});
 
 async function mountApp(): Promise<ThemeSettingsApp> {
   const app = new ThemeSettingsApp();

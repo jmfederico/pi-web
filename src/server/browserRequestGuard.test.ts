@@ -3,7 +3,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import fastifyWebsocket from "@fastify/websocket";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
-import type { PiWebConfigValues } from "../shared/apiTypes.js";
+import type { PiWebConfigValues, PiWebHostValidationMode } from "../shared/apiTypes.js";
 import { registerBrowserRequestGuard } from "./browserRequestGuard.js";
 
 const apps = new Set<FastifyInstance>();
@@ -12,14 +12,30 @@ afterEach(async () => {
   apps.clear();
 });
 
-function guardedApp(allowedHosts?: PiWebConfigValues["allowedHosts"]) {
+function guardedApp(allowedHosts?: PiWebConfigValues["allowedHosts"], mode: PiWebHostValidationMode = allowedHosts === true ? "disabled" : "enabled") {
   const app = Fastify();
   apps.add(app);
-  registerBrowserRequestGuard(app, allowedHosts);
+  registerBrowserRequestGuard(app, allowedHosts, mode);
   const handled = vi.fn(() => ({ ok: true }));
   app.all("/resource", handled);
   return { app, handled };
 }
+
+describe("Host validation decisions", () => {
+  it.each(["pending", "enabled", "disabled"] as const)("keeps Origin validation independent of %s host policy", async (mode) => {
+    const { app, handled } = guardedApp(["allowed.test"], mode);
+    const host = "unlisted.test";
+    expect((await app.inject({ url: "/resource", headers: { host } })).statusCode).toBe(mode === "enabled" ? 403 : 200);
+    handled.mockClear();
+    const blocked = await app.inject({ method: "POST", url: "/resource", headers: { host: "allowed.test", origin: "https://foreign.test" } });
+    expect(blocked.statusCode).toBe(403);
+    expect(handled).not.toHaveBeenCalled();
+  });
+
+  it("does not permit enabled policy with a legacy allow-every-host value", () => {
+    expect(() => guardedApp(true, "enabled")).toThrow("allowedHosts list");
+  });
+});
 
 describe("browser Host admission", () => {
   it.each([
@@ -160,11 +176,26 @@ describe("browser Origin admission", () => {
 });
 
 describe("WebSocket admission before upgrade", () => {
+  it.each(["pending", "disabled"] as const)("keeps cross-origin sockets blocked when Host validation is %s", async (mode) => {
+    const app = Fastify();
+    apps.add(app);
+    await app.register(fastifyWebsocket);
+    registerBrowserRequestGuard(app, [], mode);
+    const handled = vi.fn();
+    app.get("/socket", { websocket: true }, (socket) => { handled(); socket.close(); });
+    const address = await app.listen({ host: "127.0.0.1", port: 0 });
+    const url = `${address.replace("http:", "ws:")}/socket`;
+    expect(await handshakeStatus(url, { host: "existing.public.test", origin: "https://foreign.test" })).toBe(403);
+    expect(handled).not.toHaveBeenCalled();
+    expect(await handshakeStatus(url, { host: "existing.public.test", origin: "https://existing.public.test" })).toBe(101);
+    expect(handled).toHaveBeenCalledOnce();
+  });
+
   it("rejects bad Host and Origin, but accepts proxy, Vite and non-browser authorities", async () => {
     const app = Fastify();
     apps.add(app);
     await app.register(fastifyWebsocket);
-    registerBrowserRequestGuard(app, ["pi.example.test"]);
+    registerBrowserRequestGuard(app, ["pi.example.test"], "enabled");
     const handled = vi.fn();
     app.get("/socket", { websocket: true }, (socket) => { handled(); socket.close(); });
     const address = await app.listen({ host: "127.0.0.1", port: 0 });

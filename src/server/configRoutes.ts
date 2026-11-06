@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { loadPiWebConfig, overlayPiWebConfig, piWebConfigEnforcedSettings, piWebConfigSources, parsePiWebConfig, resolveEffectivePiWebConfig, savePiWebConfig, type AgentPathHost, type LoadOptions, type PiWebConfig } from "../config.js";
 import { CONFIG_KEYS, parseConfigPointer, preserveEnforcedConfigOverrides, removeConfigOverrides, validateConfigUpdate, type PiWebConfigUpdate } from "./configUpdates.js";
-import type { PiWebConfigEnvOverrides, PiWebConfigResponse, PiWebConfigValues } from "../shared/apiTypes.js";
+import { requireHostValidation } from "../shared/hostValidation.js";
+import type { PiWebConfigEnvOverrides, PiWebConfigResponse, PiWebConfigValues, PiWebHostValidationMode } from "../shared/apiTypes.js";
 
 export interface PiWebConfigService {
   read: () => PiWebConfigResponse | Promise<PiWebConfigResponse>;
@@ -68,10 +69,13 @@ export function currentPiWebConfigResponse(options: LoadOptions = {}): PiWebConf
   };
 }
 
-export function registerConfigRoutes(app: FastifyInstance, service: PiWebConfigService = createFilePiWebConfigService()): void {
+export function registerConfigRoutes(app: FastifyInstance, service: PiWebConfigService = createFilePiWebConfigService(), activeHostValidation?: PiWebHostValidationMode): void {
+  const withRuntime = (response: PiWebConfigResponse): PiWebConfigResponse => ({
+    ...response, ...(activeHostValidation === undefined ? {} : { activeHostValidation }),
+  });
   app.get("/api/config", async (_request, reply) => {
     try {
-      return await service.read();
+      return withRuntime(await service.read());
     } catch (error) {
       return reply.code(500).send({ error: errorMessage(error) });
     }
@@ -79,7 +83,7 @@ export function registerConfigRoutes(app: FastifyInstance, service: PiWebConfigS
 
   app.patch<{ Body: unknown }>("/api/config", async (request, reply) => {
     try {
-      return await updateConfigService(service, parsePiWebConfigUpdate(request.body));
+      return withRuntime(await updateConfigService(service, parsePiWebConfigUpdate(request.body)));
     } catch (error) {
       return reply.code(isConfigValidationError(error) ? 400 : 500).send({ error: errorMessage(error) });
     }
@@ -87,7 +91,7 @@ export function registerConfigRoutes(app: FastifyInstance, service: PiWebConfigS
 
   app.put<{ Body: { config?: unknown } | undefined }>("/api/config", async (request, reply) => {
     try {
-      return await replaceConfigService(service, parseConfigRequest(request.body?.config));
+      return withRuntime(await replaceConfigService(service, parseConfigRequest(request.body?.config)));
     } catch (error) {
       const status = isConfigValidationError(error) ? 400 : 500;
       return reply.code(status).send({ error: errorMessage(error) });
@@ -194,7 +198,7 @@ export function mergeSelectedMachineConfig(current: PiWebConfigValues, patch: Pi
 }
 
 export function selectedMachineConfigResponse(response: PiWebConfigResponse): PiWebConfigResponse {
-  return {
+  const selected: PiWebConfigResponse = {
     ...response,
     config: pickSelectedMachineConfig(response.config),
     effectiveConfig: pickSelectedMachineConfig(response.effectiveConfig),
@@ -202,6 +206,8 @@ export function selectedMachineConfigResponse(response: PiWebConfigResponse): Pi
     ...(response.enforcedSettings === undefined ? {} : { enforcedSettings: selectedMachineSources(response.enforcedSettings) }),
     ...(response.configSources === undefined ? {} : { configSources: selectedMachineSources(response.configSources) }),
   };
+  delete selected.activeHostValidation;
+  return selected;
 }
 
 export function parsePiWebConfigResponseBody(value: unknown, source = "PI WEB config response"): PiWebConfigResponse {
@@ -211,6 +217,7 @@ export function parsePiWebConfigResponseBody(value: unknown, source = "PI WEB co
     exists: requireResponseBoolean(record, "exists", source),
     config: parseConfigRequest(record["config"], "portable"),
     effectiveConfig: parseConfigRequest(record["effectiveConfig"], "portable"),
+    ...(record["activeHostValidation"] === undefined ? {} : { activeHostValidation: requireHostValidation(record["activeHostValidation"], `${source} activeHostValidation`) }),
     envOverrides: parsePiWebConfigEnvOverridesResponse(record["envOverrides"], source),
     ...(record["enforcedSettings"] === undefined ? {} : { enforcedSettings: parseSourceMap(record["enforcedSettings"], source) }),
     ...(record["configSources"] === undefined ? {} : { configSources: parseSourceMap(record["configSources"], source) }),

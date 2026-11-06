@@ -1,7 +1,7 @@
 import type { PiWebConfigValues } from "../../api";
 
 export type SettingsConfigValidation =
-  | { kind: "port" }
+  | { kind: "port" | "hostValidationList" }
   | { kind: "externalPath"; value: string }
   | { kind: "folderRelative" | "folderTraversal"; field: "upload" | "attachment" };
 
@@ -13,6 +13,7 @@ export class SettingsConfigValidationError extends Error {
 export interface GatewayServerConfigDraft {
   host: string;
   port: string;
+  hostValidation: NonNullable<PiWebConfigValues["hostValidation"]>;
   allowedHostsMode: "list" | "all";
   allowedHostsText: string;
 }
@@ -25,7 +26,7 @@ export interface MachineAccessConfigDraft {
 }
 
 export function emptyGatewayServerConfigDraft(): GatewayServerConfigDraft {
-  return { host: "", port: "", allowedHostsMode: "list", allowedHostsText: "" };
+  return { host: "", port: "", hostValidation: "pending", allowedHostsMode: "list", allowedHostsText: "" };
 }
 
 export function emptyMachineAccessConfigDraft(): MachineAccessConfigDraft {
@@ -36,6 +37,7 @@ export function gatewayServerDraftFromConfig(config: PiWebConfigValues): Gateway
   return {
     host: config.host ?? "",
     port: config.port === undefined ? "" : String(config.port),
+    hostValidation: config.hostValidation ?? "pending",
     allowedHostsMode: config.allowedHosts === true ? "all" : "list",
     allowedHostsText: Array.isArray(config.allowedHosts) ? config.allowedHosts.join("\n") : "",
   };
@@ -69,6 +71,8 @@ export function gatewayServerConfigFromDraft(draft: GatewayServerConfigDraft, ba
     if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) throw new SettingsConfigValidationError({ kind: "port" }, "Port must be an integer from 1 to 65535.");
     config.port = parsed;
   }
+  if (draft.hostValidation === "enabled" && draft.allowedHostsMode === "all") throw new SettingsConfigValidationError({ kind: "hostValidationList" }, "Choose a host list before enabling Host validation.");
+  config.hostValidation = draft.hostValidation;
   config.allowedHosts = draft.allowedHostsMode === "all" ? true : parseAllowedHostsText(draft.allowedHostsText);
   return config;
 }

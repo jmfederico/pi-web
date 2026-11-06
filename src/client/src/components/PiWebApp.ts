@@ -8,7 +8,7 @@ import { customElement, property, query, state } from "lit/decorators.js";
 import { guard } from "lit/directives/guard.js";
 import { markdownWorkspaceContext, type MarkdownWorkspaceContext, type WorkspaceFileOpenRequest } from "../formatting/workspaceLinks";
 import { DEFAULT_CHAT_BEHAVIORS, type ChatBehaviors } from "../chatBehaviors";
-import { configApi, projectsApi, effectiveWorkspaceAttachmentsFolder, effectiveWorkspaceUploadFolder, sessionsApi, workspacesApi, workspaceEffectiveAttachmentsFolder, workspaceEffectiveUploadFolder, type AskUserSubmission, type CommandOption, type ExtensionDialogAnswer, type Machine, type MachineHealth, type PiWebConfigValues, type PiWebShortcutConfig, type Project, type SessionCleanupExecuteResponse, type SessionCleanupPreviewResponse, type SessionCleanupRequest, type SessionInfo, type SessionLocation, type SessionModel, type SessionModelCatalogResponse, type SessionModelScopeMode, type SessionTreeForkResult, type SessionTreeNavigateResult, type SessionTreeSummaryChoice, type TerminalCommandRun, type Workspace } from "../api";
+import { configApi, projectsApi, effectiveWorkspaceAttachmentsFolder, effectiveWorkspaceUploadFolder, sessionsApi, workspacesApi, workspaceEffectiveAttachmentsFolder, workspaceEffectiveUploadFolder, type AskUserSubmission, type CommandOption, type ExtensionDialogAnswer, type Machine, type MachineHealth, type PiWebConfigResponse, type PiWebConfigValues, type PiWebShortcutConfig, type Project, type SessionCleanupExecuteResponse, type SessionCleanupPreviewResponse, type SessionCleanupRequest, type SessionInfo, type SessionLocation, type SessionModel, type SessionModelCatalogResponse, type SessionModelScopeMode, type SessionTreeForkResult, type SessionTreeNavigateResult, type SessionTreeSummaryChoice, type TerminalCommandRun, type Workspace } from "../api";
 import type { AppAction } from "../actions";
 import { initialAppState, type AppState, type ModelDialogOrigin } from "../appState";
 import { browserErrorContext, browserErrorScopeKey, BrowserErrorReporter, clearBrowserError, machineBrowserErrorScope, visibleBrowserErrors, workspaceBrowserErrorScope, type BrowserError, type BrowserErrorScope } from "../browserErrors";
@@ -52,7 +52,7 @@ import type { NotificationGroup, NotificationItem } from "../notificationArea";
 import { sessionNotificationGroup as adaptSessionNotifications } from "../notificationAdapters";
 import type { ApplicationPanelContext, MaintenanceTerminal, PluginNavigationPatchDestination, PluginNavigationOptions, ContributionQueryValue, PiWebPluginRegistration, PluginMachine, PluginPromptEditor, QualifiedContributionId, QualifiedThemeContribution, PluginRuntimeContext, SessionLabelContext, SessionLabelItem, WorkspaceFilesCapabilityV1, WorkspaceHost, WorkspaceInvalidation, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePanelNavigationV1, WorkspacePanelTerminal, WorkspacePluginBinding, WorkspaceTerminalCommandInput } from "../plugins/types";
 import { applyPiWebTheme, clearPiWebTheme, clearStoredThemePreference, configureThemePolicy, effectiveThemePreference, getThemePolicy, readStoredThemePreference, resolveThemePreference, writeStoredThemePreference, type ThemePreference, type ThemePreferenceResolution } from "../theme";
-import { corePlugin } from "../plugins/core";
+import { createCorePlugin } from "../plugins/core";
 import { localizeBuiltInThemeMetadata, themePackPlugin } from "../plugins/themes";
 import { cancelInitialTheme, claimStartupDocument, revealApplication, themeStartup } from "../themeStartup";
 import { bootstrapPreference, loadThemeBootstrap, mergeThemeCatalog, type BrowserThemeCatalog } from "../themeCatalog";
@@ -106,6 +106,7 @@ import type { MachineDialogSubmit } from "./MachineDialog";
 import { deepActiveElement, focusElement, hasRenderedModal } from "./modalLayerRegistry";
 import { hasOpenTransientPopup } from "./popupScope";
 import "./SettingsDialog";
+import type { SettingsDialog } from "./SettingsDialog";
 import "./WorkspacePanel";
 import type { WorkspacePanelEmptyState, WorkspaceToolPanel } from "./WorkspacePanel";
 import "./appShell/AppContextBar";
@@ -120,6 +121,7 @@ import { renderPanelToggleButton } from "./appShell/panelToggleButton";
 import "./appShell/AppRefreshControl";
 import "./NotificationArea";
 import { deprecatedAgentInputsBanner, deprecatedAgentInputsWarnings } from "./deprecatedAgentInputsBanner";
+import { hostValidationNotices } from "./hostValidationNotices";
 import { appStyles } from "./shared";
 
 
@@ -411,7 +413,7 @@ export class PiWebApp extends LitElement {
     getSelection: () => publicPluginSelection(this.state),
   });
   private readonly builtInPluginsReady = this.plugins.registerBatch([
-    { id: "core", plugin: corePlugin },
+    { id: "core", plugin: createCorePlugin(() => hostValidationNotices(this.gatewayConfig, () => { this.openSettings("general", "host-validation"); })) },
     { id: "themes", plugin: themePackPlugin },
   ]).then(({ failures }) => {
     if (failures.length > 0) throw failures[0]?.error;
@@ -440,6 +442,8 @@ export class PiWebApp extends LitElement {
   private themePolicyFromApplication = false;
   private activeThemeColorScheme: "light" | "dark" = this.startupColorScheme();
   @state() private localThemePreference: ThemePreference | undefined = readStoredThemePreference();
+  @state() private gatewayConfig: PiWebConfigResponse | undefined;
+  private clientConfigRequestSeq = 0;
   @state() private configuredThemePreference: ThemePreference | undefined;
   private get themePreference(): ThemePreference {
     return effectiveThemePreference(this.localThemePreference, this.configuredThemePreference);
@@ -449,6 +453,7 @@ export class PiWebApp extends LitElement {
   @state() private sessionCleanupDialog: SessionCleanupDialogState | undefined;
   private sessionCleanupRequestEpoch = 0;
   @state() private settingsSection: SettingsSection | undefined = readSettingsSection();
+  @state() private settingsTarget: string | undefined;
   @state() private shortcutConfig: PiWebShortcutConfig = {};
   @state() private defaultStreamingBehavior: "steer" | "followUp" = "steer";
   @state() private quietMode = false;
@@ -730,6 +735,7 @@ export class PiWebApp extends LitElement {
   }
 
   override disconnectedCallback(): void {
+    this.clientConfigRequestSeq += 1;
     cancelInitialTheme();
     this.themeRequest?.abort();
     this.stylesheetRuntime.disconnect(() => {
@@ -970,8 +976,11 @@ export class PiWebApp extends LitElement {
   }
 
   private async loadClientConfig(): Promise<void> {
+    const requestSeq = ++this.clientConfigRequestSeq;
     try {
       const response = await configApi.config();
+      if (requestSeq !== this.clientConfigRequestSeq) return;
+      this.gatewayConfig = response;
       configureThemePolicy(response);
       void configureLocalizationPolicy(response).catch((error: unknown) => {
         console.warn("Failed to apply gateway localization policy", error);
@@ -980,9 +989,25 @@ export class PiWebApp extends LitElement {
     } catch (error) {
       console.warn("Failed to load PI WEB config", error);
     } finally {
-      this.themeConfigReady = true;
-      this.applyPreferredTheme(false);
+      if (requestSeq === this.clientConfigRequestSeq) {
+        this.themeConfigReady = true;
+        this.applyPreferredTheme(false);
+      }
     }
+  }
+
+  private refreshGatewayConfig(): void {
+    if (!this.isConnected) return;
+    // Refresh the active owner too, retiring any read it began before the write.
+    const dialog = this.renderRoot.querySelector<SettingsDialog>("settings-dialog");
+    if (dialog !== null) void dialog.reloadGatewayConfig();
+    else void this.loadClientConfig();
+  }
+
+  private acceptSettingsGatewayConfig(response: PiWebConfigResponse): void {
+    // Settings may load or save while startup/refresh is still in flight.
+    this.clientConfigRequestSeq += 1;
+    this.gatewayConfig = response;
   }
 
   private applyThemeCatalogPolicy(catalog: BrowserThemeCatalog): void {
@@ -1919,23 +1944,25 @@ export class PiWebApp extends LitElement {
     this.setState({ mainView: view });
   }
 
-  private openSettings(section: SettingsSection = "general"): void {
+  private openSettings(section: SettingsSection = "general", target?: string): void {
     writeSettingsSection(section);
     this.settingsSection = section;
+    this.settingsTarget = target;
   }
 
   private closeSettings(): void {
     writeSettingsSection(undefined);
     this.settingsSection = undefined;
+    this.settingsTarget = undefined;
   }
 
   private navigateSettings(section: SettingsSection): void {
-    writeSettingsSection(section);
-    this.settingsSection = section;
+    this.openSettings(section);
   }
 
   private restoreSettingsRoute(): void {
     this.settingsSection = readSettingsSection();
+    this.settingsTarget = undefined;
   }
 
   private handleWorkspaceChange(previous: AppState, next: AppState) {
@@ -2091,7 +2118,7 @@ export class PiWebApp extends LitElement {
     return [
       state.selectedMachine, state.selectedWorkspace, state.selectedSession,
       // Core Notices observes conditions, not per-token status churn.
-      JSON.stringify(sessionNotices(state)),
+      JSON.stringify(sessionNotices(state)), this.gatewayConfig,
       state.workspaceTool, state.mainView, state.piWebStatus, this.appShell.isMobileNavigationLayout,
       state.selectedProject, state.projects, state.workspaces,
       state.isLoadingProjects, state.isLoadingWorkspaces, this.workspaceContentError(),
@@ -4550,7 +4577,7 @@ export class PiWebApp extends LitElement {
         ${state.projectDialogOpen ? html`<project-dialog .machineId=${selectedMachineId(state)} .onSubmit=${(path: string, create: boolean, trust: ProjectTrustChoice | undefined) => this.projects.addProject(path, create, trust)} .onCancel=${() => { this.setState({ projectDialogOpen: false }); }}></project-dialog>` : null}
         ${state.machineDialogOpen ? html`<machine-dialog .machine=${this.machineNameEditTarget} .error=${state.error} .onSubmit=${(input: MachineDialogSubmit) => this.submitMachineDialog(input)} .onCancel=${() => { this.setState({ machineDialogOpen: false }); }}></machine-dialog>` : null}
         ${this.sessionCleanupDialog !== undefined ? html`<session-cleanup-dialog .preview=${this.sessionCleanupDialog.preview} .previewRequest=${this.sessionCleanupDialog.previewRequest} .result=${this.sessionCleanupDialog.result} .loading=${this.sessionCleanupDialog.loading === true} .running=${this.sessionCleanupDialog.running === true} .error=${typeof this.sessionCleanupDialog.error === "string" ? this.sessionCleanupDialog.error : ""} .errorMessage=${typeof this.sessionCleanupDialog.error === "function" ? this.sessionCleanupDialog.error : undefined} .onPreview=${(request: SessionCleanupRequest) => { void this.previewSessionCleanup(request); }} .onRun=${(request: SessionCleanupRequest) => { void this.runSessionCleanup(request); }} .onClose=${() => { this.closeSessionCleanupDialog(); }}></session-cleanup-dialog>` : null}
-        ${this.settingsSection !== undefined ? html`<settings-dialog .section=${this.settingsSection} .mcpContext=${state.selectedSession !== undefined && state.selectedSession.archived !== true ? { session: { id: state.selectedSession.id, cwd: state.selectedSession.cwd }, machineId: selectedMachineId(state) } : undefined} .onMcpAuth=${(mode: "login" | "logout", serverName: string, context: { session: { id: string; cwd: string }; machineId: string }) => { this.closeSettings(); void this.auth.openMcpAuth(mode, serverName, context); }} .machine=${state.selectedMachine} .machineRuntime=${this.selectedMachineRuntime()} .machines=${state.machines} .machineStatuses=${state.machineStatuses} .machineRuntimes=${state.machineRuntimes} .actions=${this.getDefaultActions()} .themes=${this.plugins.getThemes()} .onThemeCatalogLoaded=${(catalog: BrowserThemeCatalog) => { this.registerThemeCatalog(catalog); }} .fileIconThemes=${this.plugins.getFileIconThemes()} .fileIconPreference=${this.fileIconPreference} .onSelectFileIconTheme=${(id: string) => { this.selectFileIconTheme(id); }} .onResetFileIconTheme=${() => { this.selectFileIconTheme(undefined); }} .themePreference=${this.themePreference} .activeThemeId=${this.activeThemeId} .hasLocalThemeOverride=${this.localThemePreference !== undefined} .onUseLocalTheme=${(preference: ThemePreference) => { this.pickTheme(preference); }} .onUseDefaultTheme=${() => { this.useDefaultTheme(); }} .onNavigate=${(section: SettingsSection) => { this.navigateSettings(section); }} .onClose=${() => { this.closeSettings(); }} .onMachineConfigSaved=${(machineId: string) => { void this.machines.refreshMachineIdentity(machineId); }} .onConfigSaved=${(config: PiWebConfigValues) => { this.applyClientConfig(config); }} .onRefreshMachineRuntime=${async (machineId: string) => { await this.machines.refreshMachineRuntime(machineId); }}></settings-dialog>` : null}
+        ${this.settingsSection !== undefined ? html`<settings-dialog .section=${this.settingsSection} .target=${this.settingsTarget} .mcpContext=${state.selectedSession !== undefined && state.selectedSession.archived !== true ? { session: { id: state.selectedSession.id, cwd: state.selectedSession.cwd }, machineId: selectedMachineId(state) } : undefined} .onMcpAuth=${(mode: "login" | "logout", serverName: string, context: { session: { id: string; cwd: string }; machineId: string }) => { this.closeSettings(); void this.auth.openMcpAuth(mode, serverName, context); }} .machine=${state.selectedMachine} .machineRuntime=${this.selectedMachineRuntime()} .machines=${state.machines} .machineStatuses=${state.machineStatuses} .machineRuntimes=${state.machineRuntimes} .actions=${this.getDefaultActions()} .themes=${this.plugins.getThemes()} .onThemeCatalogLoaded=${(catalog: BrowserThemeCatalog) => { this.registerThemeCatalog(catalog); }} .fileIconThemes=${this.plugins.getFileIconThemes()} .fileIconPreference=${this.fileIconPreference} .onSelectFileIconTheme=${(id: string) => { this.selectFileIconTheme(id); }} .onResetFileIconTheme=${() => { this.selectFileIconTheme(undefined); }} .themePreference=${this.themePreference} .activeThemeId=${this.activeThemeId} .hasLocalThemeOverride=${this.localThemePreference !== undefined} .onUseLocalTheme=${(preference: ThemePreference) => { this.pickTheme(preference); }} .onUseDefaultTheme=${() => { this.useDefaultTheme(); }} .onNavigate=${(section: SettingsSection) => { this.navigateSettings(section); }} .onClose=${() => { this.closeSettings(); }} .onMachineConfigSaved=${(machineId: string) => { void this.machines.refreshMachineIdentity(machineId); }} .onGatewayConfigLoaded=${(response: PiWebConfigResponse) => { this.acceptSettingsGatewayConfig(response); }} .onGatewayConfigInvalidated=${() => { this.refreshGatewayConfig(); }} .onConfigSaved=${(config: PiWebConfigValues) => { this.applyClientConfig(config); }} .onRefreshMachineRuntime=${async (machineId: string) => { await this.machines.refreshMachineRuntime(machineId); }}></settings-dialog>` : null}
       </div>
     `;
   }

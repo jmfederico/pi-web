@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { parsePiWebEnvBoolean } from "../shared/configResolution.js";
+import { DEFAULT_HOST_VALIDATION } from "../shared/hostValidation.js";
 import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyServerOptions } from "fastify";
@@ -182,7 +183,12 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
   const projects = deps.projects ?? new ProjectService(new ProjectStore());
   const configService = deps.config ?? createFilePiWebConfigService();
   const readConfig = () => readEffectiveConfig(configService);
-  registerBrowserRequestGuard(app, (await readConfig()).allowedHosts);
+  const startupConfig = await readConfig();
+  const activeHostValidation = startupConfig.hostValidation ?? DEFAULT_HOST_VALIDATION;
+  registerBrowserRequestGuard(app, startupConfig.allowedHosts, activeHostValidation);
+  if (activeHostValidation === "pending") {
+    app.log.warn("Host validation is pending and not enforced. Choose enabled or disabled in Settings → General or set hostValidation in the gateway config; Origin checks remain active.");
+  }
   const readInstallationName = async () => installationDisplayName((await readConfig()).installationName);
   const sessionDaemon = deps.sessionDaemon ?? new SessionDaemonClient();
   const daemonWorkspaces = new SessionDaemonWorkspaceCatalog(sessionDaemon);
@@ -254,7 +260,7 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
   registerPiPackageRoutes(app, piPackages);
   registerPiPackageRoutes(app, piPackages, "/api/machines/local");
   const invalidatingConfigService = invalidatePiWebStatusOnWrite(configService, piWebStatusCache);
-  registerConfigRoutes(app, invalidatingConfigService);
+  registerConfigRoutes(app, invalidatingConfigService, activeHostValidation);
   registerLocalMachineConfigRoutes(app, invalidatingConfigService);
 
   const navigationPreferences = deps.navigationPreferences ?? new NavigationPreferenceStore();

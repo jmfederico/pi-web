@@ -10,6 +10,80 @@ afterEach(() => {
 });
 
 describe("General settings", () => {
+  it("keeps the Host decision gateway-scoped and preserves drafts until save acknowledgement", async () => {
+    const panel = await mountPanel();
+    const mode = required(panel.shadowRoot?.querySelector<HTMLSelectElement>("#host-validation"));
+    expect(mode.value).toBe("pending");
+    const save = vi.fn((patch: PiWebConfigValues) => {
+      panel.configResponse = { ...configResponse({ ...panel.configResponse?.effectiveConfig, ...patch }), activeHostValidation: "pending" };
+    });
+    panel.onSave = save;
+    mode.value = "enabled";
+    mode.dispatchEvent(new Event("change", { bubbles: true }));
+    panel.targetId = "remote";
+    panel.machineConfigResponse = configResponse({ hostValidation: "disabled" });
+    panel.configResponse = configResponse({ host: "gateway.local", port: 9000 });
+    await settle(panel);
+    expect(mode.value).toBe("enabled");
+    submit(panel, 0);
+    await settle(panel);
+    expect(save).toHaveBeenCalledExactlyOnceWith({ hostValidation: "enabled" });
+    expect(mode.value).toBe("enabled");
+    // Pending/restart warnings belong to Notices, not a duplicate Settings banner.
+    expect(panel.shadowRoot?.querySelector("[data-host-validation-notice]")).toBeNull();
+    expect(panel.shadowRoot?.querySelector(".form-actions small")).toBeNull();
+  });
+
+  it("requires an actual list when enabling validation over legacy development allow-all", async () => {
+    const panel = await mountPanel();
+    panel.configResponse = configResponse({ allowedHosts: true });
+    panel.onSave = vi.fn();
+    await settle(panel);
+    const mode = required(panel.shadowRoot?.querySelector<HTMLSelectElement>("#host-validation"));
+    mode.value = "enabled";
+    mode.dispatchEvent(new Event("change", { bubbles: true }));
+    submit(panel, 0);
+    await settle(panel);
+    expect(panel.onSave).not.toHaveBeenCalled();
+    expect(panel.shadowRoot?.querySelector("settings-panel-frame")?.shadowRoot?.querySelector('[role="alert"]')).not.toBeNull();
+    const hosts = required(panel.shadowRoot?.querySelector<HTMLSelectElement>("#allowed-hosts-mode"));
+    hosts.value = "list";
+    hosts.dispatchEvent(new Event("change", { bubbles: true }));
+    edit(panel, "#allowed-hosts-list", "gateway.local");
+    submit(panel, 0);
+    await settle(panel);
+    expect(panel.onSave).toHaveBeenCalledExactlyOnceWith({ hostValidation: "enabled", allowedHosts: ["gateway.local"] });
+  });
+
+  it("resets the saved Host choice by deletion and locks environment-enforced choices", async () => {
+    const panel = await mountPanel();
+    panel.configResponse = configResponse({ hostValidation: "disabled" });
+    panel.onReset = vi.fn();
+    panel.onSave = vi.fn();
+    await settle(panel);
+    required(panel.shadowRoot?.querySelector<HTMLButtonElement>('button[aria-label="Reset saved override for /hostValidation"]')).click();
+    expect(panel.onReset).toHaveBeenCalledExactlyOnceWith(["/hostValidation"]);
+    panel.configResponse = configResponse({});
+    await settle(panel);
+    const mode = required(panel.shadowRoot?.querySelector<HTMLSelectElement>("#host-validation"));
+    expect(mode.value).toBe("pending");
+    mode.value = "disabled";
+    mode.dispatchEvent(new Event("change", { bubbles: true }));
+    panel.configResponse = {
+      ...configResponse({ hostValidation: "disabled" }),
+      effectiveConfig: { hostValidation: "enabled" },
+      enforcedSettings: { "/hostValidation": "PI_WEB_HOST_VALIDATION" },
+    };
+    await settle(panel);
+    expect(mode.value).toBe("enabled");
+    expect(mode.disabled).toBe(true);
+    expect(panel.configResponse.config.hostValidation).toBe("disabled");
+    expect(panel.shadowRoot?.textContent).toContain("PI_WEB_HOST_VALIDATION");
+    submit(panel, 0);
+    await settle(panel);
+    expect(panel.onSave).toHaveBeenCalledExactlyOnceWith({});
+  });
+
   it("shows effective machine base roots without claiming external access is denied", async () => {
     const panel = await mountPanel();
     panel.onResetMachine = vi.fn();
@@ -87,7 +161,7 @@ describe("General settings", () => {
       expect(control.getAttribute("aria-describedby")).toBe("allowed-hosts-help");
       expect(panel.shadowRoot?.getElementById("allowed-hosts-help")?.textContent.trim()).toBeTruthy();
     }
-    const mode = required(panel.shadowRoot?.querySelector<HTMLSelectElement>("select"));
+    const mode = required(panel.shadowRoot?.querySelector<HTMLSelectElement>("#allowed-hosts-mode"));
     mode.value = "all";
     mode.dispatchEvent(new Event("change", { bubbles: true }));
     await settle(panel);

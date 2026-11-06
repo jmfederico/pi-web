@@ -16,13 +16,16 @@ describe("settings-dialog general settings machine targeting", () => {
     const onConfigSaved = vi.fn();
     const dialog = new SettingsDialog();
     dialog.onConfigSaved = onConfigSaved;
+    const onGatewayConfigLoaded = vi.fn();
+    dialog.onGatewayConfigLoaded = onGatewayConfigLoaded;
 
     await callDialogPromise(dialog, "saveConfig", { host: "0.0.0.0", port: 9000, allowedHosts: true });
 
     expect(saveSpy.mock.calls).toEqual([[{ set: { host: "0.0.0.0", port: 9000, allowedHosts: true }, unset: [] }]]);
     expect(getDialogProperty(dialog, "configResponse")).toBe(savedConfig);
+    expect(onGatewayConfigLoaded).toHaveBeenCalledExactlyOnceWith(savedConfig);
     expect(onConfigSaved).toHaveBeenCalledWith({ host: "0.0.0.0", port: 9000, allowedHosts: true });
-    expect(getDialogProperty(dialog, "savedMessage")).toBe("Gateway settings saved. Restart the web service to apply address changes.");
+    expect(getDialogProperty(dialog, "savedMessage")).toBe("Gateway settings saved. Restart the web/API service to apply network and Host validation changes.");
     expect(getDialogProperty(dialog, "saving")).toBe(false);
   });
 

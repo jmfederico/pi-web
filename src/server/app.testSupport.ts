@@ -85,14 +85,14 @@ export const appTestContext: AppTestContext = {
   },
 };
 
-export function registerAppTestHooks(): void {
+export function registerAppTestHooks(initialConfig: PiWebConfigValues = {}): void {
   beforeEach(async () => {
     tempDir = await realpath(await mkdtemp(join(tmpdir(), "pi-web-app-test-")));
     projectDir = join(tempDir, "project");
     remoteClient = undefined;
     sessionDaemonRequests = [];
     piPackageRequests = [];
-    piWebConfig = {};
+    piWebConfig = structuredClone(initialConfig);
     agentProfileResult = { status: "available", profile: appTestAgentProfile(join(tempDir, "agent")) };
     const projects = new ProjectService(new ProjectStore(join(tempDir, "projects.json")));
     const sessionDaemon = fakeSessionDaemon(projects);

@@ -5,7 +5,7 @@ import { localization, LocalizationController } from "../localization/browser";
 import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { sessionNoticesStyles } from "../theme/base/sessionNoticesStyles";
 import { baseThemeStyles } from "../theme/base/styles";
-import { chatSessionWarningRows, renderSessionWarnings } from "./chat/SessionWarnings";
+import { chatSessionWarningRows, renderSessionWarnings, type ChatSessionWarningRow } from "./chat/SessionWarnings";
 import noticesMessages from "./SessionNoticesPanel.messages";
 
 export const sessionNoticesMessages = localization.registerMessages("core.notices", noticesMessages);
@@ -25,6 +25,8 @@ export class SessionNoticesPanel extends LitElement {
   }
 
   @property({ attribute: false }) status: SessionStatus | undefined;
+  /** Application-scoped conditions remain available without a selected session. */
+  @property({ attribute: false }) notices: readonly ChatSessionWarningRow[] = [];
   @property({ type: String }) machineId = "";
 
   private readonly dismissNotice = (dismissId: string): void => {
@@ -37,7 +39,7 @@ export class SessionNoticesPanel extends LitElement {
   };
 
   override render() {
-    const rows = chatSessionWarningRows(this.status);
+    const rows = [...this.notices, ...chatSessionWarningRows(this.status)];
     return rows.length === 0
       ? html`<p class="empty">${sessionNoticesMessages.t("empty")}</p>`
       : renderSessionWarnings(rows, this.dismissNotice);

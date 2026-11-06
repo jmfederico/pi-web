@@ -1,9 +1,8 @@
 import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, css, html, nothing, type TemplateResult } from "lit";
 import { customElement, property, query } from "lit/decorators.js";
-import { deepActiveElement, focusElement, isHiddenOrInertInComposedTree, registerRenderedModal, type RenderedModalRegistration } from "./modalLayerRegistry";
-
-const FOCUSABLE_SELECTOR = "button, input, select, textarea, a[href], [tabindex]";
+import { deepActiveElement, focusElement, registerRenderedModal, type RenderedModalRegistration } from "./modalLayerRegistry";
+import { composedFocusableElements } from "./focusableElements";
 
 /**
  * Shared modal surface for the client's custom overlay dialogs. It owns the
@@ -178,7 +177,7 @@ export class ModalSurface extends LitElement {
   };
 
   private trapTabFocus(event: KeyboardEvent): void {
-    const focusable = modalSurfaceFocusableElements(this);
+    const focusable = composedFocusableElements(this);
     if (focusable.length === 0) {
       event.preventDefault();
       this.dialog?.focus();
@@ -221,70 +220,4 @@ export class ModalSurface extends LitElement {
     .backdrop { box-sizing: border-box; width: 100%; height: 100%; display: grid; place-items: var(--modal-surface-place-items, center); padding: var(--modal-surface-backdrop-padding, 0); background: var(--pi-overlay); overflow: hidden; }
     .surface { box-sizing: border-box; width: var(--modal-surface-width, min(720px, 100%)); max-width: var(--modal-surface-max-width, 100%); height: var(--modal-surface-height, auto); max-height: var(--modal-surface-max-height, 100%); min-height: var(--modal-surface-min-height, auto); display: flex; flex-direction: column; border: var(--modal-surface-border, 1px solid var(--pi-border)); border-radius: var(--modal-surface-radius, 12px); background: var(--pi-bg); box-shadow: var(--modal-surface-shadow, 0 20px 60px var(--pi-shadow-strong)); overflow: hidden; }
   `;
-}
-
-/**
- * Focusable elements inside the surface's dialog content in flattened Tab-cycle
- * order. Open shadow roots replace a host's light children, and slots insert
- * their assigned children where the slot is rendered.
- */
-function modalSurfaceFocusableElements(surface: ModalSurface): HTMLElement[] {
-  const focusable: HTMLElement[] = [];
-  const collect = (element: Element): void => {
-    if (element instanceof HTMLElement && isSequentiallyFocusable(element)) focusable.push(element);
-    for (const child of flattenedChildElements(element)) collect(child);
-  };
-  for (const child of flattenedChildElements(surface)) collect(child);
-  return withOneStopPerRadioGroup(focusable);
-}
-
-/**
- * Collapses every named radio group to the single Tab stop the platform gives
- * it: the checked member, or the group's first focusable member when none is
- * checked. Counting each radio separately would put the trap's last stop
- * before the group's real end, so Tab from the checked radio of a trailing
- * group would be treated as mid-cycle and walk focus out of the dialog.
- *
- * Groups are keyed by form owner and name, matching how HTML scopes a radio
- * group; radios with no name are independent stops and keep their own.
- */
-function withOneStopPerRadioGroup(focusable: readonly HTMLElement[]): HTMLElement[] {
-  const stopsByOwner = new Map<HTMLFormElement | null, Map<string, HTMLInputElement>>();
-  for (const element of focusable) {
-    const radio = namedRadio(element);
-    if (radio === null) continue;
-    const stopsByName = stopsByOwner.get(radio.form) ?? new Map<string, HTMLInputElement>();
-    stopsByOwner.set(radio.form, stopsByName);
-    const stop = stopsByName.get(radio.name);
-    // First member wins until a checked member appears; a group has at most one
-    // checked radio, so the checked member then keeps the stop for good.
-    if (stop === undefined || (radio.checked && !stop.checked)) stopsByName.set(radio.name, radio);
-  }
-  const stops = new Set<HTMLElement>(Array.from(stopsByOwner.values()).flatMap((stopsByName) => Array.from(stopsByName.values())));
-  return focusable.filter((element) => namedRadio(element) === null || stops.has(element));
-}
-
-function namedRadio(element: HTMLElement): HTMLInputElement | null {
-  if (!(element instanceof HTMLInputElement) || element.type !== "radio" || element.name === "") return null;
-  return element;
-}
-
-function isSequentiallyFocusable(element: HTMLElement): boolean {
-  if (element.matches(":disabled") || isHiddenOrInertInComposedTree(element)) return false;
-  if (element instanceof HTMLInputElement && element.type === "hidden") return false;
-  // Native controls match by tag even when an explicit negative tabindex has
-  // removed them from sequential keyboard navigation.
-  return element.matches(FOCUSABLE_SELECTOR) && element.tabIndex >= 0;
-}
-
-function flattenedChildElements(parent: Element | ShadowRoot): Element[] {
-  if (parent instanceof HTMLSlotElement) {
-    const assigned = parent.assignedNodes({ flatten: true });
-    // Preserve fallback content when a DOM implementation reports an empty
-    // assigned list; assigned text keeps the list nonempty and suppresses it.
-    const rendered = assigned.length === 0 ? parent.childNodes : assigned;
-    return Array.from(rendered).filter((node): node is Element => node instanceof Element);
-  }
-  const renderedRoot = parent instanceof Element ? parent.shadowRoot ?? parent : parent;
-  return Array.from(renderedRoot.children);
 }

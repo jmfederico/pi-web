@@ -195,6 +195,8 @@ export interface PiWebConfigValues {
   host?: string;
   port?: number;
   allowedHosts?: string[] | true;
+  /** Gateway Host allowlist decision; omitted values inherit pending (off with a warning). */
+  hostValidation?: PiWebHostValidationMode;
   shortcuts?: PiWebShortcutConfig;
   plugins?: PiWebPluginConfigMap;
   /** Deployment base roots; combined with independently configurable path additions. */
@@ -386,11 +388,15 @@ export interface PiWebConfigEnvOverrides {
   askUser: boolean;
 }
 
+export type PiWebHostValidationMode = "pending" | "enabled" | "disabled";
+
 export interface PiWebConfigResponse {
   path: string;
   exists: boolean;
   config: PiWebConfigValues;
   effectiveConfig: PiWebConfigValues;
+  /** Gateway web/API startup snapshot; omitted by older servers and selected-machine views. */
+  activeHostValidation?: PiWebHostValidationMode;
   envOverrides: PiWebConfigEnvOverrides;
   /** JSON-pointer setting identifiers mapped to controlling environment variable names. */
   enforcedSettings?: Record<string, string>;

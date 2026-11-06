@@ -16,6 +16,7 @@ import { requireDefaultThemePreference } from "../../../shared/themePreference";
 import { requireDefaultLocalization } from "../../../shared/defaultLocalization";
 import { requireDefaultStreamingBehavior } from "../../../shared/streamingBehavior";
 import { requireInstallationName } from "../../../shared/installationName";
+import { requireHostValidation, validateHostValidationPolicy } from "../../../shared/hostValidation";
 import { parseRuntimeActivityPresentation } from "../../../shared/sessionActivityPresentation";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1519,6 +1520,7 @@ export function parsePiWebConfigResponse(value: unknown): PiWebConfigResponse {
     config: parsePiWebConfigValues(record["config"]),
     effectiveConfig: parsePiWebConfigValues(record["effectiveConfig"]),
     envOverrides: parsePiWebConfigEnvOverrides(record["envOverrides"]),
+    ...optionalField("activeHostValidation", record["activeHostValidation"] === undefined ? undefined : requireHostValidation(record["activeHostValidation"], "response activeHostValidation")),
     ...optionalField("enforcedSettings", optionalConfigSources(record["enforcedSettings"])),
     ...optionalField("configSources", optionalConfigSources(record["configSources"])),
     ...optionalField("defaultsConfig", record["defaultsConfig"] === undefined ? undefined : parsePiWebConfigValues(record["defaultsConfig"])),
@@ -1538,11 +1540,12 @@ function optionalConfigSources(value: unknown): Record<string, string> | undefin
 function parsePiWebConfigValues(value: unknown): PiWebConfigValues {
   const record = requireRecord(value);
   if (Object.hasOwn(record, "sessionNaming")) throw new Error("Retired PI WEB sessionNaming config field");
-  return {
+  const config: PiWebConfigValues = {
     ...optionalField("host", optionalString(record, "host")),
     ...optionalField("port", optionalNumber(record, "port")),
     ...optionalField("installationName", record["installationName"] === undefined ? undefined : requireInstallationName(record["installationName"])),
     ...optionalField("allowedHosts", optionalAllowedHosts(record["allowedHosts"])),
+    ...optionalField("hostValidation", record["hostValidation"] === undefined ? undefined : requireHostValidation(record["hostValidation"], "response hostValidation")),
     ...optionalField("shortcuts", optionalShortcuts(record["shortcuts"])),
     ...optionalField("defaultTheme", record["defaultTheme"] === undefined ? undefined : requireDefaultThemePreference(record["defaultTheme"], "response")),
     ...optionalField("defaultStreamingBehavior", record["defaultStreamingBehavior"] === undefined ? undefined : requireDefaultStreamingBehavior(record["defaultStreamingBehavior"], "response")),
@@ -1563,6 +1566,8 @@ function parsePiWebConfigValues(value: unknown): PiWebConfigValues {
     ...optionalField("extensionDialogsTimeoutMs", optionalNumber(record, "extensionDialogsTimeoutMs")),
     ...optionalField("sessionArchive", optionalSessionArchive(record["sessionArchive"])),
   };
+  validateHostValidationPolicy(config);
+  return config;
 }
 
 function optionalSessionArchive(value: unknown): PiWebConfigValues["sessionArchive"] {

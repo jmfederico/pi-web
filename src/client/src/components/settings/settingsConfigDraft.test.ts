@@ -30,6 +30,7 @@ describe("settings config drafts", () => {
     expect(gatewayServerDraftFromConfig(config)).toEqual({
       host: "0.0.0.0",
       port: "8504",
+      hostValidation: "pending",
       allowedHostsMode: "list",
       allowedHostsText: "example.local\n192.168.1.20",
     });
@@ -46,6 +47,7 @@ describe("settings config drafts", () => {
     expect(gatewayServerConfigFromDraft({
       host: " gateway.local ",
       port: "9000",
+      hostValidation: "disabled",
       allowedHostsMode: "all",
       allowedHostsText: "ignored.local",
     }, {
@@ -61,6 +63,7 @@ describe("settings config drafts", () => {
     })).toEqual({
       host: "gateway.local",
       port: 9000,
+      hostValidation: "disabled",
       allowedHosts: true,
       shortcuts: { "core:view.chat": "mod+1" },
       plugins: { info: { enabled: false } },
@@ -76,9 +79,10 @@ describe("settings config drafts", () => {
     expect(gatewayServerConfigFromDraft({
       host: "",
       port: "",
+      hostValidation: "enabled",
       allowedHostsMode: "list",
       allowedHostsText: "example.local, 192.168.1.20\n",
-    })).toEqual({ allowedHosts: ["example.local", "192.168.1.20"] });
+    })).toEqual({ hostValidation: "enabled", allowedHosts: ["example.local", "192.168.1.20"] });
   });
 
   it("preserves installation identity when saving gateway fields", () => {

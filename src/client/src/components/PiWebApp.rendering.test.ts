@@ -18,7 +18,7 @@ import { StatusBar } from "./StatusBar";
 import { PluginRegistry } from "../plugins/registry";
 import type { ExternalPluginLoadResult } from "../plugins/external";
 import type { ContentRendererInput } from "../../../plugin-api";
-import { corePlugin } from "../plugins/core";
+import * as core from "../plugins/core";
 import type { WorkspacePanelContext } from "../plugins/types";
 import { PiWebApp } from "./PiWebApp";
 import { themeStylesheetFetch } from "./themeStylesheetFetch.testSupport";
@@ -939,11 +939,14 @@ describe("application rendering boundaries", () => {
   it("refreshes guarded surfaces when built-in registration finishes asynchronously", async () => {
     let finishActivation: () => void = () => { throw new Error("Activation gate was not initialized"); };
     const ready = new Promise<void>((resolve) => { finishActivation = resolve; });
-    vi.spyOn(corePlugin, "activate").mockImplementationOnce(async () => {
-      await ready;
-      return { contributions: { workspacePanels: [{
-        id: "late-panel", title: "Late panel", render: () => html`<p>Loaded asynchronously</p>`,
-      }] } };
+    vi.spyOn(core, "createCorePlugin").mockReturnValueOnce({
+      ...core.corePlugin,
+      activate: async () => {
+        await ready;
+        return { contributions: { workspacePanels: [{
+          id: "late-panel", title: "Late panel", render: () => html`<p>Loaded asynchronously</p>`,
+        }] } };
+      },
     });
     const app = await mountApp({ selectedWorkspace: workspace, workspaces: [workspace] });
     Reflect.set(app, "verifiedPluginModeByMachine", new Map([["local", "recovery-disabled"]]));
