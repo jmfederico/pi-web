@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAssistantMessageEventStream, type AssistantMessage } from "@earendil-works/pi-ai";
 import { createAgentSession, DefaultResourceLoader, defineTool, SessionManager, SettingsManager } from "../../piSdk.js";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Type } from "pi-web-typebox";
 import { PiSessionService, type PiSessionRuntime } from "./piSessionService.js";
 import { CapturingSessionEventHub, createTestModelRuntime, emptyArchiveStore, fakeRuntime, fakeSessionManager, sessionGateway, testModel } from "./piSessionService.testSupport.js";
@@ -13,8 +13,10 @@ import { createSubsessionCompletionDelivery } from "./subsessionCompletionDelive
 // Real Pi tool-result, boundary-draft, and settlement semantics. Only the
 // provider transport and the independently running child's runtime are fake.
 describe("subsession completion delivery through native Pi", () => {
-  it.each(["yield-ready", "check-ready", "yield-race", "turn-ready", "natural-stop", "nested-check", "check-rejected", "parent-error", "parent-aborted"] as const)("delivers a child result once through %s", async (scenario) => {
-    const failed = scenario === "parent-error" || scenario === "parent-aborted";
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }); });
+  afterEach(() => { vi.useRealTimers(); });
+  it.each(["yield-ready", "check-ready", "yield-race", "turn-ready", "natural-stop", "nested-check", "check-rejected", "parent-error", "parent-aborted", "wake-agent-error"] as const)("delivers a child result once through %s", async (scenario) => {
+    const failed = scenario === "parent-error" || scenario === "parent-aborted" || scenario === "wake-agent-error";
     const directory = await mkdtemp(join(tmpdir(), "pi-web-subsession-delivery-"));
     const modelRuntime = await createTestModelRuntime();
     await modelRuntime.setRuntimeApiKey("anthropic", "isolated-test-key");
@@ -103,7 +105,8 @@ describe("subsession completion delivery through native Pi", () => {
       const toolName = scenario === "turn-ready" ? "independent_work" : scenario === "nested-check" ? "nested_check"
         : scenario === "check-ready" || scenario === "check-rejected" ? "check_subsession" : "yield_to_subsessions";
       const hasToolCall = requests === 1 && scenario !== "natural-stop" && !failed;
-      const stopReason = failed ? (scenario === "parent-error" ? "error" : "aborted") : hasToolCall ? "toolUse" : "stop";
+      const stopReason = failed && (requests === 1 || scenario === "wake-agent-error")
+        ? (scenario === "parent-aborted" ? "aborted" : "error") : hasToolCall ? "toolUse" : "stop";
       const message: AssistantMessage = {
         role: "assistant", api: "anthropic-messages", provider: "anthropic", model: testModel().id,
         content: hasToolCall
@@ -111,7 +114,7 @@ describe("subsession completion delivery through native Pi", () => {
           : [{ type: "text", text: requests === 1 ? "Independent work done" : "Integrated the child result" }],
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
         stopReason, timestamp: Date.now(),
-        ...(failed ? { errorMessage: "Parent could not continue" } : {}),
+        ...(stopReason === "error" || stopReason === "aborted" ? { errorMessage: "Parent could not continue" } : {}),
       };
       const stream = createAssistantMessageEventStream();
       if (stopReason === "error" || stopReason === "aborted") stream.push({ type: "error", reason: stopReason, error: message });
@@ -126,23 +129,21 @@ describe("subsession completion delivery through native Pi", () => {
       child.session.isStreaming = true;
       child.emit({ type: "agent_start" });
       await session.prompt("Continue independent work, then join");
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      if (failed) expect(requests).toBe(1); // Recovery starts after settlement, not inside the failed boundary.
+      await vi.advanceTimersByTimeAsync(0);
+      if (scenario === "wake-agent-error") await vi.advanceTimersByTimeAsync(60_000);
       const joined = await hosted.joinSubsessions(session.sessionId);
-      expect(joined.completions).toHaveLength(failed ? 1 : 0);
-      expect(requests).toBe(failed ? 1 : 2);
-      if (!failed) {
-        const inspected = scenario === "check-ready" || scenario === "nested-check";
-        expect(modelInputs.at(-1)?.split("CHILD_FINAL_ANSWER")).toHaveLength(inspected ? 2 : 1);
-        if (!inspected) expect(modelInputs.at(-1)).toContain("is now idle.");
-        expect(session.messages.at(-1)).toMatchObject({ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Integrated the child result" }] });
-      } else {
-        expect(session.messages.at(-1)).toMatchObject({ stopReason: scenario === "parent-error" ? "error" : "aborted" });
-      }
+      expect(joined.completions).toHaveLength(0);
+      expect(requests).toBe(2);
+      const inspected = scenario === "check-ready" || scenario === "nested-check";
+      expect(modelInputs.at(-1)?.split("CHILD_FINAL_ANSWER")).toHaveLength(inspected ? 2 : 1);
+      if (!inspected) expect(modelInputs.at(-1)).toContain("is now idle.");
+      expect(session.messages.at(-1)).toMatchObject({ role: "assistant", stopReason: scenario === "wake-agent-error" ? "error" : "stop", content: [{ type: "text", text: "Integrated the child result" }] });
       expect(session.messages.filter((message) => message.role === "toolResult").every((message) => !message.isError)).toBe(scenario !== "check-rejected");
       if (scenario === "natural-stop") expect(session.sessionManager.getBranch().some((entry) => entry.type === "custom" && entry.customType === "earlier-boundary-proof")).toBe(true);
-      expect(sendMessage).not.toHaveBeenCalled(); // No rendered answer was enqueued separately.
+      expect(sendMessage).toHaveBeenCalledTimes(failed ? 1 : 0); // Failed runs wake after settling; healthy runs use boundaries.
       const notices = session.messages.filter((message) => message.role === "custom" && message.customType === "subsession.completion");
-      expect(notices).toHaveLength(scenario === "yield-race" || scenario === "turn-ready" || scenario === "natural-stop" || scenario === "check-rejected" ? 1 : 0);
+      expect(notices).toHaveLength(failed || scenario === "yield-race" || scenario === "turn-ready" || scenario === "natural-stop" || scenario === "check-rejected" ? 1 : 0);
       for (const notice of notices) {
         expect(JSON.stringify(notice)).not.toContain("CHILD_FINAL_ANSWER");
         if (notice.role !== "custom") throw new Error("Expected custom lifecycle notice");

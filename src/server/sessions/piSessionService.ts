@@ -139,6 +139,7 @@ export interface PiSessionLogger {
 
 const noopLogger: PiSessionLogger = { info() { /* no-op */ } };
 const DEFAULT_UNREAD_PUBLICATION_RETRY_MS = 1_000;
+const SUBSESSION_DELIVERY_RETRY_DELAYS_MS = [2_000, 10_000, 30_000] as const;
 /**
  * User-facing names for the two phases of session startup PI WEB can prove it
  * is inside: it awaits exactly one call for each, so the phase is a fact rather
@@ -1275,9 +1276,10 @@ export class PiSessionService implements SessionRouteService {
   private readonly treeExclusiveSessionOperationCounts = new Map<string, number>();
   /** Parent id/file identity -> one inbox shared by all completion delivery paths. */
   private readonly subsessionInboxes = new Map<string, SubsessionCompletionInbox>();
-  private readonly subsessionStoppedParents = new WeakSet<PiAgentSession>();
   private readonly subsessionDeliveringParents = new WeakSet<PiAgentSession>();
-  private readonly subsessionDeliveryScheduled = new WeakSet<PiAgentSession>();
+  private readonly subsessionDeliveryTimers = new Map<PiAgentSession, { timer: ReturnType<typeof setTimeout>; delayMs: number }>();
+  private readonly subsessionDeliveryRetries = new WeakMap<PiAgentSession, number>();
+  private subsessionDeliveryStopped = false;
   private readonly compactionPromptQueues = new Map<string, QueuedPrompt[]>();
   private readonly compactionDrainTimers = new Map<string, NodeJS.Timeout>();
   private readonly authLossWarnings = new Set<string>();
@@ -1525,6 +1527,8 @@ export class PiSessionService implements SessionRouteService {
   }
 
   async dispose(): Promise<void> {
+    this.subsessionDeliveryStopped = true;
+    for (const session of this.subsessionDeliveryTimers.keys()) this.clearSubsessionDelivery(session);
     this.selfArchiveStopped = true;
     await Promise.all(this.selfArchiveOperations);
     this.mcpAuthFlows.dispose();
@@ -2133,7 +2137,6 @@ export class PiSessionService implements SessionRouteService {
     ));
     void delivery.catch((error: unknown) => {
       if (!accepted) return; // Pre-acceptance failures still reject the request.
-      this.subsessionStoppedParents.add(session);
       const message = error instanceof Error ? error.message : String(error);
       this.publishActivity(session, { kind: "error" }, "error", message);
       this.events.publish(session.sessionId, { type: "session.error", message });
@@ -2793,13 +2796,16 @@ export class PiSessionService implements SessionRouteService {
 
   /** Busy parents receive notices at turn boundaries; idle parents need a wake. */
   private async deliverPendingSubsessionCompletions(session: PiAgentSession): Promise<void> {
-    if (this.hasActiveWork(session) || !this.isCurrentActiveSession(session) || this.subsessionStoppedParents.has(session)) return;
+    if (this.subsessionDeliveryStopped || this.hasActiveWork(session) || !this.isCurrentActiveSession(session)) return;
+    // A boundary or inspection may have acknowledged the notice during backoff.
+    this.restoreSubsessionReceipts(session);
     const inbox = this.subsessionInbox(session.sessionId, session.sessionFile);
     const completions = inbox.claim();
     if (completions.length === 0) return;
     const completionIds = completions.map(({ completionId }) => completionId);
     this.subsessionDeliveringParents.add(session);
     let delivered = false;
+    let retryDelayMs: number | undefined;
     try {
       await this.runSessionEntryMutation(session, "deliver subsession results", () => session.sendCustomMessage(
         {
@@ -2811,29 +2817,74 @@ export class PiSessionService implements SessionRouteService {
       ));
       inbox.receive(completionIds);
       delivered = true;
+      this.subsessionDeliveryRetries.delete(session);
     } catch (error: unknown) {
-      this.subsessionStoppedParents.add(session);
-      throw error;
+      this.logSubsessionNotificationFailure(session.sessionId, "inbox", error);
+      // sendCustomMessage spans a whole agent run. Only a missing conversation
+      // receipt permits a retry, never an error after the notice was inserted.
+      // Treat an existing receipt conservatively even if a later write failed:
+      // replaying it could duplicate a message already in the SDK's context.
+      this.restoreSubsessionReceipts(session, false);
+      delivered = completionIds.every((id) => inbox.hasReceived(id));
+      if (delivered) this.subsessionDeliveryRetries.delete(session);
+      else {
+        const retries = this.subsessionDeliveryRetries.get(session) ?? 0;
+        retryDelayMs = SUBSESSION_DELIVERY_RETRY_DELAYS_MS[retries];
+        if (retryDelayMs !== undefined) this.subsessionDeliveryRetries.set(session, retries + 1);
+      }
+      if (retryDelayMs === undefined) this.publishSubsessionDeliveryFailure(session, error);
     } finally {
       inbox.release(completionIds);
       this.subsessionDeliveringParents.delete(session);
-      if (delivered) this.scheduleSubsessionDelivery(session);
+      // A different child may have finished during this attempt. That is a new
+      // wake trigger even if this send failed, unlike retrying the same batch.
+      if (delivered || inbox.pending().some(({ completionId }) => !completionIds.includes(completionId))) {
+        this.scheduleSubsessionDelivery(session);
+      } else if (retryDelayMs !== undefined) {
+        this.scheduleSubsessionDelivery(session, retryDelayMs);
+      }
       this.publishStatus(session);
     }
   }
 
-  private scheduleSubsessionDelivery(session: PiAgentSession): void {
-    if (this.subsessionDeliveryScheduled.has(session) || this.subsessionInbox(session.sessionId, session.sessionFile).pending().length === 0) return;
-    this.subsessionDeliveryScheduled.add(session);
+  private clearSubsessionDelivery(session: PiAgentSession): void {
+    const scheduled = this.subsessionDeliveryTimers.get(session);
+    if (scheduled !== undefined) clearTimeout(scheduled.timer);
+    this.subsessionDeliveryTimers.delete(session);
+    this.subsessionDeliveryRetries.delete(session);
+  }
+
+  private publishSubsessionDeliveryFailure(session: PiAgentSession, error: unknown): void {
+    if (this.subsessionDeliveryStopped || !this.isCurrentActiveSession(session)) return;
+    const message = errorMessage(error);
+    this.publishActivity(session, { kind: "error" }, "error", message);
+    this.events.publish(session.sessionId, { type: "session.error", message });
+  }
+
+  private scheduleSubsessionDelivery(session: PiAgentSession, delayMs = 0): void {
+    // A delivery spans an entire run. Its own settlement must not schedule an
+    // immediate retry before its receipt and failure have been reconciled.
+    if (this.subsessionDeliveryStopped || !this.isCurrentActiveSession(session) || this.subsessionDeliveringParents.has(session)) return;
+    if (this.subsessionInbox(session.sessionId, session.sessionFile).pending().length === 0) {
+      this.clearSubsessionDelivery(session);
+      return;
+    }
+    const scheduled = this.subsessionDeliveryTimers.get(session);
+    if (scheduled !== undefined) {
+      if (delayMs > 0 || scheduled.delayMs === 0) return;
+      clearTimeout(scheduled.timer); // A new lifecycle trigger need not wait for backoff.
+    }
     // Settlement can precede the host prompt-mutation receipt's finally block.
-    // Recheck on the next tick, closing the yield/child-completion race without
-    // restarting a stopped run or putting rendered answers in a follow-up queue.
-    setTimeout(() => {
-      this.subsessionDeliveryScheduled.delete(session);
+    // Recheck on the next tick, closing the yield/child-completion race. Stop
+    // interrupts the current run, not future child-notice delivery.
+    const timer = setTimeout(() => {
+      this.subsessionDeliveryTimers.delete(session);
       void this.deliverPendingSubsessionCompletions(session).catch((error: unknown) => {
         this.logSubsessionNotificationFailure(session.sessionId, "inbox", error);
+        this.publishSubsessionDeliveryFailure(session, error);
       });
-    }, 0);
+    }, delayMs);
+    this.subsessionDeliveryTimers.set(session, { timer, delayMs });
   }
 
   private logSubsessionNotificationFailure(parentId: string, childId: string, error: unknown): void {
@@ -3287,7 +3338,6 @@ export class PiSessionService implements SessionRouteService {
       }
     });
     void promptPromise.catch((error: unknown) => {
-      this.subsessionStoppedParents.add(session);
       const message = error instanceof Error ? error.message : String(error);
       this.publishActivity(session, { kind: "error" }, "error", message);
       this.events.publish(session.sessionId, { type: "session.error", message });
@@ -4000,7 +4050,6 @@ export class PiSessionService implements SessionRouteService {
     const sessionId = active.runtime.session.sessionId;
     this.selfArchiveRequests.delete(active.runtime.session);
     this.clearCompactionPromptQueue(sessionId);
-    this.subsessionStoppedParents.add(active.runtime.session);
     clearSessionQueue(active.runtime.session);
     // Settle run-scoped dialogs now, at abort-request time: pi's agent loop
     // waits for a parked `tool_call` dialog handler before it can emit
@@ -4963,11 +5012,6 @@ export class PiSessionService implements SessionRouteService {
       const inbox = this.subsessionInbox(session.sessionId, session.sessionFile);
       if (eventType === "agent_start") {
         this.restoreSubsessionReceipts(session, false);
-        this.subsessionStoppedParents.delete(session);
-      }
-      if (eventType === "message_end" && getString(message, "role") === "assistant"
-        && (getString(message, "stopReason") === "aborted" || getString(message, "stopReason") === "error")) {
-        this.subsessionStoppedParents.add(session);
       }
       const entry = getProperty(event, "entry");
       // Regular message_end precedes persistence; boundary drafts instead emit
@@ -5031,6 +5075,7 @@ export class PiSessionService implements SessionRouteService {
       this.updateSubsessionTracking(session, eventType === "agent_start", eventType === "agent_settled");
     });
     active.unsubscribe = () => {
+      this.clearSubsessionDelivery(session);
       this.sessionEvents.close(session);
       unsubscribe();
       this.publishedAssistantPartials.delete(session);
