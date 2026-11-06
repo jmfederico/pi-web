@@ -65,6 +65,7 @@ describe("bundled stylesheet capability participation", () => {
       resolve<Value>(requirement: PluginCapability<Value>): Value {
         requests.push(requirement.id);
         return requirement.parse(requirement.id === "stylesheet-integration" ? styles
+          : requirement.id === "markdown-rendering" ? { render: () => html`` }
           : requirement.id === "file-previewing" ? { listPreviewers: () => [], renderPreview: () => undefined }
           : requirement.id === "file-icons" ? { resolveIcon: () => undefined, subscribe: () => () => undefined }
           : requirement.id === "syntax-highlighting" ? { supports: () => false, highlight: () => Promise.resolve(undefined) }
