@@ -194,7 +194,7 @@ export class SettingsGeneralPanel extends LitElement {
 
             <div class="field ui-form-field" data-settings-target="host-access" tabindex="-1" role="group" aria-labelledby="host-access-label">
               <label id="host-access-label" for="host-access">${messages.t("hostAccess")}</label>
-              <select class="ui-select" id="host-access" aria-describedby="host-access-help" .value=${this.gatewayDraft.hostAccessMode} ?disabled=${enforcedSetting(config, "/hostAccess") !== undefined} @change=${(event: Event) => {
+              <select class="ui-input" id="host-access" aria-describedby="host-access-help" .value=${this.gatewayDraft.hostAccessMode} ?disabled=${enforcedSetting(config, "/hostAccess") !== undefined} @change=${(event: Event) => {
                 const value = selectValue(event);
                 if (value === "restricted" || value === "any") this.updateGatewayDraft({ hostAccessMode: value });
               }}>
