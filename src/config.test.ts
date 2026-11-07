@@ -35,58 +35,57 @@ describe("configuration save integrity", () => {
   });
 });
 
-describe("Host validation decision", () => {
-  it("resolves an explicit pending value for fresh installs without writing an override", async () => {
-    expect(effectivePiWebConfig(testOptions()).config.hostValidation).toBe("pending");
+describe("Host access decision", () => {
+  it("leaves fresh installs undecided without writing an override", async () => {
+    expect(effectivePiWebConfig(testOptions()).config).not.toHaveProperty("hostAccess");
     expect(await readdir(tempDir)).not.toContain("config.json");
-    expect(JSON.parse(examplePiWebConfig())).toMatchObject({ hostValidation: "pending", allowedHosts: [] });
+    expect(JSON.parse(examplePiWebConfig())).not.toHaveProperty("hostAccess");
   });
 
-  it.each([[], ["old.example.test"], true])("keeps legacy allowedHosts %j undecided without rewriting the file", async (allowedHosts) => {
+  it.each([[], ["old.example.test"], true].map((allowedHosts) => ({ allowedHosts })))("keeps legacy allowedHosts $allowedHosts undecided without rewriting the file", async ({ allowedHosts }) => {
     const original = JSON.stringify({ allowedHosts });
     await writeFile(configPath, original);
-    expect(effectivePiWebConfig(testOptions()).config).toMatchObject({ allowedHosts, hostValidation: "pending" });
+    expect(effectivePiWebConfig(testOptions()).config).toMatchObject({ allowedHosts });
+    expect(effectivePiWebConfig(testOptions()).config).not.toHaveProperty("hostAccess");
     expect(await readFile(configPath, "utf8")).toBe(original);
   });
 
-  it.each(["pending", "enabled", "disabled"] as const)("persists and resolves an explicit %s decision", (hostValidation) => {
-    savePiWebConfig({ hostValidation }, testOptions());
-    expect(loadPiWebConfig(testOptions()).config.hostValidation).toBe(hostValidation);
-    expect(effectivePiWebConfig(testOptions()).config.hostValidation).toBe(hostValidation);
-    expect(piWebConfigSources(loadPiWebConfig(testOptions()), testOptions())).toMatchObject({ "/hostValidation": "config" });
+  it.each([{ mode: "any" as const }, { mode: "restricted" as const, hosts: [] }, { mode: "restricted" as const, hosts: [".example.test"] }])("persists and resolves an explicit %j decision", (hostAccess) => {
+    savePiWebConfig({ hostAccess }, testOptions());
+    expect(loadPiWebConfig(testOptions()).config.hostAccess).toEqual(hostAccess);
+    expect(effectivePiWebConfig(testOptions()).config.hostAccess).toEqual(hostAccess);
+    expect(piWebConfigSources(loadPiWebConfig(testOptions()), testOptions())).toMatchObject({ "/hostAccess": "config" });
   });
 
-  it("resolves defaults, writable and enforced choices and resets back to pending", async () => {
+  it("replaces defaults, writable and enforced objects atomically and resets to absence", async () => {
     const defaults = join(tempDir, "defaults.json");
-    await writeFile(defaults, JSON.stringify({ hostValidation: "disabled" }));
+    const restricted = { mode: "restricted" as const, hosts: ["default.test"] };
+    await writeFile(defaults, JSON.stringify({ hostAccess: restricted }));
     const options = { env: { ...testOptions().env, PI_WEB_DEFAULTS_CONFIG: defaults } };
-    expect(effectivePiWebConfig(options).config.hostValidation).toBe("disabled");
-    savePiWebConfig({ hostValidation: "enabled" }, options);
-    expect(effectivePiWebConfig(options).config.hostValidation).toBe("enabled");
-    const enforced = { env: { ...options.env, PI_WEB_HOST_VALIDATION: "disabled" } };
-    expect(effectivePiWebConfig(enforced).config.hostValidation).toBe("disabled");
-    expect(loadPiWebConfig(enforced).config.hostValidation).toBe("enabled");
-    expect(piWebConfigEnforcedSettings(enforced.env)["/hostValidation"]).toBe("PI_WEB_HOST_VALIDATION");
+    expect(effectivePiWebConfig(options).config.hostAccess).toEqual(restricted);
+    savePiWebConfig({ hostAccess: { mode: "any" } }, options);
+    expect(effectivePiWebConfig(options).config.hostAccess).toEqual({ mode: "any" });
+    const enforced = { env: { ...options.env, PI_WEB_HOST_ACCESS: JSON.stringify({ mode: "restricted", hosts: [] }) } };
+    expect(effectivePiWebConfig(enforced).config.hostAccess).toEqual({ mode: "restricted", hosts: [] });
+    expect(loadPiWebConfig(enforced).config.hostAccess).toEqual({ mode: "any" });
+    expect(piWebConfigEnforcedSettings(enforced.env)["/hostAccess"]).toBe("PI_WEB_HOST_ACCESS");
     savePiWebConfig({}, options);
-    expect(effectivePiWebConfig(options).config.hostValidation).toBe("disabled");
-    expect(effectivePiWebConfig(testOptions()).config.hostValidation).toBe("pending");
+    expect(effectivePiWebConfig(options).config.hostAccess).toEqual(restricted);
+    expect(effectivePiWebConfig(testOptions()).config).not.toHaveProperty("hostAccess");
   });
 
-  it.each([null, true, false, 0, "", "on", "off", "ENABLED", [], {}])("rejects invalid file mode %j", async (hostValidation) => {
-    await writeFile(configPath, JSON.stringify({ hostValidation }));
-    expect(() => effectivePiWebConfig(testOptions())).toThrow("hostValidation");
+  it("rejects malformed saved and deployment policy even when the environment overrides it", async () => {
+    await writeFile(configPath, JSON.stringify({ hostAccess: { mode: "restricted" } }));
+    expect(() => effectivePiWebConfig({ env: { ...testOptions().env, PI_WEB_HOST_ACCESS: '{"mode":"any"}' } })).toThrow("hostAccess");
+    expect(() => effectivePiWebConfig({ env: { PI_WEB_CONFIG: join(tempDir, "missing.json"), PI_WEB_DEFAULTS_CONFIG: configPath } })).toThrow("hostAccess");
   });
 
-  it("validates enabled policy across layers before saving", async () => {
-    savePiWebConfig({ hostValidation: "disabled", allowedHosts: true }, testOptions());
-    const original = await readFile(configPath, "utf8");
-    expect(() => savePiWebConfig({ hostValidation: "enabled", allowedHosts: true }, testOptions())).toThrow("allowedHosts list");
-    expect(() => savePiWebConfig({ hostValidation: "enabled", allowedHosts: [] }, { env: { ...testOptions().env, PI_WEB_ALLOWED_HOSTS: "true" } })).toThrow("allowedHosts list");
-    const defaults = join(tempDir, "defaults.json");
-    await writeFile(defaults, JSON.stringify({ allowedHosts: true }));
-    expect(() => savePiWebConfig({ hostValidation: "enabled" }, { env: { ...testOptions().env, PI_WEB_DEFAULTS_CONFIG: defaults } })).toThrow("allowedHosts list");
-    expect(await readFile(configPath, "utf8")).toBe(original);
-    expect(() => applyPiWebConfigEnv({ allowedHosts: true }, { PI_WEB_HOST_VALIDATION: "enabled" })).toThrow("allowedHosts list");
+  it("keeps legacy enforcement independent from hostAccess", () => {
+    const hostAccess = { mode: "restricted" as const, hosts: [] };
+    const env = { ...testOptions().env, PI_WEB_ALLOWED_HOSTS: "true" };
+    savePiWebConfig({ hostAccess }, { env });
+    expect(effectivePiWebConfig({ env }).config.hostAccess).toEqual(hostAccess);
+    expect(piWebConfigEnforcedSettings(env)).toEqual({ "/allowedHosts": "PI_WEB_ALLOWED_HOSTS" });
   });
 });
 
@@ -729,7 +728,7 @@ describe("environment setting resolution", () => {
 
   it("supports every core setting with source-aware validators", () => {
     const config = {
-      installationName: "Deployment", host: "0.0.0.0", port: 9001, allowedHosts: ["host"], hostValidation: "disabled" as const,
+      installationName: "Deployment", host: "0.0.0.0", port: 9001, allowedHosts: ["host"], hostAccess: { mode: "any" as const },
       shortcuts: { stop: null }, defaultTheme: { themeId: "themes:pi-web-light", auto: false },
       defaultLocalization: { language: "de" }, defaultStreamingBehavior: "followUp" as const,
       quietMode: true, plugins: { git: { enabled: false, settings: { key: { value: 1 } } } },
@@ -789,7 +788,7 @@ describe("environment setting resolution", () => {
     ["PI_WEB_ASK_USER", "enabled"], ["PI_WEB_ENVIRONMENT_FACTS", "null"],
     ["PI_WEB_BASE_PATHS", "/a,/b"], ["PI_WEB_PATH_ACCESS", "[]"], ["PI_WEB_UPLOADS", "null"],
     ["PI_WEB_ALLOWED_HOSTS", "[broken"], ["PI_WEB_MAX_UPLOAD_BYTES", "0"],
-    ["PI_WEB_HOST_VALIDATION", ""], ["PI_WEB_HOST_VALIDATION", "false"], ["PI_WEB_HOST_VALIDATION", "unknown"],
+    ["PI_WEB_HOST_ACCESS", ""], ["PI_WEB_HOST_ACCESS", "false"], ["PI_WEB_HOST_ACCESS", "unknown"], ["PI_WEB_HOST_ACCESS", '{"mode":"restricted"}'],
     ["PI_WEB_EXTENSION_DIALOGS_TIMEOUT_MS", "-1"], ["PI_WEB_DEFAULT_THEME", "{}"],
   ])("rejects invalid %s with variable context", (key, value) => {
     expect(() => applyPiWebConfigEnv({}, { [key]: value })).toThrow(key);

@@ -26,10 +26,10 @@ async function openSettings(page: Page, query = "") {
   return { modal, content };
 }
 
-async function expectRevealed(content: Locator, group: Locator, control: Locator) {
+async function expectRevealed(content: Locator, group: Locator, control: Locator, focusTarget = control) {
   // No click, focus(), wheel, or scrollIntoView before these assertions: only
   // production navigation may bring the offscreen destination into view.
-  await expect(control).toBeFocused();
+  await expect(focusTarget).toBeFocused();
   await expect(control).toBeInViewport({ ratio: 1 });
   expect(await content.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   const viewport = await content.boundingBox();
@@ -51,14 +51,14 @@ test("routes the gateway warning through existing Notices without a session or w
   await page.goto("/settings-navigation.html?notices");
   await expect(page.locator("body")).toHaveAttribute("data-ready", "true");
   expect(await page.evaluate(() => window.settingsNavigationFixture.selection())).toEqual({ session: undefined, workspace: undefined });
-  await expect(page.locator("[data-host-validation-notice]")).toHaveCount(0);
+  await expect(page.locator("[data-host-access-notice]")).toHaveCount(0);
 
   const noticesNavigation = page.getByRole("button", { name: /^Notices\b/ });
   await expect(noticesNavigation).toBeVisible();
   await expect(noticesNavigation).toHaveAccessibleName(/1/);
   await noticesNavigation.click();
   await expect(noticesNavigation).toHaveAttribute("aria-pressed", "true");
-  const notice = page.locator('session-notices-panel [data-notice-id="gateway-host-validation"]');
+  const notice = page.locator('session-notices-panel [data-notice-id="gateway-host-access"]');
   await expect(notice).toBeVisible();
   await expect(notice).toHaveCount(1);
   await expect(notice.locator(".session-warning-dismiss")).toHaveCount(0);
@@ -68,19 +68,20 @@ test("routes the gateway warning through existing Notices without a session or w
   await action.click();
   const modal = page.getByRole("dialog", { name: "PI WEB settings", exact: true });
   await expect(modal).toBeVisible();
-  const selector = page.locator('[data-settings-target="host-validation"]').getByRole("combobox");
+  const selector = page.locator('[data-settings-target="host-access"]').getByRole("combobox");
   await expect(selector).toBeFocused();
   await expect(selector).toBeInViewport({ ratio: 1 });
   // Opening the destination cannot acknowledge/dismiss the underlying condition.
   await expect(notice).toHaveCount(1);
-  await expect(page.locator("settings-general-panel [data-host-validation-notice]")).toHaveCount(0);
+  await expect(page.locator("settings-general-panel [data-host-access-notice]")).toHaveCount(0);
   await page.getByRole("button", { name: "Close settings" }).click();
   await expect(action).toBeFocused();
   await expect(notice).toBeVisible();
 
   await action.click();
   await expect(selector).toBeFocused();
-  await selector.selectOption("enabled");
+  await selector.selectOption("restricted");
+  await expect(page.locator("#host-access-list")).toHaveValue("fixture.local");
   await expect(notice).toHaveCount(1);
   await page.getByRole("button", { name: "Save gateway server config", exact: true }).click();
   await expect(page.locator("body")).toHaveAttribute("data-save", "pending");
@@ -88,7 +89,7 @@ test("routes the gateway warning through existing Notices without a session or w
   await expect(page.locator("body")).toHaveAttribute("data-save", "complete");
   await page.getByRole("button", { name: "Close settings" }).click();
   await expect(notice).toBeVisible();
-  // Saving enabled does not imply that the running gateway enforces it.
+  // Saving a restricted policy does not imply that the running gateway enforces it.
   await expect(notice.locator(".session-warning-message")).toContainText(/restart/i);
   await action.click();
   await page.evaluate(() => { window.settingsNavigationFixture.completeEnforcement(); });
@@ -99,14 +100,14 @@ test("routes the gateway warning through existing Notices without a session or w
   expect(sockets).toEqual([]);
 });
 
-test("reveals Host validation after delayed config without stealing focus on rerender or save", async ({ page }, testInfo) => {
+test("reveals hostname policy after delayed config without stealing focus on rerender or save", async ({ page }, testInfo) => {
   const { content } = await openSettings(page);
-  const group = page.locator('[data-settings-target="host-validation"]');
+  const group = page.locator('[data-settings-target="host-access"]');
   const selector = group.getByRole("combobox");
   await expect(group).toHaveCount(0);
   await page.evaluate(() => window.settingsNavigationFixture.releaseConfig());
   await expectRevealed(content, group, selector);
-  await page.screenshot({ path: testInfo.outputPath("host-validation-revealed.png") });
+  await page.screenshot({ path: testInfo.outputPath("host-access-revealed.png") });
 
   // A real edit and form submit cause panel and dialog updates. Keep another
   // enabled control focused while the asynchronous save is pending and completes.
@@ -126,6 +127,27 @@ test("reveals Host validation after delayed config without stealing focus on rer
   await expect(port).toHaveValue("9001");
 });
 
+test("keeps the hostname editor and save action reachable when changing policy", async ({ page }, testInfo) => {
+  await openSettings(page);
+  await page.evaluate(() => window.settingsNavigationFixture.releaseConfig());
+  const policy = page.locator("#host-access");
+  const hosts = page.locator("#host-access-list");
+  await expect(hosts).toHaveCount(0);
+  await policy.selectOption("restricted");
+  await expect(hosts).toHaveValue("fixture.local");
+  await hosts.fill("pi.example.com\n.example.org");
+  await expect(hosts).toBeFocused();
+  await expect(hosts).toBeInViewport({ ratio: 1 });
+  await page.screenshot({ path: testInfo.outputPath("restricted-hostnames.png") });
+  await policy.selectOption("any");
+  await expect(hosts).toHaveCount(0);
+  await page.getByRole("button", { name: "Save gateway server config", exact: true }).click();
+  await expect(page.locator("body")).toHaveAttribute("data-save", "pending");
+  await page.evaluate(() => window.settingsNavigationFixture.releaseSave());
+  await expect(policy).toHaveValue("any");
+  await page.screenshot({ path: testInfo.outputPath("any-hostname.png") });
+});
+
 test("reveals an arbitrary named destination inside a slotted panel shadow root", async ({ page }) => {
   const { content } = await openSettings(page, "?target=fixture-preference");
   const group = page.getByRole("group", { name: "Fixture preference", exact: true });
@@ -141,7 +163,7 @@ test("a missing target leaves initial focus and ordinary dialog navigation intac
   const { modal, content } = await openSettings(page, "?target=not-a-setting");
   await expect(modal).toBeFocused();
   await page.evaluate(() => window.settingsNavigationFixture.releaseConfig());
-  await expect(page.locator("#host-validation")).toHaveCount(1);
+  await expect(page.locator("#host-access")).toHaveCount(1);
   await page.evaluate(() => window.settingsNavigationFixture.rerender());
   await expect(modal).toBeFocused();
   expect(await content.evaluate((element) => element.scrollTop)).toBe(0);
@@ -153,13 +175,16 @@ test("a missing target leaves initial focus and ordinary dialog navigation intac
   await expect(page.getByRole("button", { name: "Open settings" })).toBeFocused();
 });
 
-test("a policy-locked Host selector reveals and focuses its group fallback", async ({ page }) => {
+test("a policy-locked hostname selector reveals and focuses its group fallback", async ({ page }) => {
   const { content } = await openSettings(page, "?locked");
-  const group = page.locator('[data-settings-target="host-validation"]');
+  const group = page.locator('[data-settings-target="host-access"]');
   await expect(group).toHaveCount(0);
   await page.evaluate(() => window.settingsNavigationFixture.releaseConfig());
-  await expect(group.getByRole("combobox")).toBeDisabled();
-  await expectRevealed(content, group, group);
+  const selector = group.getByRole("combobox");
+  await expect(selector).toBeDisabled();
+  // A locked group receives focus, but the heading and actual control are the
+  // reveal targets; the group also contains a list and potentially long help.
+  await expectRevealed(content, group, selector, group);
   await expect(group).toHaveAttribute("tabindex", "-1");
   // Non-tabstop fallback focus re-enters ModalSurface's tab cycle at its start.
   await page.keyboard.press("Tab");

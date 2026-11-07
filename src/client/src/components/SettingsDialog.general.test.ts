@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { configApi, pluginsApi, type PiWebConfigResponse } from "../api";
-import { SettingsDialog } from "./SettingsDialog";
+import { SettingsDialog, settingsDialogMessages } from "./SettingsDialog";
 import { callDialogPromise, callDialogUpdated, configResponse, deferred, getDialogProperty, pluginsResponse, remoteMachine, secondRemoteMachine, setDialogProperty, stubWindowTimers } from "./SettingsDialog.testSupport";
 
 afterEach(() => {
@@ -11,7 +11,7 @@ afterEach(() => {
 describe("settings-dialog general settings machine targeting", () => {
   it("keeps gateway server config saves on the gateway config endpoint", async () => {
     stubWindowTimers();
-    const savedConfig = configResponse({ host: "0.0.0.0", port: 9000, allowedHosts: true });
+    const savedConfig = configResponse({ host: "0.0.0.0", port: 9000, hostAccess: { mode: "any" } });
     const saveSpy = vi.spyOn(configApi, "updateConfig").mockResolvedValue(savedConfig);
     const onConfigSaved = vi.fn();
     const dialog = new SettingsDialog();
@@ -19,13 +19,13 @@ describe("settings-dialog general settings machine targeting", () => {
     const onGatewayConfigLoaded = vi.fn();
     dialog.onGatewayConfigLoaded = onGatewayConfigLoaded;
 
-    await callDialogPromise(dialog, "saveConfig", { host: "0.0.0.0", port: 9000, allowedHosts: true });
+    await callDialogPromise(dialog, "saveConfig", { host: "0.0.0.0", port: 9000, hostAccess: { mode: "any" } });
 
-    expect(saveSpy.mock.calls).toEqual([[{ set: { host: "0.0.0.0", port: 9000, allowedHosts: true }, unset: [] }]]);
+    expect(saveSpy.mock.calls).toEqual([[{ set: { host: "0.0.0.0", port: 9000, hostAccess: { mode: "any" } }, unset: [] }]]);
     expect(getDialogProperty(dialog, "configResponse")).toBe(savedConfig);
     expect(onGatewayConfigLoaded).toHaveBeenCalledExactlyOnceWith(savedConfig);
-    expect(onConfigSaved).toHaveBeenCalledWith({ host: "0.0.0.0", port: 9000, allowedHosts: true });
-    expect(getDialogProperty(dialog, "savedMessage")).toBe("Gateway settings saved. Restart the web/API service to apply network and Host validation changes.");
+    expect(onConfigSaved).toHaveBeenCalledWith({ host: "0.0.0.0", port: 9000, hostAccess: { mode: "any" } });
+    expect(getDialogProperty(dialog, "savedMessage")).toBe(settingsDialogMessages.t("gatewaySaved"));
     expect(getDialogProperty(dialog, "saving")).toBe(false);
   });
 

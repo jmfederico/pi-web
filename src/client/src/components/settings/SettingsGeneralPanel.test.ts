@@ -3,6 +3,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PiWebConfigResponse, PiWebConfigValues } from "../../api";
 import { SettingsGeneralPanel } from "./SettingsGeneralPanel";
+import { hostAccessNotices } from "../hostAccessNotices";
+import { generalMessages as messages } from "./settingsGeneralMessages";
 
 afterEach(() => {
   document.body.replaceChildren();
@@ -10,78 +12,130 @@ afterEach(() => {
 });
 
 describe("General settings", () => {
-  it("keeps the Host decision gateway-scoped and preserves drafts until save acknowledgement", async () => {
+  it("keeps the hostname decision gateway-scoped and preserves drafts until save acknowledgement", async () => {
     const panel = await mountPanel();
-    const mode = required(panel.shadowRoot?.querySelector<HTMLSelectElement>("#host-validation"));
-    expect(mode.value).toBe("pending");
+    const mode = policySelect(panel);
+    expect(mode.value).toBe("");
     const save = vi.fn((patch: PiWebConfigValues) => {
-      panel.configResponse = { ...configResponse({ ...panel.configResponse?.effectiveConfig, ...patch }), activeHostValidation: "pending" };
+      panel.configResponse = { ...configResponse({ ...panel.configResponse?.effectiveConfig, ...patch }), activeHostAccess: null };
     });
     panel.onSave = save;
-    mode.value = "enabled";
-    mode.dispatchEvent(new Event("change", { bubbles: true }));
+    await choosePolicy(panel, "restricted");
     panel.targetId = "remote";
-    panel.machineConfigResponse = configResponse({ hostValidation: "disabled" });
+    panel.machineConfigResponse = configResponse({ hostAccess: { mode: "any" } });
     panel.configResponse = configResponse({ host: "gateway.local", port: 9000 });
     await settle(panel);
-    expect(mode.value).toBe("enabled");
+    expect(mode.value).toBe("restricted");
     submit(panel, 0);
     await settle(panel);
-    expect(save).toHaveBeenCalledExactlyOnceWith({ hostValidation: "enabled" });
-    expect(mode.value).toBe("enabled");
-    // Pending/restart warnings belong to Notices, not a duplicate Settings banner.
-    expect(panel.shadowRoot?.querySelector("[data-host-validation-notice]")).toBeNull();
+    expect(save).toHaveBeenCalledExactlyOnceWith({ hostAccess: { mode: "restricted", hosts: [] } });
+    expect(mode.value).toBe("restricted");
     expect(panel.shadowRoot?.querySelector(".form-actions small")).toBeNull();
   });
 
-  it("requires an actual list when enabling validation over legacy development allow-all", async () => {
+  it.each([{}, { allowedHosts: true }, { allowedHosts: ["legacy.local"] }] satisfies PiWebConfigValues[])("never saves an implicit policy while editing host or port (%j)", async (config) => {
     const panel = await mountPanel();
-    panel.configResponse = configResponse({ allowedHosts: true });
+    panel.configResponse = configResponse(config);
     panel.onSave = vi.fn();
     await settle(panel);
-    const mode = required(panel.shadowRoot?.querySelector<HTMLSelectElement>("#host-validation"));
-    mode.value = "enabled";
-    mode.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(policySelect(panel).value).toBe("");
+    expect(panel.shadowRoot?.querySelector("#host-access-list")).toBeNull();
+    edit(panel, gatewayHostInput, "new.local");
+    edit(panel, gatewayHostInput + "[inputmode]", "9000");
     submit(panel, 0);
     await settle(panel);
-    expect(panel.onSave).not.toHaveBeenCalled();
-    expect(panel.shadowRoot?.querySelector("settings-panel-frame")?.shadowRoot?.querySelector('[role="alert"]')).not.toBeNull();
-    const hosts = required(panel.shadowRoot?.querySelector<HTMLSelectElement>("#allowed-hosts-mode"));
-    hosts.value = "list";
-    hosts.dispatchEvent(new Event("change", { bubbles: true }));
-    edit(panel, "#allowed-hosts-list", "gateway.local");
-    submit(panel, 0);
-    await settle(panel);
-    expect(panel.onSave).toHaveBeenCalledExactlyOnceWith({ hostValidation: "enabled", allowedHosts: ["gateway.local"] });
+    expect(panel.onSave).toHaveBeenCalledExactlyOnceWith({ host: "new.local", port: 9000 });
   });
 
-  it("resets the saved Host choice by deletion and locks environment-enforced choices", async () => {
+  it("prefills the legacy list only until a policy exists and retains list edits across unsaved mode switches", async () => {
     const panel = await mountPanel();
-    panel.configResponse = configResponse({ hostValidation: "disabled" });
-    panel.onReset = vi.fn();
+    panel.configResponse = configResponse({ allowedHosts: ["legacy.local"] });
     panel.onSave = vi.fn();
     await settle(panel);
-    required(panel.shadowRoot?.querySelector<HTMLButtonElement>('button[aria-label="Reset saved override for /hostValidation"]')).click();
-    expect(panel.onReset).toHaveBeenCalledExactlyOnceWith(["/hostValidation"]);
-    panel.configResponse = configResponse({});
+    await choosePolicy(panel, "restricted");
+    expect(input(panel, "#host-access-list").value).toBe("legacy.local");
+    edit(panel, "#host-access-list", "new.local");
+    await choosePolicy(panel, "any");
+    expect(panel.shadowRoot?.querySelector("#host-access-list")).toBeNull();
+    submit(panel, 0);
     await settle(panel);
-    const mode = required(panel.shadowRoot?.querySelector<HTMLSelectElement>("#host-validation"));
-    expect(mode.value).toBe("pending");
-    mode.value = "disabled";
-    mode.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(panel.onSave).toHaveBeenLastCalledWith({ hostAccess: { mode: "any" } });
+    await choosePolicy(panel, "restricted");
+    expect(input(panel, "#host-access-list").value).toBe("new.local");
+    submit(panel, 0);
+    await settle(panel);
+    expect(panel.onSave).toHaveBeenLastCalledWith({ hostAccess: { mode: "restricted", hosts: ["new.local"] } });
+  });
+
+  it("leaves the new policy editable under legacy environment enforcement and explains migration", async () => {
+    const panel = await mountPanel();
+    panel.configResponse = { ...configResponse({ allowedHosts: ["legacy.local"] }), enforcedSettings: { "/allowedHosts": "PI_WEB_ALLOWED_HOSTS" }, envOverrides: { ...configResponse({}).envOverrides, allowedHosts: true } };
+    panel.onSave = vi.fn();
+    await settle(panel);
+    expect(policySelect(panel).disabled).toBe(false);
+    expect(policySelect(panel).value).toBe("");
+    expect(panel.shadowRoot?.textContent).toContain(messages.t("hostAccessLegacyEnv", { variable: "PI_WEB_ALLOWED_HOSTS" }));
+    await choosePolicy(panel, "restricted");
+    expect(input(panel, "#host-access-list").disabled).toBe(false);
+    submit(panel, 0);
+    await settle(panel);
+    expect(panel.onSave).toHaveBeenCalledExactlyOnceWith({ hostAccess: { mode: "restricted", hosts: ["legacy.local"] } });
+  });
+
+  it.each([undefined, { mode: "restricted" as const, hosts: ["default.local"] }])("resets the whole saved policy to its lower layer (%j)", async (inherited) => {
+    const panel = await mountPanel();
+    panel.configResponse = configResponse({ hostAccess: { mode: "any" } });
+    panel.onReset = vi.fn(() => { panel.configResponse = { ...configResponse({}), effectiveConfig: inherited ? { hostAccess: inherited } : {}, activeHostAccess: { mode: "any" } }; });
+    await settle(panel);
+    required(panel.shadowRoot?.querySelector<HTMLButtonElement>('button[aria-label="Reset saved override for /hostAccess"]')).click();
+    await settle(panel);
+    expect(panel.onReset).toHaveBeenCalledExactlyOnceWith(["/hostAccess"]);
+    expect(policySelect(panel).value).toBe(inherited?.mode ?? "");
+    const notice = hostAccessNotices(panel.configResponse, vi.fn())[0]?.message ?? "";
+    if (inherited) expect(notice).not.toContain(messages.t("hostAccessDecision"));
+    else expect(notice).toContain(messages.t("hostAccessDecision"));
+  });
+
+  it("locks the entire environment policy without modifying the hidden saved value", async () => {
+    const panel = await mountPanel();
+    await choosePolicy(panel, "any");
+    panel.onSave = vi.fn();
+    panel.onReset = vi.fn();
     panel.configResponse = {
-      ...configResponse({ hostValidation: "disabled" }),
-      effectiveConfig: { hostValidation: "enabled" },
-      enforcedSettings: { "/hostValidation": "PI_WEB_HOST_VALIDATION" },
+      ...configResponse({ hostAccess: { mode: "any" } }),
+      effectiveConfig: { hostAccess: { mode: "restricted", hosts: ["env.local"] } },
+      enforcedSettings: { "/hostAccess": "PI_WEB_HOST_ACCESS" },
     };
     await settle(panel);
-    expect(mode.value).toBe("enabled");
-    expect(mode.disabled).toBe(true);
-    expect(panel.configResponse.config.hostValidation).toBe("disabled");
-    expect(panel.shadowRoot?.textContent).toContain("PI_WEB_HOST_VALIDATION");
+    expect(policySelect(panel).value).toBe("restricted");
+    expect(policySelect(panel).disabled).toBe(true);
+    expect(input(panel, "#host-access-list").value).toBe("env.local");
+    expect(input(panel, "#host-access-list").disabled).toBe(true);
+    expect(panel.configResponse.config.hostAccess).toEqual({ mode: "any" });
+    expect(panel.shadowRoot?.textContent).toContain("PI_WEB_HOST_ACCESS");
+    expect(required(panel.shadowRoot?.querySelector<HTMLButtonElement>('button[aria-label="Reset saved override for /hostAccess"]')).disabled).toBe(true);
     submit(panel, 0);
     await settle(panel);
     expect(panel.onSave).toHaveBeenCalledExactlyOnceWith({});
+  });
+
+  it("saves list-only changes atomically and keeps the startup snapshot distinct", async () => {
+    const panel = await mountPanel();
+    const activeHostAccess = { mode: "restricted" as const, hosts: ["old.local"] };
+    panel.configResponse = { ...configResponse({ hostAccess: activeHostAccess }), activeHostAccess };
+    panel.onSave = vi.fn((patch: PiWebConfigValues) => { panel.configResponse = { ...configResponse(patch), activeHostAccess }; });
+    await settle(panel);
+    edit(panel, "#host-access-list", " new.local \n");
+    submit(panel, 0);
+    await settle(panel);
+    expect(panel.onSave).toHaveBeenCalledExactlyOnceWith({ hostAccess: { mode: "restricted", hosts: ["new.local"] } });
+    expect(panel.configResponse.activeHostAccess).toEqual(activeHostAccess);
+    expect(input(panel, "#host-access-list").value).toBe("new.local");
+    expect(panel.shadowRoot?.querySelector(".form-actions small")).toBeNull();
+    expect(hostAccessNotices(panel.configResponse, vi.fn())).toHaveLength(1);
+    const summary = panel.shadowRoot?.querySelector('[aria-label="Gateway settings after environment overrides"]');
+    expect(summary?.textContent).toContain("old.local");
+    expect(summary?.textContent).toContain("new.local");
   });
 
   it("shows effective machine base roots without claiming external access is denied", async () => {
@@ -153,19 +207,15 @@ describe("General settings", () => {
     expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ installationName: "" }));
   });
 
-  it("labels allowed-host controls and associates their guidance", async () => {
+  it("labels hostname controls and associates their guidance", async () => {
     const panel = await mountPanel();
-    for (const id of ["allowed-hosts-mode", "allowed-hosts-list"]) {
+    await choosePolicy(panel, "restricted");
+    for (const id of ["host-access", "host-access-list"]) {
       const control = required(panel.shadowRoot?.getElementById(id));
       expect(panel.shadowRoot?.querySelector(`label[for="${id}"]`)?.textContent).toBeTruthy();
-      expect(control.getAttribute("aria-describedby")).toBe("allowed-hosts-help");
-      expect(panel.shadowRoot?.getElementById("allowed-hosts-help")?.textContent.trim()).toBeTruthy();
+      const help = required(control.getAttribute("aria-describedby"));
+      expect(panel.shadowRoot?.getElementById(help)?.textContent.trim()).toBeTruthy();
     }
-    const mode = required(panel.shadowRoot?.querySelector<HTMLSelectElement>("#allowed-hosts-mode"));
-    mode.value = "all";
-    mode.dispatchEvent(new Event("change", { bubbles: true }));
-    await settle(panel);
-    expect(required(panel.shadowRoot?.querySelector<HTMLTextAreaElement>("#allowed-hosts-list")).disabled).toBe(true);
   });
 
   it("scopes machine errors as alerts and explains unavailable configurations", async () => {
@@ -375,6 +425,17 @@ async function mountPanel(): Promise<SettingsGeneralPanel> {
 async function settle(panel: SettingsGeneralPanel): Promise<void> {
   await panel.updateComplete;
   await panel.updateComplete;
+}
+
+function policySelect(panel: SettingsGeneralPanel): HTMLSelectElement {
+  return required(panel.shadowRoot?.querySelector<HTMLSelectElement>("#host-access"));
+}
+
+async function choosePolicy(panel: SettingsGeneralPanel, value: "restricted" | "any"): Promise<void> {
+  const mode = policySelect(panel);
+  mode.value = value;
+  mode.dispatchEvent(new Event("change", { bubbles: true }));
+  await settle(panel);
 }
 
 function quietToggle(panel: SettingsGeneralPanel): HTMLInputElement {

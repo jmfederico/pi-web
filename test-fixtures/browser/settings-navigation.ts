@@ -14,17 +14,17 @@ function deferred() {
 }
 
 const parameters = new URLSearchParams(location.search);
-const target = parameters.get("target") ?? "host-validation";
+const target = parameters.get("target") ?? "host-access";
 const noticesMode = parameters.has("notices");
 const configLoad = deferred();
 const configSave = deferred();
 let response: PiWebConfigResponse = {
   path: "/fixture/config.json", exists: true,
   config: { port: 8504, allowedHosts: ["fixture.local"] },
-  effectiveConfig: { port: 8504, allowedHosts: ["fixture.local"], hostValidation: "pending" },
-  activeHostValidation: "pending",
+  effectiveConfig: { port: 8504, allowedHosts: ["fixture.local"], ...(parameters.has("locked") ? { hostAccess: { mode: "restricted", hosts: ["fixture.local"] } as const } : {}) },
+  activeHostAccess: null,
   envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false },
-  ...(parameters.has("locked") ? { enforcedSettings: { "/hostValidation": "PI_WEB_HOST_VALIDATION" } } : {}),
+  ...(parameters.has("locked") ? { enforcedSettings: { "/hostAccess": "PI_WEB_HOST_ACCESS" } } : {}),
 };
 
 // Replace public API collaborators only; all dialog, panel, modal and target
@@ -133,7 +133,7 @@ window.settingsNavigationFixture = {
     await painted();
   },
   releaseSave: async () => { configSave.resolve(); await painted(); },
-  completeEnforcement: () => { response = { ...response, activeHostValidation: "enabled" }; },
+  completeEnforcement: () => { response = { ...response, activeHostAccess: response.effectiveConfig.hostAccess ?? null }; },
   selection: () => {
     const state: unknown = Reflect.get(app ?? {}, "state");
     if (typeof state !== "object" || state === null || !("selectedSession" in state) || !("selectedWorkspace" in state)) {

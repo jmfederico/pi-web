@@ -645,43 +645,51 @@
 <td>Web/API restart</td>
 </tr>
 <tr>
-<th scope="row">Host validation<br><code>hostValidation</code></th>
-<td>Gateway web/API</td>
-<td><code>pending</code></td>
-<td><code>pending</code>: off, decision warning; <code>enabled</code>: enforce allowed hosts; <code>disabled</code>: explicitly off, warning dismissed.</td>
-<td>Web/API restart. UI flags pending enforcement changes. No sessiond restart.</td>
+<th scope="row">Allowed hostnames<br><code>hostAccess</code></th>
+<td>Gateway web/API + development UI</td>
+<td>Absent: decision required</td>
+<td>One policy for both servers: <code>{"mode":"restricted","hosts":["pi.example.com"]}</code> or <code>{"mode":"any"}</code>.</td>
+<td>Restart web/API and development UI if running. UI compares the full policy with the web/API startup snapshot. No sessiond restart.</td>
 </tr>
 <tr>
-<th scope="row">Allowed request hosts<br><code>allowedHosts</code></th>
-<td>Gateway web/API + dev UI</td>
+<th scope="row">Legacy development hostnames<br><code>allowedHosts</code></th>
+<td>Development UI only</td>
 <td><code>[]</code> (localhost, .localhost subdomains, literal IPv4/IPv6)</td>
-<td>Additional trusted hostnames for web/API when host validation is enabled. Vite dev UI enforcement is independent.</td>
-<td>Web/API restart; also Vite for dev UI. No sessiond restart.</td>
+<td>Legacy development-only fallback. Ignored when <code>hostAccess</code> is supplied.</td>
+<td>Development UI restart. No sessiond restart.</td>
 </tr>
 </tbody></table></div>
 <p id="deployment-paths"><strong>Serving at a URL prefix?</strong> No config key is needed. The proxy must redirect to a trailing slash and strip the prefix before forwarding HTTP and WebSocket traffic. <a href="install#reverse-proxy-prefix">Reverse-proxy example →</a></p>
 <h3 id="browser-request-security">Browser request security</h3>
-<p>The gateway's <code>hostValidation</code> setting has three explicit values:</p>
+<p>Choose one gateway <code>hostAccess</code> policy for both production and development in <strong>Settings → General → Allowed hostnames</strong>:</p>
 <ul>
-<li><code>pending</code> (default): the web/API hostname allowlist is off. A persistent notice in the Notices panel asks you to choose enabled or disabled, even without a selected workspace or session. Its action opens General settings directly at Host validation.</li>
-<li><code>enabled</code>: enforces <code>allowedHosts</code> for every route and WebSocket upgrade, including the production UI. The decision is resolved.</li>
-<li><code>disabled</code>: the web/API hostname allowlist is off by explicit choice, and the decision warning is dismissed.</li>
+<li>No effective <code>hostAccess</code> (default): web/API hostname restrictions remain off, and the development UI keeps its legacy <code>allowedHosts</code> behavior. A persistent notice asks you to choose a policy.</li>
+<li><code>{"mode":"restricted","hosts":["pi.example.com"]}</code>: both servers allow local addresses and listed hostnames.</li>
+<li><code>{"mode":"any"}</code>: both servers accept any hostname, by explicit choice.</li>
 </ul>
-<p><strong>New and existing installations default to <code>pending</code>.</strong> New example configs include <code>"hostValidation": "pending"</code>; a missing saved key inherits lower-priority config, then the built-in <code>pending</code> default. An upgrade does not turn on hostname enforcement for the production/default API or lock out custom DNS deployments. Choose whether to enable protection before enforcement begins.</p>
-<p>In both <code>pending</code> and <code>disabled</code>, PI WEB remains without application-level DNS-rebinding protection. The Origin guard stays active in <strong>all three modes</strong>, and malformed <code>Host</code> headers are always rejected. Origin checks are not authentication.</p>
-<p>To enable protection, first include every public DNS name you use in <code>allowedHosts</code>, then set <code>hostValidation</code> to <code>enabled</code>, for example:</p>
-<pre><code>{ "hostValidation": "enabled", "allowedHosts": ["pi.example.com"] }</code></pre>
-<p>When enabled, unlisted hostnames receive <code>403</code>. Matching rules are:</p>
+<p><strong>The decision warning applies to new and existing installations.</strong> Example configs leave <code>hostAccess</code> absent. A missing saved value inherits deployment defaults or environment policy; without either, no decision has been made. The Notices panel keeps the warning visible even without a selected workspace or session and opens the hostname control directly. Opening Settings, changing an unrelated setting, or retaining legacy <code>allowedHosts</code> does not dismiss it. Either explicit policy, including an environment policy, resolves the decision.</p>
+<p>To restrict access, include every public DNS name you use:</p>
+<pre><code>{ "hostAccess": { "mode": "restricted", "hosts": ["pi.example.com"] } }</code></pre>
+<p>Unlisted hostnames receive <code>403</code>. Matching rules are:</p>
 <ul>
-<li>The default <code>allowedHosts: []</code> allows <code>localhost</code>, subdomains of <code>.localhost</code>, and literal IPv4/IPv6 addresses.</li>
-<li>An exact hostname such as <code>pi.example.com</code> allows only that hostname. A Vite-style leading-dot entry such as <code>.example.com</code> allows both <code>example.com</code> and its subdomains. Use hostnames, not URLs or host:port pairs.</li>
-<li><code>hostValidation: "enabled"</code> with <code>allowedHosts: true</code> is invalid. To turn off application hostname enforcement explicitly, choose <code>hostValidation: "disabled"</code> instead.</li>
+<li>Localhost, subdomains of <code>.localhost</code>, and literal IPv4/IPv6 addresses remain allowed, including with an empty <code>hosts</code> list.</li>
+<li>An exact hostname such as <code>pi.example.com</code> allows only that hostname. A leading-dot entry such as <code>.example.com</code> allows both <code>example.com</code> and its subdomains. Use hostnames, not URLs or host:port pairs.</li>
+<li>To accept any hostname explicitly, use <code>{ "hostAccess": { "mode": "any" } }</code>. This disables hostname restrictions and application-level DNS-rebinding protection.</li>
 </ul>
-<p>These settings are gateway-only, not project-local or selected-remote-machine settings. <code>PI_WEB_HOST_VALIDATION</code> accepts <code>pending</code>, <code>enabled</code>, or <code>disabled</code>; it overrides saved config and deployment defaults. <code>PI_WEB_ALLOWED_HOSTS</code> independently overrides the list. Environment-enforced settings are read-only in the UI.</p>
-<p>The web/API process snapshots both settings at startup. Restart web/API after changing <code>hostValidation</code> or <code>allowedHosts</code>; the UI reports a restart requirement when enabling or disabling enforcement would change the running behavior. Choosing <code>disabled</code> while enforcement is already off clears the decision warning immediately. The UI does not detect allowed-hosts-only changes. No session-daemon restart is needed.</p>
-<p><strong>Development UI:</strong> Vite's existing <code>allowedHosts</code> enforcement remains independent. Neither <code>pending</code> nor <code>disabled</code> turns off Vite's built-in host policy. Legacy <code>allowedHosts: true</code> remains accepted to disable Vite's allowlist when <code>hostValidation</code> is not <code>enabled</code>. Restart Vite after changing its allowed hosts.</p>
+<p>The web/API also lacks that protection while no policy is chosen. Malformed <code>Host</code> headers are rejected and the Origin guard stays active regardless of policy. These checks are not authentication.</p>
+<p><code>hostAccess</code> is gateway-only, not project-local or selected-remote-machine configuration. Its mode and list are one atomic setting, replacing lower-priority policy together. <code>PI_WEB_HOST_ACCESS</code> accepts the policy object as JSON, overrides saved config and deployment defaults, and makes the entire control read-only. Invalid policies fail validation rather than disabling protection. Reset removes the saved policy; the decision warning returns if no lower-priority policy remains.</p>
+<p>Both servers read their policy at startup. Restart web/API and, if running, the development UI server after changing <code>hostAccess</code>. A separate restart notice compares the effective policy with the running web/API snapshot, including host-list-only changes. It remains until they match; choosing <code>any</code> resolves the decision warning but does not erase a pending restart. The snapshot does not confirm the development server's running policy. No session-daemon restart is needed.</p>
+<h4 id="host-access-migration">Migration from the development-only setting</h4>
+<p>Stable releases before <code>hostAccess</code> used <code>allowedHosts</code> only for the development UI; production did not enforce that list. Until you choose <code>hostAccess</code>, that behavior is preserved without rewriting configuration or locking out production DNS access:</p>
+<ul>
+<li>Missing <code>allowedHosts</code> or <code>[]</code>: development allows local addresses.</li>
+<li>An <code>allowedHosts</code> array: development also allows those hostnames.</li>
+<li><code>allowedHosts: true</code>: development accepts any hostname.</li>
+</ul>
+<p>The new list editor starts from an existing legacy list but requires an explicit policy choice. Once <code>hostAccess</code> is supplied, both servers follow it and ignore legacy <code>allowedHosts</code>, including <code>PI_WEB_ALLOWED_HOSTS</code>. The legacy value remains available if the new policy is later removed. It is no longer a separate editable control in Settings.</p>
+<p>For environment-managed deployments, replace <code>PI_WEB_ALLOWED_HOSTS</code> with an explicit JSON <code>PI_WEB_HOST_ACCESS</code> policy and restart both relevant services. The old variable remains supported as a development-only fallback; by itself it never resolves the decision warning.</p>
 <h4 id="origin-checks">Origin checks</h4>
-<p>In every host-validation mode, all WebSocket upgrades and HTTP methods other than <code>GET</code>, <code>HEAD</code>, and <code>OPTIONS</code> pass an Origin guard:</p>
+<p>Regardless of the hostname policy, all WebSocket upgrades and HTTP methods other than <code>GET</code>, <code>HEAD</code>, and <code>OPTIONS</code> pass an Origin guard:</p>
 <ul>
 <li>A missing <code>Origin</code> is allowed for CLI and Fleet clients; Host syntax checks and any enabled hostname allowlist still apply.</li>
 <li>A present <code>Origin</code> must be a single well-formed HTTP(S) origin, not a URL with credentials, a path, query, or fragment. <code>null</code>, malformed origins, and origins with a different hostname or port are rejected with <code>403</code>.</li>
@@ -932,14 +940,14 @@ PI_WEB_PLUGINS='{"git":{"settings":{"workspaceDiscoveryHooks":false}}}'</code></
 <td>Port number</td>
 </tr>
 <tr>
-<th scope="row"><code>hostValidation</code></th>
-<td><code>PI_WEB_HOST_VALIDATION</code></td>
-<td><code>pending</code>, <code>enabled</code>, or <code>disabled</code>; default <code>pending</code>.</td>
+<th scope="row"><code>hostAccess</code></th>
+<td><code>PI_WEB_HOST_ACCESS</code></td>
+<td>Atomic JSON policy: <code>{"mode":"restricted","hosts":["pi.example.com"]}</code> or <code>{"mode":"any"}</code>. Absent until an explicit decision.</td>
 </tr>
 <tr>
 <th scope="row"><code>allowedHosts</code></th>
 <td><code>PI_WEB_ALLOWED_HOSTS</code></td>
-<td>JSON <code>true</code> or string array; legacy <code>true</code>/comma-separated hosts also accepted. Prefer an explicit host list; <code>true</code> is invalid with <code>enabled</code> and otherwise retains only its legacy Vite allowlist opt-out. Use <code>hostValidation: "disabled"</code> for an explicit web/API opt-out; the <a href="#origin-checks">Origin guard</a> remains active in every mode.</td>
+<td>Legacy development-only fallback when <code>hostAccess</code> is absent. JSON <code>true</code> or string array; legacy <code>true</code>/comma-separated hosts also accepted. See <a href="#host-access-migration">migration to the shared policy</a>. The <a href="#origin-checks">Origin guard</a> remains active regardless of policy.</td>
 </tr>
 <tr>
 <th scope="row"><code>maxUploadBytes</code></th>

@@ -194,9 +194,10 @@ export interface PiWebConfigValues {
   quietMode?: boolean;
   host?: string;
   port?: number;
+  /** Legacy Vite-only fallback, ignored when hostAccess is supplied. */
   allowedHosts?: string[] | true;
-  /** Gateway Host allowlist decision; omitted values inherit pending (off with a warning). */
-  hostValidation?: PiWebHostValidationMode;
+  /** Shared gateway/Vite Host policy; omission leaves the decision unset. */
+  hostAccess?: PiWebHostAccess;
   shortcuts?: PiWebShortcutConfig;
   plugins?: PiWebPluginConfigMap;
   /** Deployment base roots; combined with independently configurable path additions. */
@@ -388,15 +389,15 @@ export interface PiWebConfigEnvOverrides {
   askUser: boolean;
 }
 
-export type PiWebHostValidationMode = "pending" | "enabled" | "disabled";
+export type PiWebHostAccess = { mode: "restricted"; hosts: string[] } | { mode: "any" };
 
 export interface PiWebConfigResponse {
   path: string;
   exists: boolean;
   config: PiWebConfigValues;
   effectiveConfig: PiWebConfigValues;
-  /** Gateway web/API startup snapshot; omitted by older servers and selected-machine views. */
-  activeHostValidation?: PiWebHostValidationMode;
+  /** Gateway startup snapshot: null is undecided; omitted by older servers and selected-machine views. */
+  activeHostAccess?: PiWebHostAccess | null;
   envOverrides: PiWebConfigEnvOverrides;
   /** JSON-pointer setting identifiers mapped to controlling environment variable names. */
   enforcedSettings?: Record<string, string>;

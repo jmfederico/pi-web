@@ -340,17 +340,15 @@ async function discoverGatewayPlugins(app: PiWebApp): Promise<void> {
   await Reflect.apply(discover, app, []);
 }
 
-it.each(["enabled", "disabled"] as const)("keeps the gateway Host warning until %s is saved, and only requires restart for an enforcement change", async (choice) => {
-  config = { hostValidation: "pending" };
+it.each(["restricted", "any"] as const)("keeps the gateway decision warning until %s is saved, then requires a matching startup snapshot", async (choice) => {
+  config = {};
   vi.mocked(configApi.config).mockImplementation((machineId) => Promise.resolve(machineId === undefined
-    ? configResponse(config)
-    : { ...configResponse({ hostValidation: "disabled" }), activeHostValidation: "disabled" }));
-  if (choice === "disabled") {
-    vi.mocked(configApi.updateConfig).mockImplementation((update) => {
-      config = { ...config, ...update.set };
-      return Promise.resolve({ ...configResponse(config), activeHostValidation: "pending" });
-    });
-  }
+    ? { ...configResponse(config), activeHostAccess: null }
+    : { ...configResponse({ hostAccess: { mode: "any" } }), activeHostAccess: { mode: "any" } }));
+  vi.mocked(configApi.updateConfig).mockImplementation((update) => {
+    config = { ...config, ...update.set };
+    return Promise.resolve({ ...configResponse(config), activeHostAccess: null });
+  });
   saveNavigationPreferences({ pinnedIds: ["chat", "core:notices"], mobileCollapsed: false });
   const app = await mountApp();
   const state: unknown = Reflect.get(app, "state");
@@ -366,7 +364,7 @@ it.each(["enabled", "disabled"] as const)("keeps the gateway Host warning until 
   expect(workspace.panels.find((panel) => panel.id === "core:notices")?.badge?.()).toBe(1);
   const notice = () => workspace.shadowRoot?.querySelector("session-notices-panel")?.shadowRoot?.querySelector(".session-warning-message") ?? null;
   await vi.waitFor(() => { expect(notice()).not.toBeNull(); });
-  expect(app.shadowRoot?.querySelector("[data-host-validation-notice]")).toBeNull();
+  expect(app.shadowRoot?.querySelector("[data-host-access-notice]")).toBeNull();
   const dialog = settings(app);
   dialog.onClose?.();
   await app.updateComplete;
@@ -378,35 +376,31 @@ it.each(["enabled", "disabled"] as const)("keeps the gateway Host warning until 
   const panel = settings(app).shadowRoot?.querySelector<SettingsGeneralPanel>("settings-general-panel");
   if (panel == null) throw new Error("Expected General settings");
   await panel.updateComplete;
-  expect(panel.machineConfigResponse?.effectiveConfig.hostValidation).toBe("disabled");
-  expect(panel.configResponse?.effectiveConfig.hostValidation).toBe("pending");
-  const mode = panel.shadowRoot?.querySelector<HTMLSelectElement>("#host-validation");
-  if (mode == null) throw new Error("Expected Host validation selector");
+  expect(panel.machineConfigResponse?.effectiveConfig.hostAccess).toEqual({ mode: "any" });
+  expect(panel.configResponse?.effectiveConfig.hostAccess).toBeUndefined();
+  const mode = panel.shadowRoot?.querySelector<HTMLSelectElement>("#host-access");
+  if (mode == null) throw new Error("Expected hostname policy selector");
   await vi.waitFor(() => { expect(panel.shadowRoot?.activeElement).toBe(mode); });
   expect(notice()).not.toBeNull();
-  expect(panel.shadowRoot?.querySelector("[data-host-validation-notice]")).toBeNull();
+  expect(panel.shadowRoot?.querySelector("[data-host-access-notice]")).toBeNull();
   mode.value = choice;
   mode.dispatchEvent(new Event("change", { bubbles: true }));
   await panel.updateComplete;
   expect(notice()).not.toBeNull();
   panel.shadowRoot?.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-  await vi.waitFor(() => { expect(config.hostValidation).toBe(choice); });
+  await vi.waitFor(() => { expect(config.hostAccess?.mode).toBe(choice); });
   await app.updateComplete;
-  if (choice === "disabled") {
-    // Pending and disabled both leave enforcement off; the saved decision is enough.
-    await vi.waitFor(() => { expect(notice()).toBeNull(); });
-    return;
-  }
-  // No running snapshot is available: saving must not imply enforcement.
+  // Even an explicit opt-out needs a restart: the development UI may still restrict hosts.
   expect(notice()).not.toBeNull();
-  vi.mocked(configApi.config).mockResolvedValue({ ...configResponse(config), activeHostValidation: "enabled" });
+  vi.mocked(configApi.config).mockResolvedValue({ ...configResponse(config), activeHostAccess: config.hostAccess ?? null });
   await panel.onReload?.();
   await vi.waitFor(() => { expect(notice()).toBeNull(); });
 });
 
 it.each(["closed Settings read", "app refresh read", "closed Settings machine save"] as const)("does not restore a resolved Host notice when an older %s completes after a Settings save", async (source) => {
-  config = { hostValidation: "pending" };
-  const gatewayResponse = () => ({ ...configResponse(config), activeHostValidation: "pending" as const });
+  config = {};
+  // A reset policy can be undecided while the startup policy is still explicit.
+  const gatewayResponse = () => ({ ...configResponse(config), activeHostAccess: { mode: "any" as const } });
   vi.mocked(configApi.config).mockImplementation((machineId) => Promise.resolve(machineId === undefined ? gatewayResponse() : configResponse({})));
   vi.mocked(configApi.updateConfig).mockImplementation((update) => {
     config = { ...config, ...update.set };
@@ -416,7 +410,7 @@ it.each(["closed Settings read", "app refresh read", "closed Settings machine sa
   const app = await mountApp();
   const workspace = app.shadowRoot?.querySelector<WorkspacePanel>("workspace-panel");
   if (!workspace) throw new Error("Expected application panels");
-  const notice = () => workspace.shadowRoot?.querySelector("session-notices-panel")?.shadowRoot?.querySelector('[data-notice-id="gateway-host-validation"]') ?? null;
+  const notice = () => workspace.shadowRoot?.querySelector("session-notices-panel")?.shadowRoot?.querySelector('[data-notice-id="gateway-host-access"]') ?? null;
   await vi.waitFor(() => { expect(notice()).not.toBeNull(); });
 
   const originalDialog = settings(app);
@@ -465,17 +459,17 @@ it.each(["closed Settings read", "app refresh read", "closed Settings machine sa
   const panel = settings(app).shadowRoot?.querySelector<SettingsGeneralPanel>("settings-general-panel");
   if (!panel) throw new Error("Expected reopened General settings");
   await panel.updateComplete;
-  const mode = panel.shadowRoot?.querySelector<HTMLSelectElement>("#host-validation");
-  if (!mode) throw new Error("Expected Host validation selector");
-  mode.value = "disabled";
+  const mode = panel.shadowRoot?.querySelector<HTMLSelectElement>("#host-access");
+  if (!mode) throw new Error("Expected hostname policy selector");
+  mode.value = "any";
   mode.dispatchEvent(new Event("change", { bubbles: true }));
   await panel.updateComplete;
   const form = mode.form;
   if (!form) throw new Error("Expected gateway config form");
   form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
   await vi.waitFor(() => {
-    expect(configApi.updateConfig).toHaveBeenCalledWith(expect.objectContaining({ set: { hostValidation: "disabled" } }));
-    expect(panel.configResponse?.effectiveConfig.hostValidation).toBe("disabled");
+    expect(configApi.updateConfig).toHaveBeenCalledWith(expect.objectContaining({ set: { hostAccess: { mode: "any" } } }));
+    expect(panel.configResponse?.effectiveConfig.hostAccess).toEqual({ mode: "any" });
     expect(notice()).toBeNull();
   });
 
@@ -487,12 +481,12 @@ it.each(["closed Settings read", "app refresh read", "closed Settings machine sa
   await noticesPanel?.updateComplete;
   expect(workspace.panels.some((entry) => entry.id === "core:notices")).toBe(false);
   expect(notice()).toBeNull();
-  expect(panel.configResponse?.effectiveConfig.hostValidation).toBe("disabled");
+  expect(panel.configResponse?.effectiveConfig.hostAccess).toEqual({ mode: "any" });
 });
 
 it.each([false, true])("refreshes an acknowledged save after its dialog closes without a newer save (reopened with older read=%s)", async (reopen) => {
-  config = { hostValidation: "pending" };
-  const gatewayResponse = () => ({ ...configResponse(config), activeHostValidation: "pending" as const });
+  config = {};
+  const gatewayResponse = () => ({ ...configResponse(config), activeHostAccess: { mode: "any" as const } });
   vi.mocked(configApi.config).mockImplementation((machineId) => Promise.resolve(machineId === undefined ? gatewayResponse() : configResponse({})));
   let completeSave!: () => void;
   const saving = new Promise<void>((resolve) => { completeSave = resolve; });
@@ -505,12 +499,12 @@ it.each([false, true])("refreshes an acknowledged save after its dialog closes w
   const app = await mountApp();
   const workspace = app.shadowRoot?.querySelector<WorkspacePanel>("workspace-panel");
   if (!workspace) throw new Error("Expected application panels");
-  const notice = () => workspace.shadowRoot?.querySelector("session-notices-panel")?.shadowRoot?.querySelector('[data-notice-id="gateway-host-validation"]') ?? null;
+  const notice = () => workspace.shadowRoot?.querySelector("session-notices-panel")?.shadowRoot?.querySelector('[data-notice-id="gateway-host-access"]') ?? null;
   await vi.waitFor(() => { expect(notice()).not.toBeNull(); });
   const originalDialog = settings(app);
   const originalPanel = originalDialog.shadowRoot?.querySelector<SettingsGeneralPanel>("settings-general-panel");
   if (!originalPanel?.onSave) throw new Error("Expected gateway save callback");
-  const save = originalPanel.onSave({ hostValidation: "disabled" });
+  const save = originalPanel.onSave({ hostAccess: { mode: "any" } });
   originalDialog.onClose?.();
   await app.updateComplete;
   expect(originalDialog.isConnected).toBe(false);
@@ -539,7 +533,7 @@ it.each([false, true])("refreshes an acknowledged save after its dialog closes w
   await save;
   await vi.waitFor(() => {
     expect(notice()).toBeNull();
-    if (livePanel) expect(livePanel.configResponse?.effectiveConfig.hostValidation).toBe("disabled");
+    if (livePanel) expect(livePanel.configResponse?.effectiveConfig.hostAccess).toEqual({ mode: "any" });
   });
   expect(configApi.updateConfig).toHaveBeenCalledOnce();
   releaseOlderRead?.();
@@ -549,7 +543,7 @@ it.each([false, true])("refreshes an acknowledged save after its dialog closes w
   await workspace.shadowRoot?.querySelector("session-notices-panel")?.updateComplete;
   expect(workspace.panels.some((entry) => entry.id === "core:notices")).toBe(false);
   expect(notice()).toBeNull();
-  if (livePanel) expect(livePanel.configResponse?.effectiveConfig.hostValidation).toBe("disabled");
+  if (livePanel) expect(livePanel.configResponse?.effectiveConfig.hostAccess).toEqual({ mode: "any" });
   else expect(app.shadowRoot?.querySelector("settings-dialog")).toBeNull();
 });
 

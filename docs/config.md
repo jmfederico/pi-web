@@ -14,7 +14,7 @@ PI WEB separates deployment defaults from writable overrides:
 
 For managed deployments, mount the defaults file read-only and set `PI_WEB_DEFAULTS_CONFIG` in both the web/API and session-daemon environments. Keep `PI_WEB_CONFIG` writable and separate. Deployment defaults supply starting values, not locks; use environment overrides for enforced policy.
 
-Each PI WEB machine has its own config. When using Fleet/machine federation, Settings uses the selected machine for config that affects work running there: session daemon tools, desired PI WEB plugin enablement/settings, external path access, and upload defaults. Gateway/browser-only settings stay local to the gateway: the default theme, keyboard shortcuts, remote machine registry/tokens, and gateway host/port/host-validation/allowed-hosts.
+Each PI WEB machine has its own config. When using Fleet/machine federation, Settings uses the selected machine for config that affects work running there: session daemon tools, desired PI WEB plugin enablement/settings, external path access, and upload defaults. Gateway/browser-only settings stay local to the gateway: the default theme, keyboard shortcuts, remote machine registry/tokens, and gateway bind address, port, and hostname policy.
 
 Pi package settings are separate from PI WEB config. They live in Pi's package-manager settings on the target machine and are managed by Pi (`pi install`, `pi remove`, `pi update`) or **Settings → Pi packages**. In a federated setup, **Settings → Pi packages** targets the currently selected machine. The PI WEB `plugins` config key controls desired enablement/settings for discovered browser-only, server-only, and dual-entry PI WEB plugins on that machine; it does not install, remove, or update Pi packages.
 
@@ -60,41 +60,49 @@ For a nested deployment, redirect the slashless prefix to the trailing-slash URL
 
 ## Browser request security
 
-The gateway's `hostValidation` setting has three explicit values:
+Choose one gateway `hostAccess` policy for both production and development in **Settings → General → Allowed hostnames**:
 
-| Mode | Web/API hostname allowlist | UI decision warning |
+| Policy | Behavior | UI decision warning |
 | --- | --- | --- |
-| `pending` (default) | Off | Persistent until you choose enabled or disabled |
-| `enabled` | Enforces `allowedHosts` for every route and WebSocket upgrade, including the production UI | Decision resolved |
-| `disabled` | Off by explicit choice | Dismissed |
+| No effective `hostAccess` (default) | Web/API hostname allowlist off; development UI keeps its legacy `allowedHosts` behavior | Persistent until you choose a policy |
+| `{ "mode": "restricted", "hosts": ["pi.example.com"] }` | Both servers allow local addresses and listed hostnames | Decision resolved |
+| `{ "mode": "any" }` | Both servers accept any hostname | Dismissed by explicit choice |
 
-**New and existing installations default to `pending`.** New example configs include `"hostValidation": "pending"`; a missing saved key inherits lower-priority config, then the built-in `pending` default. An upgrade does not turn on hostname enforcement for the production/default API or lock out custom DNS deployments. Choose whether to enable protection before enforcement begins.
+**The warning applies to new and existing installations.** Example configs leave `hostAccess` absent. A missing saved value inherits deployment defaults or an enforced environment policy; without either, no decision has been made. The **Notices** panel keeps that decision visible even without a selected workspace or session, and opens the hostname control directly. Opening Settings, changing an unrelated setting, or retaining legacy `allowedHosts` does not dismiss it. Either explicit policy resolves the decision, including a policy supplied through the environment.
 
-The existing **Notices** panel keeps the gateway decision visible even without a selected workspace or session. Its action opens **General → Host validation** directly. Opening Settings does not dismiss the notice; saving a decision resolves it, unless an enforcement change still requires a web/API restart.
-
-In both `pending` and `disabled`, PI WEB remains without application-level DNS-rebinding protection. The Origin guard stays active in **all three modes**, and malformed `Host` headers are always rejected. Origin checks are not authentication.
-
-To enable protection, first include every public DNS name you use in `allowedHosts`, then set `hostValidation` to `enabled`, for example:
+To restrict access, include every public DNS name you use:
 
 ```json
-{ "hostValidation": "enabled", "allowedHosts": ["pi.example.com"] }
+{ "hostAccess": { "mode": "restricted", "hosts": ["pi.example.com"] } }
 ```
 
-When enabled, unlisted hostnames receive `403`. Matching rules are:
+Unlisted hostnames receive `403`. Matching rules are:
 
-- The default `allowedHosts: []` allows `localhost`, subdomains of `.localhost`, and literal IPv4/IPv6 addresses.
-- An exact hostname such as `pi.example.com` allows only that hostname. A Vite-style leading-dot entry such as `.example.com` allows both `example.com` and its subdomains. Use hostnames, not URLs or host:port pairs.
-- `hostValidation: "enabled"` with `allowedHosts: true` is invalid. To turn off application hostname enforcement explicitly, choose `hostValidation: "disabled"` instead.
+- Localhost, subdomains of `.localhost`, and literal IPv4/IPv6 addresses remain allowed, including with an empty `hosts` list.
+- An exact hostname such as `pi.example.com` allows only that hostname. A leading-dot entry such as `.example.com` allows both `example.com` and its subdomains. Use hostnames, not URLs or host:port pairs.
+- To accept any hostname explicitly, use `{ "hostAccess": { "mode": "any" } }`. This disables hostname restrictions and application-level DNS-rebinding protection.
 
-These settings are gateway-only, not project-local or selected-remote-machine settings. `PI_WEB_HOST_VALIDATION` accepts `pending`, `enabled`, or `disabled`; it overrides saved config and deployment defaults. `PI_WEB_ALLOWED_HOSTS` independently overrides the list. Environment-enforced settings are read-only in the UI.
+The web/API also lacks that protection while no policy is chosen. Malformed `Host` headers are rejected and the Origin guard stays active regardless of the policy. These checks are not authentication.
 
-The web/API process snapshots both settings at startup. Restart web/API after changing `hostValidation` or `allowedHosts`; the UI reports a restart requirement when enabling or disabling enforcement would change the running behavior. Choosing `disabled` while enforcement is already off clears the decision warning immediately. The UI does not detect allowed-hosts-only changes. No session-daemon restart is needed.
+`hostAccess` is gateway-only, not project-local or selected-remote-machine configuration. It is one atomic setting: its mode and list replace lower-priority policy together. `PI_WEB_HOST_ACCESS` accepts the policy object as JSON, for example `PI_WEB_HOST_ACCESS='{"mode":"restricted","hosts":["pi.example.com"]}'`. It overrides saved config and deployment defaults and makes the entire control read-only. Invalid policies fail validation rather than disabling protection. Reset removes the saved policy; the decision warning returns if no lower-priority policy remains.
 
-**Development UI:** Vite's existing `allowedHosts` enforcement remains independent. Neither `pending` nor `disabled` turns off Vite's built-in host policy. Legacy `allowedHosts: true` remains accepted to disable Vite's allowlist when `hostValidation` is not `enabled`. Restart Vite after changing its allowed hosts.
+Both servers read their policy at startup. Restart web/API and, if running, the development UI server after changing `hostAccess`. A separate restart notice compares the saved effective policy with the running web/API snapshot, including host-list-only changes. It remains until they match; choosing `any` resolves the decision warning but does not erase a pending restart. The snapshot does not confirm the development server's running policy. No session-daemon restart is needed.
+
+### Migration from the development-only setting
+
+Stable releases before `hostAccess` used `allowedHosts` only for the development UI; production did not enforce that list. Until you choose `hostAccess`, that behavior is preserved without rewriting configuration or locking out existing production DNS access:
+
+- Missing `allowedHosts` or `[]`: development allows local addresses.
+- An `allowedHosts` array: development also allows those hostnames.
+- `allowedHosts: true`: development accepts any hostname.
+
+The new list editor starts from an existing legacy list, but requires an explicit policy choice. Once `hostAccess` is supplied, both servers follow it and ignore legacy `allowedHosts`, including `PI_WEB_ALLOWED_HOSTS`. The legacy value remains available if the new policy is later removed. It is no longer a separate editable control in Settings.
+
+For environment-managed deployments, replace `PI_WEB_ALLOWED_HOSTS` with an explicit JSON `PI_WEB_HOST_ACCESS` policy and restart both relevant services. The old variable remains supported as a development-only fallback; by itself it never resolves the decision warning.
 
 ### Origin checks
 
-In every host-validation mode, all WebSocket upgrades and HTTP methods other than `GET`, `HEAD`, and `OPTIONS` pass an Origin guard:
+Regardless of the hostname policy, all WebSocket upgrades and HTTP methods other than `GET`, `HEAD`, and `OPTIONS` pass an Origin guard:
 
 - A missing `Origin` is allowed for CLI and Fleet clients; Host syntax checks and any enabled hostname allowlist still apply.
 - A present `Origin` must be a single well-formed HTTP(S) origin, not a URL with credentials, a path, query, or fragment. `null`, malformed origins, and origins with a different hostname or port are rejected with `403`.
@@ -133,7 +141,7 @@ PI_WEB_DEFAULT_LOCALIZATION='{"timeZone":"UTC"}'
 PI_WEB_PLUGINS='{"git":{"settings":{"workspaceDiscoveryHooks":false}}}'
 ```
 
-Container JSON variables keep their existing names: `PI_WEB_UPLOADS`, `PI_WEB_ATTACHMENTS`, `PI_WEB_SESSION_NAMING`, `PI_WEB_SESSION_ARCHIVE`, `PI_WEB_PATH_ACCESS`, and `PI_WEB_DEFAULT_LOCALIZATION`. Only supplied namespace leaves are enforced, including `pathAccess.allowedPaths` and plugin leaves; `{}` enforces none. Atomic settings lock the whole value. `PI_WEB_PORT` retains the `PORT` fallback; a nonempty `PI_WEB_SESSION_ARCHIVE_DIR` alias wins over `PI_WEB_SESSION_ARCHIVE` JSON. `PI_WEB_ALLOWED_HOSTS` accepts JSON `true` or a string array, plus legacy `true`/comma-separated hosts. `PI_WEB_HOST_VALIDATION` accepts `pending`, `enabled`, or `disabled`. Prefer an explicit host list; `true` is invalid with `enabled` and otherwise retains only its legacy Vite allowlist opt-out. Use `hostValidation: "disabled"` for an explicit web/API opt-out; the [Origin guard](#origin-checks) remains active in every mode.
+Container JSON variables keep their existing names: `PI_WEB_UPLOADS`, `PI_WEB_ATTACHMENTS`, `PI_WEB_SESSION_NAMING`, `PI_WEB_SESSION_ARCHIVE`, `PI_WEB_PATH_ACCESS`, and `PI_WEB_DEFAULT_LOCALIZATION`. Only supplied namespace leaves are enforced, including `pathAccess.allowedPaths` and plugin leaves; `{}` enforces none. Atomic settings lock the whole value. `PI_WEB_PORT` retains the `PORT` fallback; a nonempty `PI_WEB_SESSION_ARCHIVE_DIR` alias wins over `PI_WEB_SESSION_ARCHIVE` JSON. `PI_WEB_HOST_ACCESS` accepts one atomic JSON policy: `{"mode":"restricted","hosts":["pi.example.com"]}` or `{"mode":"any"}`. Legacy `PI_WEB_ALLOWED_HOSTS` accepts JSON `true` or a string array, plus legacy `true`/comma-separated hosts; it controls only the development UI when no `hostAccess` policy is supplied. See [migration](#migration-from-the-development-only-setting). The [Origin guard](#origin-checks) remains active regardless of hostname policy.
 
 Boolean environment inputs accept only `true`/`false` (case-insensitive) or `1`/`0`. Invalid supplied policy values fail startup instead of being ignored. Unknown fields in declared core containers are errors, including misspellings in `pathAccess`, `uploads`, and `attachments`. Plugin environment envelopes accept only `enabled` and `settings`; keys inside `settings` remain plugin-owned. Unset a variable to remove enforcement; empty strings are not a general reset syntax. Legacy empty host, port, allowed-hosts, upload-limit, and archive-directory overrides remain ignored. Runtime-only variables have their own contracts; see offline flags below. Markers such as `PI_WEB_SESSION` are not config policy.
 
@@ -159,7 +167,7 @@ Use `PATCH /api/config` for explicit updates, or `PATCH /api/machines/<machineId
 Process restarts depend on the key:
 
 - `host` / `port`: restart the gateway web/API service or process.
-- `hostValidation` / `allowedHosts`: restart web/API to replace its startup policy; the UI flags pending enforcement changes as requiring restart, but does not detect allowed-hosts-only changes. Choosing `disabled` while enforcement is already off clears the decision warning without a restart. Also restart Vite after changing `allowedHosts` for the development UI. No session-daemon restart is needed.
+- `hostAccess`: restart web/API and, if running, the development UI server. The UI compares the effective policy, including the host list, with the running web/API snapshot; it cannot confirm the development server's running policy. Legacy `allowedHosts` changes require only a development UI restart and have no effect while `hostAccess` is supplied. No session-daemon restart is needed.
 - `maxUploadBytes`: restart both the web/API process and the session daemon on that machine.
 - `spawnSessions` / `subsessions` / `sessionMessages` / `askUser` / `extensionDialogsTimeoutMs` / `environmentFacts`: restart the session daemon on that machine.
 - `sessionArchive.directory`: restart the session daemon on that machine; changes only the destination for new archives.
@@ -290,8 +298,8 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 | Machine name | `installationName` | `PI_WEB_INSTALLATION_NAME` | Global | Not supported locally | Config refresh; reload other windows |
 | Web/API bind host | `host` | `PI_WEB_HOST` | Global | Not supported locally | Restart web/API |
 | Web/API port | `port` | `PI_WEB_PORT`, `PORT` | Global | Not supported locally | Restart web/API |
-| Web/API host validation | `hostValidation` | `PI_WEB_HOST_VALIDATION` | Gateway only | Not supported locally; default `pending` | Restart web/API |
-| Web/API and dev UI allowed hosts | `allowedHosts` | `PI_WEB_ALLOWED_HOSTS` | Gateway only | Not supported locally; web/API enforces only when enabled | Restart web/API; also Vite for dev UI |
+| Shared hostname policy | `hostAccess` | `PI_WEB_HOST_ACCESS` | Gateway only | Not supported locally; absent until an explicit decision | Restart web/API and development UI if running |
+| Legacy dev UI allowed hosts | `allowedHosts` | `PI_WEB_ALLOWED_HOSTS` | Gateway only | Not supported locally; ignored when `hostAccess` is supplied | Restart development UI |
 | Base filesystem roots | `basePaths` | `PI_WEB_BASE_PATHS` (JSON array) | Global | Not supported locally; default `[]` | Next file request |
 | Additional filesystem roots | `pathAccess.allowedPaths` | `PI_WEB_PATH_ACCESS` (JSON object) | Global + project | **Adds** after base roots; global then project, deduplicated; env replaces effective additions | Next file request; refresh existing views if needed |
 | Manual file upload default folder | `uploads.defaultFolder` | `PI_WEB_UPLOADS` (JSON object) | Global + project | **Overrides**: project value wins for workspaces in that project; otherwise global/default applies | New Upload dialogs and direct drag/drop batches after config/workspace refresh |
@@ -380,7 +388,7 @@ Accepted root forms:
 
 Roots must be existing directories. Symlink escapes outside allowed roots are rejected.
 
-In **Settings → General**, external filesystem roots are saved on the selected machine. Gateway host, port, host-validation, and allowed-hosts fields stay on the gateway config.
+In **Settings → General**, external filesystem roots are saved on the selected machine. Gateway bind address, port, and hostname policy stay on the gateway config.
 
 This is not a sandbox for the underlying Pi Coding Agent or your OS user. It only controls PI WEB UI/API file exposure outside a workspace.
 

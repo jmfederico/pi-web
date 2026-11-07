@@ -121,7 +121,7 @@ import { renderPanelToggleButton } from "./appShell/panelToggleButton";
 import "./appShell/AppRefreshControl";
 import "./NotificationArea";
 import { deprecatedAgentInputsBanner, deprecatedAgentInputsWarnings } from "./deprecatedAgentInputsBanner";
-import { hostValidationNotices } from "./hostValidationNotices";
+import { hostAccessNotices } from "./hostAccessNotices";
 import { appStyles } from "./shared";
 
 
@@ -413,7 +413,7 @@ export class PiWebApp extends LitElement {
     getSelection: () => publicPluginSelection(this.state),
   });
   private readonly builtInPluginsReady = this.plugins.registerBatch([
-    { id: "core", plugin: createCorePlugin(() => hostValidationNotices(this.gatewayConfig, () => { this.openSettings("general", "host-validation"); })) },
+    { id: "core", plugin: createCorePlugin(() => hostAccessNotices(this.gatewayConfig, () => { this.openSettings("general", "host-access"); })) },
     { id: "themes", plugin: themePackPlugin },
   ]).then(({ failures }) => {
     if (failures.length > 0) throw failures[0]?.error;

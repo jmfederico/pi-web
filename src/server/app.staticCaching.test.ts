@@ -23,7 +23,7 @@ describe("client static caching", () => {
   it("guards actual static files and the SPA fallback with the effective startup host policy", async () => {
     const app = await buildApp({
       clientDist, logger: false,
-      config: createFilePiWebConfigService({ env: { PI_WEB_CONFIG: join(clientDist, "absent-config.json"), PI_WEB_ALLOWED_HOSTS: "public.example.test", PI_WEB_HOST_VALIDATION: "enabled" } }),
+      config: createFilePiWebConfigService({ env: { PI_WEB_CONFIG: join(clientDist, "absent-config.json"), PI_WEB_HOST_ACCESS: JSON.stringify({ mode: "restricted", hosts: ["public.example.test"] }) } }),
     });
     try {
       for (const url of ["/", "/assets/index-Abc123_x.js", "/robots.txt", "/sessions/example"]) {

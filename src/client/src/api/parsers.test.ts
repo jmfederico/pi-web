@@ -98,16 +98,20 @@ describe("API parsers", () => {
 
   it("preserves explicit Host decisions and active runtime state without inventing choices for older servers", () => {
     const response = { path: "config.json", exists: true, config: {}, effectiveConfig: {}, envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false } };
-    expect(parsePiWebConfigResponse(response)).not.toHaveProperty("activeHostValidation");
-    for (const hostValidation of ["pending", "enabled", "disabled"] as const) {
+    expect(parsePiWebConfigResponse(response)).not.toHaveProperty("activeHostAccess");
+    expect(parsePiWebConfigResponse({ ...response, activeHostAccess: null }).activeHostAccess).toBeNull();
+    for (const hostAccess of [{ mode: "restricted", hosts: [] }, { mode: "restricted", hosts: ["gateway.local"] }, { mode: "any" }]) {
       for (const field of ["config", "effectiveConfig", "defaultsConfig"] as const) {
-        expect(parsePiWebConfigResponse({ ...response, [field]: { hostValidation } })[field]).toEqual({ hostValidation });
-        expect(() => parsePiWebConfigResponse({ ...response, [field]: { hostValidation: false } })).toThrow("hostValidation");
-        expect(() => parsePiWebConfigResponse({ ...response, [field]: { hostValidation: "enabled", allowedHosts: true } })).toThrow("allowedHosts list");
+        expect(parsePiWebConfigResponse({ ...response, [field]: { hostAccess, allowedHosts: true } })[field]).toEqual({ hostAccess, allowedHosts: true });
       }
-      expect(parsePiWebConfigResponse({ ...response, activeHostValidation: hostValidation }).activeHostValidation).toBe(hostValidation);
+      expect(parsePiWebConfigResponse({ ...response, activeHostAccess: hostAccess }).activeHostAccess).toEqual(hostAccess);
     }
-    expect(() => parsePiWebConfigResponse({ ...response, activeHostValidation: "unknown" })).toThrow("activeHostValidation");
+    // The shared validator owns the schema matrix; prove each response boundary uses it.
+    for (const field of ["config", "effectiveConfig", "defaultsConfig"] as const) {
+      expect(() => parsePiWebConfigResponse({ ...response, [field]: { hostAccess: null } })).toThrow("hostAccess");
+      expect(() => parsePiWebConfigResponse({ ...response, [field]: { hostAccess: { mode: "restricted" } } })).toThrow("hostAccess");
+    }
+    expect(() => parsePiWebConfigResponse({ ...response, activeHostAccess: { mode: "any", hosts: [] } })).toThrow("activeHostAccess");
   });
 
   it("parses and validates installation identity in config responses", () => {

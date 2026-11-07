@@ -30,9 +30,8 @@ describe("settings config drafts", () => {
     expect(gatewayServerDraftFromConfig(config)).toEqual({
       host: "0.0.0.0",
       port: "8504",
-      hostValidation: "pending",
-      allowedHostsMode: "list",
-      allowedHostsText: "example.local\n192.168.1.20",
+      hostAccessMode: "",
+      hostAccessText: "example.local\n192.168.1.20",
     });
     expect(machineAccessDraftFromConfig(config)).toEqual({
       installationName: "",
@@ -40,16 +39,17 @@ describe("settings config drafts", () => {
       uploadDefaultFolder: "manual/uploads",
       attachmentDefaultFolder: "saved/attachments",
     });
-    expect(gatewayServerDraftFromConfig({ allowedHosts: true }).allowedHostsMode).toBe("all");
+    expect(gatewayServerDraftFromConfig({ allowedHosts: true }).hostAccessMode).toBe("");
+    expect(gatewayServerConfigFromDraft(gatewayServerDraftFromConfig({ host: "gateway.local", allowedHosts: ["legacy.local"] }))).toEqual({ host: "gateway.local" });
+    expect(gatewayServerDraftFromConfig({ hostAccess: { mode: "any" }, allowedHosts: ["ignored.local"] }).hostAccessText).toBe("");
   });
 
   it("builds gateway server saves without dropping preserved config values", () => {
     expect(gatewayServerConfigFromDraft({
       host: " gateway.local ",
       port: "9000",
-      hostValidation: "disabled",
-      allowedHostsMode: "all",
-      allowedHostsText: "ignored.local",
+      hostAccessMode: "any",
+      hostAccessText: "ignored.local",
     }, {
       shortcuts: { "core:view.chat": "mod+1" },
       plugins: { info: { enabled: false } },
@@ -63,8 +63,7 @@ describe("settings config drafts", () => {
     })).toEqual({
       host: "gateway.local",
       port: 9000,
-      hostValidation: "disabled",
-      allowedHosts: true,
+      hostAccess: { mode: "any" },
       shortcuts: { "core:view.chat": "mod+1" },
       plugins: { info: { enabled: false } },
       pathAccess: { allowedPaths: ["/old"] },
@@ -79,10 +78,9 @@ describe("settings config drafts", () => {
     expect(gatewayServerConfigFromDraft({
       host: "",
       port: "",
-      hostValidation: "enabled",
-      allowedHostsMode: "list",
-      allowedHostsText: "example.local, 192.168.1.20\n",
-    })).toEqual({ hostValidation: "enabled", allowedHosts: ["example.local", "192.168.1.20"] });
+      hostAccessMode: "restricted",
+      hostAccessText: "example.local, 192.168.1.20\n",
+    })).toEqual({ hostAccess: { mode: "restricted", hosts: ["example.local", "192.168.1.20"] } });
   });
 
   it("preserves installation identity when saving gateway fields", () => {

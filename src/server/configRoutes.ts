@@ -1,8 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { loadPiWebConfig, overlayPiWebConfig, piWebConfigEnforcedSettings, piWebConfigSources, parsePiWebConfig, resolveEffectivePiWebConfig, savePiWebConfig, type AgentPathHost, type LoadOptions, type PiWebConfig } from "../config.js";
 import { CONFIG_KEYS, parseConfigPointer, preserveEnforcedConfigOverrides, removeConfigOverrides, validateConfigUpdate, type PiWebConfigUpdate } from "./configUpdates.js";
-import { requireHostValidation } from "../shared/hostValidation.js";
-import type { PiWebConfigEnvOverrides, PiWebConfigResponse, PiWebConfigValues, PiWebHostValidationMode } from "../shared/apiTypes.js";
+import { requireHostAccess } from "../shared/hostAccess.js";
+import type { PiWebConfigEnvOverrides, PiWebConfigResponse, PiWebConfigValues, PiWebHostAccess } from "../shared/apiTypes.js";
 
 export interface PiWebConfigService {
   read: () => PiWebConfigResponse | Promise<PiWebConfigResponse>;
@@ -69,9 +69,9 @@ export function currentPiWebConfigResponse(options: LoadOptions = {}): PiWebConf
   };
 }
 
-export function registerConfigRoutes(app: FastifyInstance, service: PiWebConfigService = createFilePiWebConfigService(), activeHostValidation?: PiWebHostValidationMode): void {
+export function registerConfigRoutes(app: FastifyInstance, service: PiWebConfigService = createFilePiWebConfigService(), activeHostAccess?: PiWebHostAccess | null): void {
   const withRuntime = (response: PiWebConfigResponse): PiWebConfigResponse => ({
-    ...response, ...(activeHostValidation === undefined ? {} : { activeHostValidation }),
+    ...response, ...(activeHostAccess === undefined ? {} : { activeHostAccess }),
   });
   app.get("/api/config", async (_request, reply) => {
     try {
@@ -206,7 +206,7 @@ export function selectedMachineConfigResponse(response: PiWebConfigResponse): Pi
     ...(response.enforcedSettings === undefined ? {} : { enforcedSettings: selectedMachineSources(response.enforcedSettings) }),
     ...(response.configSources === undefined ? {} : { configSources: selectedMachineSources(response.configSources) }),
   };
-  delete selected.activeHostValidation;
+  delete selected.activeHostAccess;
   return selected;
 }
 
@@ -217,7 +217,7 @@ export function parsePiWebConfigResponseBody(value: unknown, source = "PI WEB co
     exists: requireResponseBoolean(record, "exists", source),
     config: parseConfigRequest(record["config"], "portable"),
     effectiveConfig: parseConfigRequest(record["effectiveConfig"], "portable"),
-    ...(record["activeHostValidation"] === undefined ? {} : { activeHostValidation: requireHostValidation(record["activeHostValidation"], `${source} activeHostValidation`) }),
+    ...(record["activeHostAccess"] === undefined ? {} : { activeHostAccess: record["activeHostAccess"] === null ? null : requireHostAccess(record["activeHostAccess"], `${source} activeHostAccess`) }),
     envOverrides: parsePiWebConfigEnvOverridesResponse(record["envOverrides"], source),
     ...(record["enforcedSettings"] === undefined ? {} : { enforcedSettings: parseSourceMap(record["enforcedSettings"], source) }),
     ...(record["configSources"] === undefined ? {} : { configSources: parseSourceMap(record["configSources"], source) }),

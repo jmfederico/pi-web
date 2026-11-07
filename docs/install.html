@@ -261,19 +261,17 @@
             <section id="reverse-proxy-prefix">
               <h2>Reverse proxy root and path-prefix deployments</h2>
               <div class="callout">
-                New and existing installations default to <code>hostValidation: "pending"</code>: web/API hostname
-                enforcement is off, so upgrading does not lock out custom DNS access to the production/default API.
-                A persistent notice in the Notices panel asks you to choose and opens the Host validation setting directly. To enable protection, add every public hostname to
-                <code>allowedHosts</code> and set <code>hostValidation</code> to <code>enabled</code>, for example
-                <code>{ "hostValidation": "enabled", "allowedHosts": ["pi.example.com"] }</code> in gateway global config.
-                Choose <code>disabled</code> to leave enforcement off explicitly and dismiss the decision warning.
-                Both off modes lack application-level DNS-rebinding protection; malformed Host rejection and the
-                Origin guard remain active in every mode.
-                Changes to either setting require a web/API restart; the UI flags pending enforcement changes,
-                but does not detect allowed-hosts-only changes.
-                Vite's development UI host policy remains independent; restart Vite after changing its allowed hosts.
-                No session-daemon restart is needed.
-                See <a href="config#browser-request-security">host and Origin validation</a> for matching rules and environment overrides.
+                Choose <strong>Allowed hostnames</strong> in General settings to apply one hostname policy in production
+                and development. For example, save
+                <code>{ "hostAccess": { "mode": "restricted", "hosts": ["pi.example.com"] } }</code>
+                in gateway global config, including every public hostname you use. Choosing <code>{"mode":"any"}</code>
+                instead disables hostname restrictions and application-level DNS-rebinding protection.
+                New and existing installations keep a decision warning until an explicit policy is supplied.
+                Until then, production remains unrestricted and development retains its legacy host list, avoiding
+                an upgrade lockout. The Origin guard remains active regardless of policy.
+                Restart web/API and the development UI server if running after changing the policy; no session-daemon
+                restart is needed. See <a href="config#browser-request-security">host and Origin validation</a>
+                for matching rules, environment overrides, migration, and running-policy status.
               </div>
               <p>
                 For both root and nested deployments, the proxy owns TLS and must authenticate HTTP and WebSocket
@@ -416,7 +414,6 @@ server {
                 <pre id="config-example"><code>{
   "host": "127.0.0.1",
   "port": 8504,
-  "hostValidation": "pending",
   "pathAccess": {
     "allowedPaths": ["~/SDKs", "/opt/reference"]
   },
@@ -425,7 +422,7 @@ server {
 }</code></pre>
               </div>
               <p>
-                Use <strong>Settings → General</strong> for host, port, and external filesystem roots; <strong>Settings → Session daemon</strong>
+                Use <strong>Settings → General</strong> for bind address, port, allowed hostnames, and external filesystem roots; <strong>Settings → Session daemon</strong>
                 for agent-spawn tools; <strong>Settings → Pi packages</strong> for Pi package install/remove/update;
                 <strong>Settings → PI WEB plugins</strong> to enable or disable plugins; and <strong>Settings → Keyboard</strong>
                 for shortcut overrides. Browser-only plugin changes need a tab reload; server-backed changes need a

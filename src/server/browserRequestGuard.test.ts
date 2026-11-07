@@ -3,7 +3,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import fastifyWebsocket from "@fastify/websocket";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
-import type { PiWebConfigValues, PiWebHostValidationMode } from "../shared/apiTypes.js";
+import type { PiWebHostAccess } from "../shared/apiTypes.js";
 import { registerBrowserRequestGuard } from "./browserRequestGuard.js";
 
 const apps = new Set<FastifyInstance>();
@@ -12,29 +12,30 @@ afterEach(async () => {
   apps.clear();
 });
 
-function guardedApp(allowedHosts?: PiWebConfigValues["allowedHosts"], mode: PiWebHostValidationMode = allowedHosts === true ? "disabled" : "enabled") {
+function guardedApp(hosts: string[] | true = []) {
+  return policyApp(hosts === true ? { mode: "any" } : { mode: "restricted", hosts });
+}
+
+function policyApp(policy?: PiWebHostAccess) {
   const app = Fastify();
   apps.add(app);
-  registerBrowserRequestGuard(app, allowedHosts, mode);
+  registerBrowserRequestGuard(app, policy);
   const handled = vi.fn(() => ({ ok: true }));
   app.all("/resource", handled);
   return { app, handled };
 }
 
-describe("Host validation decisions", () => {
-  it.each(["pending", "enabled", "disabled"] as const)("keeps Origin validation independent of %s host policy", async (mode) => {
-    const { app, handled } = guardedApp(["allowed.test"], mode);
+describe("Host access decisions", () => {
+  it.each([undefined, { mode: "restricted" as const, hosts: ["allowed.test"] }, { mode: "any" as const }])("keeps Origin validation independent of %j host policy", async (policy) => {
+    const { app, handled } = policyApp(policy);
     const host = "unlisted.test";
-    expect((await app.inject({ url: "/resource", headers: { host } })).statusCode).toBe(mode === "enabled" ? 403 : 200);
+    expect((await app.inject({ url: "/resource", headers: { host } })).statusCode).toBe(policy?.mode === "restricted" ? 403 : 200);
     handled.mockClear();
     const blocked = await app.inject({ method: "POST", url: "/resource", headers: { host: "allowed.test", origin: "https://foreign.test" } });
     expect(blocked.statusCode).toBe(403);
     expect(handled).not.toHaveBeenCalled();
   });
 
-  it("does not permit enabled policy with a legacy allow-every-host value", () => {
-    expect(() => guardedApp(true, "enabled")).toThrow("allowedHosts list");
-  });
 });
 
 describe("browser Host admission", () => {
@@ -95,7 +96,7 @@ describe("browser Host admission", () => {
     }
   });
 
-  it("allows any valid host when explicitly disabled, without allowing foreign Origins", async () => {
+  it("allows any valid host in any mode, without allowing foreign Origins", async () => {
     const { app, handled } = guardedApp(true);
     expect((await app.inject({ url: "/resource", headers: { host: "unlisted.test" } })).statusCode).toBe(200);
     expect((await app.inject({ method: "POST", url: "/resource", headers: { host: "unlisted.test", origin: "https://other.test" } })).statusCode).toBe(403);
@@ -176,11 +177,11 @@ describe("browser Origin admission", () => {
 });
 
 describe("WebSocket admission before upgrade", () => {
-  it.each(["pending", "disabled"] as const)("keeps cross-origin sockets blocked when Host validation is %s", async (mode) => {
+  it.each([undefined, { mode: "any" as const }])("keeps cross-origin sockets blocked with Host policy %j", async (policy) => {
     const app = Fastify();
     apps.add(app);
     await app.register(fastifyWebsocket);
-    registerBrowserRequestGuard(app, [], mode);
+    registerBrowserRequestGuard(app, policy);
     const handled = vi.fn();
     app.get("/socket", { websocket: true }, (socket) => { handled(); socket.close(); });
     const address = await app.listen({ host: "127.0.0.1", port: 0 });
@@ -195,7 +196,7 @@ describe("WebSocket admission before upgrade", () => {
     const app = Fastify();
     apps.add(app);
     await app.register(fastifyWebsocket);
-    registerBrowserRequestGuard(app, ["pi.example.test"], "enabled");
+    registerBrowserRequestGuard(app, { mode: "restricted", hosts: ["pi.example.test"] });
     const handled = vi.fn();
     app.get("/socket", { websocket: true }, (socket) => { handled(); socket.close(); });
     const address = await app.listen({ host: "127.0.0.1", port: 0 });

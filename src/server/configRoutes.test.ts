@@ -27,12 +27,22 @@ afterEach(async () => {
 });
 
 describe("config routes", () => {
+  it.each([undefined, null, { mode: "any" as const }, { mode: "restricted" as const, hosts: ["active.test"] }])("preserves known and unknown active host access %j", (activeHostAccess) => {
+    const response = responseFor({}, true);
+    if (activeHostAccess !== undefined) response.activeHostAccess = activeHostAccess;
+    const parsed = parsePiWebConfigResponseBody(response);
+    expect(parsed.activeHostAccess).toEqual(activeHostAccess);
+    if (activeHostAccess === undefined) expect(parsed).not.toHaveProperty("activeHostAccess");
+    expect(() => parsePiWebConfigResponseBody({ ...response, activeHostAccess: { mode: "restricted" } })).toThrow("activeHostAccess");
+  });
+
   it("strips gateway Host policy metadata from selected-machine responses", async () => {
-    vi.mocked(service.read).mockReturnValue({ ...responseFor({ hostValidation: "enabled", allowedHosts: ["public.test"] }, true), activeHostValidation: "enabled" });
+    const hostAccess = { mode: "restricted" as const, hosts: ["public.test"] };
+    vi.mocked(service.read).mockReturnValue({ ...responseFor({ hostAccess }, true), activeHostAccess: hostAccess });
     const selected = await app.inject("/api/machines/local/config");
     expect(selected.statusCode).toBe(200);
-    expect(selected.json<PiWebConfigResponse>()).not.toHaveProperty("activeHostValidation");
-    expect(selected.json<PiWebConfigResponse>().effectiveConfig).not.toHaveProperty("hostValidation");
+    expect(selected.json<PiWebConfigResponse>()).not.toHaveProperty("activeHostAccess");
+    expect(selected.json<PiWebConfigResponse>().effectiveConfig).not.toHaveProperty("hostAccess");
   });
 
   it.each(["/api/config", "/api/machines/local/config"])("exposes and validates sessionMessages through %s", async (url) => {

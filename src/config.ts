@@ -9,7 +9,7 @@ import { requireDefaultLocalization } from "./shared/defaultLocalization.js";
 import { requireDefaultStreamingBehavior } from "./shared/streamingBehavior.js";
 import { migrateSessionNamingConfig } from "./configSessionNamingMigration.js";
 import { requireInstallationName } from "./shared/installationName.js";
-import { DEFAULT_HOST_VALIDATION, requireHostValidation, validateHostValidationPolicy } from "./shared/hostValidation.js";
+import { requireHostAccess } from "./shared/hostAccess.js";
 
 import { PI_WEB_CONFIG_DEFINITIONS, overlayPiWebConfig, parsePiWebEnvBoolean, piWebConfigEnvName, piWebConfigNamespaceFields, piWebConfigSettingPointers } from "./shared/configResolution.js";
 import { versionChecksDisabled } from "./shared/versionCheckPolicy.js";
@@ -29,7 +29,6 @@ export interface LoadedPiWebConfig {
 }
 
 export interface EffectivePiWebConfig extends Omit<PiWebConfig, "uploads" | "attachments" | "spawnSessions" | "sessionMessages" | "subsessions" | "askUser" | "dockerEnvironmentFacts" | "agent" | "extensionDialogsTimeoutMs"> {
-  hostValidation: NonNullable<PiWebConfig["hostValidation"]>;
   uploads: NonNullable<PiWebConfig["uploads"]>;
   attachments: NonNullable<PiWebConfig["attachments"]>;
   spawnSessions: boolean;
@@ -233,7 +232,6 @@ export function resolveEffectivePiWebConfig(loaded: LoadedPiWebConfig, options: 
     ...loaded,
     config: {
       ...config,
-      hostValidation: config.hostValidation ?? DEFAULT_HOST_VALIDATION,
       uploads: effectiveUploadsConfig(config),
       attachments: effectiveAttachmentsConfig(config),
       // Always resolved (on by default) so the effective config is the single
@@ -269,9 +267,8 @@ export function savePiWebConfig(config: PiWebConfig, options: LoadOptions = {}):
     defaultsConfig = parseFileConfig(readConfigObject(defaultsPath), defaultsPath);
   }
   const normalized = parsePiWebConfig(piWebConfigRecord(config), path);
-  // Validate the resolved Host policy before publishing a write; another layer
-  // may supply allowedHosts:true while this file enables validation.
-  validateHostValidationPolicy(applyPiWebConfigEnv(overlayPiWebConfig(defaultsConfig, normalized), env));
+  // Reject malformed environment policy before publishing a write.
+  applyPiWebConfigEnv(overlayPiWebConfig(defaultsConfig, normalized), env);
   effectiveAgentConfig(env, normalized);
   const existing = readExistingConfigObject(path);
   if (existing["agent"] !== undefined) parseAgentConfig(existing["agent"], path);
@@ -357,9 +354,7 @@ function piWebConfigEnvOverrides(env: NodeJS.ProcessEnv): { config: PiWebConfig;
 
 /** Apply after project participation as well as machine overlays. Does not mutate inputs. */
 export function applyPiWebConfigEnv(config: PiWebConfig, env: NodeJS.ProcessEnv): PiWebConfig {
-  const effective = overlayPiWebConfig(config, piWebConfigEnvOverrides(env).config);
-  validateHostValidationPolicy(effective);
-  return effective;
+  return overlayPiWebConfig(config, piWebConfigEnvOverrides(env).config);
 }
 
 /** JSON-pointer setting identifiers mapped to the controlling environment variable. */
@@ -403,7 +398,7 @@ export function parsePiWebConfig(value: Record<string, unknown>, path = "request
     ...(value["host"] !== undefined ? { host: parseString(value["host"], "host", path) } : {}),
     ...(value["port"] !== undefined ? { port: parsePort(value["port"], "port", path) } : {}),
     ...(value["allowedHosts"] !== undefined ? { allowedHosts: parseAllowedHosts(value["allowedHosts"], path) } : {}),
-    ...(value["hostValidation"] !== undefined ? { hostValidation: requireHostValidation(value["hostValidation"], `PI WEB config hostValidation: ${path}`) } : {}),
+    ...(value["hostAccess"] !== undefined ? { hostAccess: requireHostAccess(value["hostAccess"], `PI WEB config hostAccess: ${path}`) } : {}),
     ...(value["shortcuts"] !== undefined ? { shortcuts: parseShortcuts(value["shortcuts"], path) } : {}),
     ...(value["defaultTheme"] !== undefined ? { defaultTheme: requireDefaultThemePreference(value["defaultTheme"], path) } : {}),
     ...(value["defaultLocalization"] !== undefined ? { defaultLocalization: requireDefaultLocalization(value["defaultLocalization"], path) } : {}),
@@ -424,7 +419,6 @@ export function parsePiWebConfig(value: Record<string, unknown>, path = "request
     ...(value["extensionDialogsTimeoutMs"] !== undefined ? { extensionDialogsTimeoutMs: parseExtensionDialogsTimeoutMs(value["extensionDialogsTimeoutMs"], path) } : {}),
     ...(value["agent"] !== undefined ? { agent: parseAgentConfig(value["agent"], path, pathHost) } : {}),
   };
-  validateHostValidationPolicy(config);
   return config;
 }
 
@@ -759,6 +753,6 @@ function isNonEmptyStringArray(value: unknown): value is string[] {
 }
 
 export function examplePiWebConfig(config: PiWebConfig = {}): string {
-  return `${JSON.stringify({ host: config.host ?? "127.0.0.1", port: config.port ?? 8504, allowedHosts: config.allowedHosts ?? [], hostValidation: config.hostValidation ?? DEFAULT_HOST_VALIDATION }, null, 2)}\n`;
+  return `${JSON.stringify({ host: config.host ?? "127.0.0.1", port: config.port ?? 8504, allowedHosts: config.allowedHosts ?? [], ...(config.hostAccess === undefined ? {} : { hostAccess: config.hostAccess }) }, null, 2)}\n`;
 }
 

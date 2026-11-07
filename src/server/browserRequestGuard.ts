@@ -1,7 +1,7 @@
 import { isIP } from "node:net";
 import type { FastifyInstance } from "fastify";
-import type { PiWebConfigValues, PiWebHostValidationMode } from "../shared/apiTypes.js";
-import { DEFAULT_HOST_VALIDATION, requireHostValidation, validateHostValidationPolicy } from "../shared/hostValidation.js";
+import type { PiWebHostAccess } from "../shared/apiTypes.js";
+import { requireHostAccess } from "../shared/hostAccess.js";
 
 interface Authority {
   hostname: string;
@@ -9,16 +9,15 @@ interface Authority {
 }
 
 /** Browser defenses, not authentication: non-browser clients can supply these headers. */
-export function registerBrowserRequestGuard(app: FastifyInstance, allowedHosts: PiWebConfigValues["allowedHosts"], hostValidation: PiWebHostValidationMode = DEFAULT_HOST_VALIDATION): void {
-  requireHostValidation(hostValidation);
-  validateHostValidationPolicy({ hostValidation, ...(allowedHosts === undefined ? {} : { allowedHosts }) });
+export function registerBrowserRequestGuard(app: FastifyInstance, hostAccess?: PiWebHostAccess): void {
+  const policy = hostAccess === undefined ? undefined : requireHostAccess(hostAccess);
   // Snapshot the startup policy, like host/port. Saving config must not change
   // admission halfway through the request that saves it.
-  const hosts = allowedHosts === true ? true : (allowedHosts ?? []).map(normalizeHostname);
+  const hosts = policy?.mode === "restricted" ? policy.hosts.map(normalizeHostname) : true;
   app.addHook("onRequest", (request, reply, done) => {
     const host = parseAuthority(request.headers.host);
-    if (headerCount(request.raw.rawHeaders, "host") !== 1 || host === undefined || (hostValidation === "enabled" && !isAllowedHost(host.hostname, hosts))) {
-      void reply.code(403).send({ error: "Host not allowed. Check allowedHosts in the gateway config and restart the web/API service." });
+    if (headerCount(request.raw.rawHeaders, "host") !== 1 || host === undefined || !isAllowedHost(host.hostname, hosts)) {
+      void reply.code(403).send({ error: "Host not allowed. Check hostAccess in the gateway config and restart the web/API service." });
       return;
     }
 
