@@ -86,6 +86,8 @@ The web/API also lacks that protection while no policy is chosen. Malformed `Hos
 
 `hostAccess` is gateway-only, not project-local or selected-remote-machine configuration. It is one atomic setting: its mode and list replace lower-priority policy together. `PI_WEB_HOST_ACCESS` accepts the policy object as JSON, for example `PI_WEB_HOST_ACCESS='{"mode":"restricted","hosts":["pi.example.com"]}'`. It overrides saved config and deployment defaults and makes the entire control read-only. Invalid policies fail validation rather than disabling protection. Reset removes the saved policy; the decision warning returns if no lower-priority policy remains.
 
+Before saving or resetting a hostname policy in Settings, PI WEB checks whether the resulting policy allows the hostname in your browser’s URL. If it would block that hostname, choose **Cancel** to keep editing or **Save anyway** to accept the loss of access after restart. This confirmation does not add hostnames, change the policy, or restart services; direct API and file edits do not show it.
+
 Both servers read their policy at startup. Restart web/API and, if running, the development UI server after changing `hostAccess`. A separate restart notice compares the saved effective policy with the running web/API snapshot, including host-list-only changes. It remains until they match; choosing `any` resolves the decision warning but does not erase a pending restart. The snapshot does not confirm the development server's running policy. No session-daemon restart is needed.
 
 ### Migration from the development-only setting

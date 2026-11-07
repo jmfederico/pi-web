@@ -79,6 +79,8 @@ Local sticky headers, shadows, and decorations can still use small stacking valu
 
 Use the existing `ModalSurface` component for native modality, focus placement/restoration, Escape, backdrop dismissal, and dialog naming. The content patterns in `ui/dialogStyles.ts` compose with that surface; they do not add another modal controller or wrapper.
 
+For a simple yes/no decision, mount `ConfirmationDialog` and call `request({ title, message, confirmLabel, cancelLabel })`. Text may be a string or a function for live localization. It composes `ModalSurface`, focuses Cancel initially, and resolves `true` only on confirmation; cancellation, removal, and replacement resolve `false`. The caller owns the action, error handling, and validation that the pending action is still current. It does not execute work or queue requests.
+
 - `uiDialogStyles` provides common header, close button, search row, scrollable body, and footer treatment. It includes `uiButtonStyles`.
 - `uiSelectionStyles` provides gapless option rows, composite rows with separate pin/checkbox actions, descriptions, and empty states. Combine it with `uiDialogStyles` for selections such as models, thinking levels, and Actions.
 - `uiFormStyles` from `ui/formStyles.ts` provides field labels, native input and textarea styling, checkbox rows, and form errors. It is also re-exported by `ui/dialogStyles.ts`. Combine it with `uiDialogStyles` for provider login, adding machines, and adding projects. Inline question forms and extension dialogs reuse the same fields without importing modal layout. A dialog with both choices and a form can compose all three.

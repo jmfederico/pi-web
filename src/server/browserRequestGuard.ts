@@ -1,7 +1,7 @@
 import { isIP } from "node:net";
 import type { FastifyInstance } from "fastify";
 import type { PiWebHostAccess } from "../shared/apiTypes.js";
-import { requireHostAccess } from "../shared/hostAccess.js";
+import { hostnameAllowedByPolicy, normalizeHostname, requireHostAccess } from "../shared/hostAccess.js";
 
 interface Authority {
   hostname: string;
@@ -10,13 +10,12 @@ interface Authority {
 
 /** Browser defenses, not authentication: non-browser clients can supply these headers. */
 export function registerBrowserRequestGuard(app: FastifyInstance, hostAccess?: PiWebHostAccess): void {
-  const policy = hostAccess === undefined ? undefined : requireHostAccess(hostAccess);
   // Snapshot the startup policy, like host/port. Saving config must not change
   // admission halfway through the request that saves it.
-  const hosts = policy?.mode === "restricted" ? policy.hosts.map(normalizeHostname) : true;
+  const policy = hostAccess === undefined ? undefined : requireHostAccess(hostAccess);
   app.addHook("onRequest", (request, reply, done) => {
     const host = parseAuthority(request.headers.host);
-    if (headerCount(request.raw.rawHeaders, "host") !== 1 || host === undefined || !isAllowedHost(host.hostname, hosts)) {
+    if (headerCount(request.raw.rawHeaders, "host") !== 1 || host === undefined || !hostnameAllowedByPolicy(host.hostname, policy)) {
       void reply.code(403).send({ error: "Host not allowed. Check hostAccess in the gateway config and restart the web/API service." });
       return;
     }
@@ -39,15 +38,6 @@ function headerCount(rawHeaders: string[], name: string): number {
     if (rawHeaders[index]?.toLowerCase() === name) count++;
   }
   return count;
-}
-
-function normalizeHostname(hostname: string): string {
-  return hostname.toLowerCase().replace(/\.$/u, "");
-}
-
-function isAllowedHost(hostname: string, hosts: string[] | true): boolean {
-  if (hosts === true || isIP(hostname) !== 0 || hostname === "localhost" || hostname.endsWith(".localhost")) return true;
-  return hosts.some((entry) => entry === hostname || (entry.startsWith(".") && (hostname === entry.slice(1) || hostname.endsWith(entry))));
 }
 
 function parseAuthority(value: string | undefined): Authority | undefined {

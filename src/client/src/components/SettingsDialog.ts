@@ -12,6 +12,9 @@ import type { SettingsSection } from "../settingsRoute";
 import { revealSettingsTarget } from "./settings/settingsTarget";
 import "./ModalSurface";
 import type { ModalSurface } from "./ModalSurface";
+import "./ConfirmationDialog";
+import type { ConfirmationDialog } from "./ConfirmationDialog";
+import { hostAccessChangeBlocksHostname } from "./settings/settingsHostAccess";
 import { uiDialogStyles, uiSelectionStyles } from "./ui/dialogStyles";
 import "./settings/SettingsGeneralPanel";
 import type { SettingsGeneralPanel } from "./settings/SettingsGeneralPanel";
@@ -47,6 +50,8 @@ export class SettingsDialog extends LitElement {
   }
 
   @property({ attribute: false }) section: SettingsSection = "general";
+  /** Browser authority for gateway lockout warnings; independent of selected machine. */
+  @property({ attribute: false }) currentHostname = typeof location === "undefined" ? "" : location.hostname;
   /** Optional data-settings-target destination within the active section. */
   @property({ attribute: false }) target: string | undefined;
   private revealedTarget: string | undefined;
@@ -98,6 +103,7 @@ export class SettingsDialog extends LitElement {
   @state() private pluginLoading = true;
   @state() private packageLoading = true;
   @state() private saving = false;
+  private gatewayConfirmationPending = false;
   @state() private packageOperation: PiPackageOperationState | undefined;
   @state() private errorPresentation: DisplayText = "";
   private get error(): string { return displayText(this.errorPresentation); }
@@ -240,6 +246,7 @@ export class SettingsDialog extends LitElement {
           </main>
         </div>
       </modal-surface>
+      <confirmation-dialog></confirmation-dialog>
     `;
   }
 
@@ -646,15 +653,34 @@ export class SettingsDialog extends LitElement {
   }
 
   private async saveConfig(config: PiWebConfigValues, unset: string[] = []): Promise<void> {
-    if (this.saving) return;
+    if (this.saving || this.gatewayConfirmationPending) return;
     const section = this.section === "shortcuts" ? "shortcuts" : "general";
     this.loadRequestSeq += 1;
     this.loading = false;
-    this.saving = true;
     this.error = "";
     this.savedMessage = "";
     try {
-      const response = await configApi.updateConfig({ ...explicitConfigUpdate(this.configResponse, config), ...resetConfigUpdate(this.configResponse, unset) });
+      const snapshot = this.configResponse;
+      const update = { ...explicitConfigUpdate(snapshot, config), ...resetConfigUpdate(snapshot, unset) };
+      if (hostAccessChangeBlocksHostname(update, snapshot?.defaultsConfig, this.currentHostname)) {
+        const confirmation = this.renderRoot.querySelector<ConfirmationDialog>("confirmation-dialog");
+        if (confirmation === null) throw new Error("Settings confirmation is unavailable");
+        const hostname = this.currentHostname;
+        // Keep the opener enabled until approval so Cancel can restore focus.
+        // This guard still rejects duplicate submissions while the modal is open.
+        this.gatewayConfirmationPending = true;
+        const accepted = await confirmation.request({
+          title: () => settingsDialogMessages.t("hostAccessConfirmTitle"),
+          message: () => settingsDialogMessages.t("hostAccessConfirmMessage", { hostname }),
+          confirmLabel: () => settingsDialogMessages.t("saveAnyway"),
+          cancelLabel: () => settingsDialogMessages.t("cancelSave"),
+        });
+        // Approval belongs to this write and snapshot, never a refreshed policy
+        // or a settings dialog that has since closed.
+        if (!accepted || !this.isConnected || this.configResponse !== snapshot) return;
+      }
+      this.saving = true;
+      const response = await configApi.updateConfig(update);
       this.configResponse = response;
       this.publishGatewayConfig(response);
       this.showSavedMessage(() => section === "shortcuts" ? settingsDialogMessages.t("shortcutsSaved")
@@ -665,6 +691,7 @@ export class SettingsDialog extends LitElement {
       const diagnostic = errorMessage(error);
       this.error = () => settingsDialogMessages.t("settingsFailure", { error: diagnostic });
     } finally {
+      this.gatewayConfirmationPending = false;
       this.saving = false;
     }
   }

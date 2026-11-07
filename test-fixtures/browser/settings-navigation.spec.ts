@@ -155,6 +155,64 @@ test("keeps the hostname editor and save action reachable when changing policy",
   await page.screenshot({ path: testInfo.outputPath("any-hostname.png") });
 });
 
+test("confirms a hostname lockout without losing the draft or closing Settings", async ({ page }, testInfo) => {
+  const { modal } = await openSettings(page, "?hostname=pi.example.test");
+  await page.evaluate(() => window.settingsNavigationFixture.releaseConfig());
+  const policy = page.locator("#host-access");
+  const hosts = page.locator("#host-access-list");
+  const save = page.getByRole("button", { name: "Save gateway server config", exact: true });
+  const confirmation = page.locator("settings-dialog confirmation-dialog");
+  const prompt = confirmation.getByRole("dialog");
+  const draft = "other.example.test\n.trusted.test";
+  await policy.selectOption("restricted");
+  await hosts.fill(draft);
+
+  for (const dismiss of ["cancel", "escape"]) {
+    await save.click();
+    await expect(prompt).toBeVisible();
+    await expect(confirmation.locator("#confirmation-cancel")).toBeFocused();
+    expect(await page.evaluate(() => window.settingsNavigationFixture.configUpdates())).toEqual([]);
+    if (dismiss === "cancel") await confirmation.locator("#confirmation-cancel").click();
+    else await page.keyboard.press("Escape");
+    await expect(prompt).toHaveCount(0);
+    await expect(modal).toBeVisible();
+    await expect(save).toBeFocused();
+    await expect(policy).toHaveValue("restricted");
+    await expect(hosts).toHaveValue(draft);
+    expect(await page.evaluate(() => window.settingsNavigationFixture.configUpdates())).toEqual([]);
+  }
+
+  await save.click();
+  await expect(prompt).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("host-access-confirmation.png") });
+  await confirmation.locator("#confirmation-confirm").click();
+  await expect(prompt).toHaveCount(0);
+  await expect(page.locator("body")).toHaveAttribute("data-save", "pending");
+  const updates = await page.evaluate(() => window.settingsNavigationFixture.configUpdates());
+  expect(updates).toHaveLength(1);
+  expect(updates[0]?.set?.hostAccess).toEqual({ mode: "restricted", hosts: ["other.example.test", ".trusted.test"] });
+  await page.evaluate(() => window.settingsNavigationFixture.releaseSave());
+  await expect(page.locator("body")).toHaveAttribute("data-save", "complete");
+  await expect(modal).toBeVisible();
+  await expect(hosts).toHaveValue(draft);
+  expect(await page.evaluate(() => window.settingsNavigationFixture.configUpdates())).toEqual(updates);
+});
+
+test("saves without confirmation when the policy allows the current hostname", async ({ page }) => {
+  await openSettings(page, "?hostname=pi.example.test");
+  await page.evaluate(() => window.settingsNavigationFixture.releaseConfig());
+  await page.locator("#host-access").selectOption("restricted");
+  await page.locator("#host-access-list").fill(".example.test");
+  await page.getByRole("button", { name: "Save gateway server config", exact: true }).click();
+  await expect(page.locator("body")).toHaveAttribute("data-save", "pending");
+  await expect(page.locator("confirmation-dialog").getByRole("dialog")).toHaveCount(0);
+  const updates = await page.evaluate(() => window.settingsNavigationFixture.configUpdates());
+  expect(updates).toHaveLength(1);
+  expect(updates[0]?.set?.hostAccess).toEqual({ mode: "restricted", hosts: [".example.test"] });
+  await page.evaluate(() => window.settingsNavigationFixture.releaseSave());
+  await expect(page.locator("body")).toHaveAttribute("data-save", "complete");
+});
+
 test("reveals an arbitrary named destination inside a slotted panel shadow root", async ({ page }) => {
   const { content } = await openSettings(page, "?target=fixture-preference");
   const group = page.getByRole("group", { name: "Fixture preference", exact: true });

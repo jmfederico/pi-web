@@ -19,6 +19,7 @@ const target = parameters.get("target") ?? "host-access";
 const noticesMode = parameters.has("notices");
 const configLoad = deferred();
 const configSave = deferred();
+const configUpdates: Parameters<typeof configApi.updateConfig>[0][] = [];
 let response: PiWebConfigResponse = {
   path: "/fixture/config.json", exists: true,
   config: { port: 8504, allowedHosts: ["fixture.local"] },
@@ -32,6 +33,7 @@ let response: PiWebConfigResponse = {
 // navigation code is real. The test controls completion rather than sleeping.
 configApi.config = async () => { await configLoad.promise; return response; };
 configApi.updateConfig = async (update) => {
+  configUpdates.push(structuredClone(update));
   document.body.dataset["save"] = "pending";
   await configSave.promise;
   response = { ...response, config: { ...response.config, ...update.set }, effectiveConfig: { ...response.effectiveConfig, ...update.set } };
@@ -87,6 +89,7 @@ let extraPanel: FixtureSettingsPanel | undefined;
 opener.addEventListener("click", () => { void openSettings(); });
 async function openSettings(): Promise<void> {
   dialog = new SettingsDialog();
+  dialog.currentHostname = parameters.get("hostname") ?? location.hostname;
   dialog.target = target;
   dialog.onClose = () => { dialog?.remove(); };
   dialog.onNavigate = (section) => { if (dialog) dialog.section = section; };
@@ -118,6 +121,7 @@ declare global {
       releaseConfig: () => Promise<void>;
       rerender: () => Promise<void>;
       releaseSave: () => Promise<void>;
+      configUpdates: () => typeof configUpdates;
       selection: () => { session: unknown; workspace: unknown };
       terminalLaunches: () => { command: string; title: string }[];
     };
@@ -135,6 +139,7 @@ window.settingsNavigationFixture = {
     await painted();
   },
   releaseSave: async () => { configSave.resolve(); await painted(); },
+  configUpdates: () => configUpdates,
   terminalLaunches: () => terminalLaunches,
   selection: () => {
     const state: unknown = Reflect.get(app ?? {}, "state");
