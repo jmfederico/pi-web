@@ -1,9 +1,10 @@
 import type { PiWebConfigResponse } from "../api";
 import type { ChatSessionWarningRow } from "./chat/SessionWarnings";
+import { restartMessages } from "../restartMessages";
 import { generalMessages as messages } from "./settings/settingsGeneralMessages";
 
 /** Gateway snapshots only: drafts and selected-machine config never decide these notices. */
-export function hostAccessNotices(config: PiWebConfigResponse | undefined, onOpenSettings: () => void): readonly ChatSessionWarningRow[] {
+export function hostAccessNotices(config: PiWebConfigResponse | undefined, onOpenSettings: () => void, onRestartWeb: () => void): readonly ChatSessionWarningRow[] {
   if (config === undefined) return [];
   const desired = config.effectiveConfig.hostAccess ?? null;
   const active = config.activeHostAccess;
@@ -21,7 +22,9 @@ export function hostAccessNotices(config: PiWebConfigResponse | undefined, onOpe
       pending ? messages.t("hostAccessDecision") : undefined,
       restart ? messages.t("hostAccessRestart") : undefined,
     ].filter((message) => message !== undefined).join(" "),
-    action: { label: messages.t("hostAccessSettings"), run: onOpenSettings },
+    action: pending
+      ? { label: messages.t("hostAccessSettings"), run: onOpenSettings }
+      : { label: restartMessages.t("restartWeb"), run: onRestartWeb },
   }];
 }
 

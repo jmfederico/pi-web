@@ -88,6 +88,8 @@ import "./ProjectList";
 import "./WorkspaceList";
 import { sessionNavigationCandidates, unreadSessionCount } from "./SessionList";
 import "./SessionCleanupDialog";
+import "./RestartDialog";
+import type { RestartDialog } from "./RestartDialog";
 import "./SessionTreeNavigator";
 import "./ConversationLayout";
 import "./ConversationSyncNotice";
@@ -413,7 +415,7 @@ export class PiWebApp extends LitElement {
     getSelection: () => publicPluginSelection(this.state),
   });
   private readonly builtInPluginsReady = this.plugins.registerBatch([
-    { id: "core", plugin: createCorePlugin(() => hostAccessNotices(this.gatewayConfig, () => { this.openSettings("general", "host-access"); })) },
+    { id: "core", plugin: createCorePlugin(() => hostAccessNotices(this.gatewayConfig, () => { this.openSettings("general", "host-access"); }, () => { this.openRestart(); })) },
     { id: "themes", plugin: themePackPlugin },
   ]).then(({ failures }) => {
     if (failures.length > 0) throw failures[0]?.error;
@@ -994,6 +996,22 @@ export class PiWebApp extends LitElement {
         this.applyPreferredTheme(false);
       }
     }
+  }
+
+  private openRestart(): void {
+    this.renderRoot.querySelector<RestartDialog>("restart-dialog")?.show();
+  }
+
+  private async runRestartCommand(command: string, title: string): Promise<void> {
+    // Like Updates, use the existing maintenance terminal. Restart is gateway-scoped,
+    // so navigate there before obtaining its selection-bound terminal facade.
+    if (selectedMachineId(this.state) !== "local") {
+      const gateway = this.state.machines.find((machine) => machine.id === "local");
+      if (gateway === undefined || !await this.selectMachineWithMemory(gateway)) throw requiredTerminalUnavailableError("local");
+    }
+    const terminal = this.maintenanceTerminal("core", "local", this.beginNavigationOperation(WORKSPACE_SURFACE_SCOPE));
+    if (terminal === undefined) throw requiredTerminalUnavailableError("local");
+    await terminal.runCommand({ title, command, open: true });
   }
 
   private refreshGatewayConfig(): void {
@@ -3405,6 +3423,7 @@ export class PiWebApp extends LitElement {
       prompt: this.createPromptEditor(pluginId),
       piWebUnstable: {
         openSettings: (section) => { this.openSettings(section); },
+        openRestart: () => { this.openRestart(); },
         openMcpAuth: (mode) => this.auth.openMcpAuth(mode),
       },
       openActionPalette: () => { this.setState({ actionPaletteOpen: true }); },
@@ -4576,6 +4595,9 @@ export class PiWebApp extends LitElement {
         ${this.renderSessionTreeNavigator(state)}
         ${state.projectDialogOpen ? html`<project-dialog .machineId=${selectedMachineId(state)} .onSubmit=${(path: string, create: boolean, trust: ProjectTrustChoice | undefined) => this.projects.addProject(path, create, trust)} .onCancel=${() => { this.setState({ projectDialogOpen: false }); }}></project-dialog>` : null}
         ${state.machineDialogOpen ? html`<machine-dialog .machine=${this.machineNameEditTarget} .error=${state.error} .onSubmit=${(input: MachineDialogSubmit) => this.submitMachineDialog(input)} .onCancel=${() => { this.setState({ machineDialogOpen: false }); }}></machine-dialog>` : null}
+        <restart-dialog
+          .activity=${state.machineStatusSnapshots["local"] === undefined ? "unknown" : state.machineStatusSnapshots["local"].machine["core:working"] === true || state.machineStatusSnapshots["local"].machine["core:terminal"] === true ? "active" : "idle"}
+          .onRun=${(command: string, title: string) => this.runRestartCommand(command, title)}></restart-dialog>
         ${this.sessionCleanupDialog !== undefined ? html`<session-cleanup-dialog .preview=${this.sessionCleanupDialog.preview} .previewRequest=${this.sessionCleanupDialog.previewRequest} .result=${this.sessionCleanupDialog.result} .loading=${this.sessionCleanupDialog.loading === true} .running=${this.sessionCleanupDialog.running === true} .error=${typeof this.sessionCleanupDialog.error === "string" ? this.sessionCleanupDialog.error : ""} .errorMessage=${typeof this.sessionCleanupDialog.error === "function" ? this.sessionCleanupDialog.error : undefined} .onPreview=${(request: SessionCleanupRequest) => { void this.previewSessionCleanup(request); }} .onRun=${(request: SessionCleanupRequest) => { void this.runSessionCleanup(request); }} .onClose=${() => { this.closeSessionCleanupDialog(); }}></session-cleanup-dialog>` : null}
         ${this.settingsSection !== undefined ? html`<settings-dialog .section=${this.settingsSection} .target=${this.settingsTarget} .mcpContext=${state.selectedSession !== undefined && state.selectedSession.archived !== true ? { session: { id: state.selectedSession.id, cwd: state.selectedSession.cwd }, machineId: selectedMachineId(state) } : undefined} .onMcpAuth=${(mode: "login" | "logout", serverName: string, context: { session: { id: string; cwd: string }; machineId: string }) => { this.closeSettings(); void this.auth.openMcpAuth(mode, serverName, context); }} .machine=${state.selectedMachine} .machineRuntime=${this.selectedMachineRuntime()} .machines=${state.machines} .machineStatuses=${state.machineStatuses} .machineRuntimes=${state.machineRuntimes} .actions=${this.getDefaultActions()} .themes=${this.plugins.getThemes()} .onThemeCatalogLoaded=${(catalog: BrowserThemeCatalog) => { this.registerThemeCatalog(catalog); }} .fileIconThemes=${this.plugins.getFileIconThemes()} .fileIconPreference=${this.fileIconPreference} .onSelectFileIconTheme=${(id: string) => { this.selectFileIconTheme(id); }} .onResetFileIconTheme=${() => { this.selectFileIconTheme(undefined); }} .themePreference=${this.themePreference} .activeThemeId=${this.activeThemeId} .hasLocalThemeOverride=${this.localThemePreference !== undefined} .onUseLocalTheme=${(preference: ThemePreference) => { this.pickTheme(preference); }} .onUseDefaultTheme=${() => { this.useDefaultTheme(); }} .onNavigate=${(section: SettingsSection) => { this.navigateSettings(section); }} .onClose=${() => { this.closeSettings(); }} .onMachineConfigSaved=${(machineId: string) => { void this.machines.refreshMachineIdentity(machineId); }} .onGatewayConfigLoaded=${(response: PiWebConfigResponse) => { this.acceptSettingsGatewayConfig(response); }} .onGatewayConfigInvalidated=${() => { this.refreshGatewayConfig(); }} .onConfigSaved=${(config: PiWebConfigValues) => { this.applyClientConfig(config); }} .onRefreshMachineRuntime=${async (machineId: string) => { await this.machines.refreshMachineRuntime(machineId); }}></settings-dialog>` : null}
       </div>

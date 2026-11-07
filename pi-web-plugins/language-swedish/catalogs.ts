@@ -857,6 +857,30 @@ const catalogs: Record<string, Record<string, string>> = {
     "panel": "Inställningspanel",
     "notices": "Inställningsmeddelanden"
   },
+  // src/client/src/restart.messages.ts
+  "core.restart": {
+    "action": "Starta om…",
+    "actionDescription": "Kör ett omstartskommando i gatewayens terminal",
+    "title": "Starta om PI WEB",
+    "scope": "Kommandot öppnas i en terminal på gatewaymaskinen som betjänar denna PI WEB-adress, inte på en vald fjärrmaskin.",
+    "services": "Tjänster att starta om",
+    "web": "Webbtjänst",
+    "sessiond": "Sessionsdaemon",
+    "both": "Båda tjänsterna",
+    "webEffect": "Webbläsaren kopplas från en kort stund. Agentsessionerna fortsätter.",
+    "daemonEffect": "Omstart av sessionsdaemonen avbryter agentarbete och terminaler.",
+    "bothEffect": "Webbläsaren kopplas från en kort stund. Agentarbete och terminaler avbryts.",
+    "active": "Det finns aktivitet som kommer att avbrytas",
+    "unknownActivity": "Aktiviteten kunde inte kontrolleras. Agentarbete och terminaler kan avbrytas.",
+    "unavailable": "Inget omstartskommando är tillgängligt för denna tjänst. Använd installationens tjänstehantering.",
+    "loading": "Läser in omstartskommandon…",
+    "retryAvailability": "Läs in kommandon igen",
+    "confirm": "Kör i terminal",
+    "opening": "Öppnar terminal…",
+    "terminalHint": "Se terminalen för utdata och fel. Omstart av daemonen kan stänga terminalen. Om du ändrade värdnamnsåtkomst, återanslut med en tillåten adress.",
+    "restartWeb": "Starta om webbtjänsten",
+    "cancel": "Avbryt"
+  },
   // src/client/src/components/settings/settingsGeneral.messages.ts
   "core.settingsGeneral": {
     "hostAccess": "Tillåtna värdnamn",

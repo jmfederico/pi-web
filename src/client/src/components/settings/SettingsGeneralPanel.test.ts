@@ -91,7 +91,7 @@ describe("General settings", () => {
     await settle(panel);
     expect(panel.onReset).toHaveBeenCalledExactlyOnceWith(["/hostAccess"]);
     expect(policySelect(panel).value).toBe(inherited?.mode ?? "");
-    const notice = hostAccessNotices(panel.configResponse, vi.fn())[0]?.message ?? "";
+    const notice = hostAccessNotices(panel.configResponse, vi.fn(), vi.fn())[0]?.message ?? "";
     if (inherited) expect(notice).not.toContain(messages.t("hostAccessDecision"));
     else expect(notice).toContain(messages.t("hostAccessDecision"));
   });
@@ -132,7 +132,7 @@ describe("General settings", () => {
     expect(panel.configResponse.activeHostAccess).toEqual(activeHostAccess);
     expect(input(panel, "#host-access-list").value).toBe("new.local");
     expect(panel.shadowRoot?.querySelector(".form-actions small")).toBeNull();
-    expect(hostAccessNotices(panel.configResponse, vi.fn())).toHaveLength(1);
+    expect(hostAccessNotices(panel.configResponse, vi.fn(), vi.fn())).toHaveLength(1);
     const summary = panel.shadowRoot?.querySelector('[aria-label="Gateway settings after environment overrides"]');
     expect(summary?.textContent).toContain("old.local");
     expect(summary?.textContent).toContain("new.local");

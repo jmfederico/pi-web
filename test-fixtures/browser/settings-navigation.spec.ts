@@ -91,12 +91,19 @@ test("routes the gateway warning through existing Notices without a session or w
   await expect(notice).toBeVisible();
   // Saving a restricted policy does not imply that the running gateway enforces it.
   await expect(notice.locator(".session-warning-message")).toContainText(/restart/i);
-  await action.click();
-  await page.evaluate(() => { window.settingsNavigationFixture.completeEnforcement(); });
-  await page.getByRole("button", { name: "Refresh settings", exact: true }).click();
-  await expect(notice).toHaveCount(0);
-  await page.getByRole("button", { name: "Close settings" }).click();
-  await expect(noticesNavigation).toHaveCount(0);
+  await notice.getByRole("button", { name: "Restart web service", exact: true }).click();
+  const restart = page.locator("restart-dialog");
+  await expect(restart.getByRole("dialog", { name: "Restart PI WEB", exact: true })).toBeVisible();
+  await expect(restart.getByRole("radio", { name: "Web service", exact: true })).toBeChecked();
+  expect(await page.evaluate(() => window.settingsNavigationFixture.terminalLaunches())).toEqual([]);
+  await restart.locator("#restart-confirm").click();
+  await expect(restart.getByRole("dialog")).toHaveCount(0);
+  expect(await page.evaluate(() => window.settingsNavigationFixture.terminalLaunches())).toEqual([
+    { command: "pi-web-docker --dev restart-web", title: "Web service" },
+  ]);
+  // A terminal handoff is not proof that the saved policy is now enforced.
+  await expect(notice).toBeVisible();
+  await expect(noticesNavigation).toBeVisible();
   expect(sockets).toEqual([]);
 });
 

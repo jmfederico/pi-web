@@ -6,6 +6,7 @@ import type { SettingsGeneralPanel } from "../../src/client/src/components/setti
 import { uiFormStyles } from "../../src/client/src/components/ui/formStyles";
 import { PiWebApp } from "../../src/client/src/components/PiWebApp";
 import { saveNavigationPreferences } from "../../src/client/src/navigationPreferences";
+import type { RestartDialog } from "../../src/client/src/components/RestartDialog";
 
 function deferred() {
   let resolve!: () => void;
@@ -45,6 +46,7 @@ pluginsApi.plugins = () => Promise.resolve({
 });
 piPackagesApi.packages = () => Promise.resolve({ packages: [] });
 api.runtime = () => Promise.resolve({ machineId: "local", ok: true, checkedAt: "fixture", capabilities: [] });
+const terminalLaunches: { command: string; title: string }[] = [];
 
 // An extra consumer of the public target convention, placed in the real
 // General panel's appearance slot. No copy of the target-navigation algorithm.
@@ -116,8 +118,8 @@ declare global {
       releaseConfig: () => Promise<void>;
       rerender: () => Promise<void>;
       releaseSave: () => Promise<void>;
-      completeEnforcement: () => void;
       selection: () => { session: unknown; workspace: unknown };
+      terminalLaunches: () => { command: string; title: string }[];
     };
   }
 }
@@ -133,7 +135,7 @@ window.settingsNavigationFixture = {
     await painted();
   },
   releaseSave: async () => { configSave.resolve(); await painted(); },
-  completeEnforcement: () => { response = { ...response, activeHostAccess: response.effectiveConfig.hostAccess ?? null }; },
+  terminalLaunches: () => terminalLaunches,
   selection: () => {
     const state: unknown = Reflect.get(app ?? {}, "state");
     if (typeof state !== "object" || state === null || !("selectedSession" in state) || !("selectedWorkspace" in state)) {
@@ -149,6 +151,18 @@ if (noticesMode) {
   // loadClientConfig still reads through the public fake config API above.
   class FixtureNoticesApp extends PiWebApp {
     override connectedCallback(): void { LitElement.prototype.connectedCallback.call(this); }
+    protected override updated(): void {
+      super.updated();
+      const restart = this.renderRoot.querySelector<RestartDialog>("restart-dialog");
+      if (restart) {
+        restart.loadCommands = () => Promise.resolve({ restartWeb: "pi-web-docker --dev restart-web" });
+        restart.activity = "idle";
+        restart.onRun = (command, title) => {
+          terminalLaunches.push({ command, title });
+          return Promise.resolve();
+        };
+      }
+    }
   }
   customElements.define("fixture-notices-app", FixtureNoticesApp);
   saveNavigationPreferences({ pinnedIds: ["chat", "core:notices"], mobileCollapsed: false });

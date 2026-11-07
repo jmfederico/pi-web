@@ -793,6 +793,30 @@ const catalogs: Record<string, Record<string, string>> = {
     "lifecycleUnavailable": "Los diagnósticos del ciclo de vida de plugins no están disponibles en {name}. Actualiza y reinicia PI WEB en esa máquina antes de cargar plugins con servidor.",
     "packageFollowUp": "{kind, select, local {Paquete de Pi {action, select, install {instalado} remove {eliminado} other {actualizado}}. Escribe {reload} en cada sesión inactiva de PI WEB para actualizar extensiones, habilidades, instrucciones y temas. Recarga esta pestaña para los cambios de plugins de navegador de PI WEB. Los cambios de plugins de servidor también pueden requerir reiniciar el demonio de sesiones; el reinicio interrumpe las sesiones activas.} other {Paquete de Pi {action, select, install {instalado} remove {eliminado} other {actualizado}} en {name}. Escribe {reload} en cada sesión inactiva de PI WEB en {name} para actualizar extensiones, habilidades, instrucciones y temas. Recarga esta pestaña para los cambios de plugins de navegador de PI WEB servidos por {name}. Los cambios de plugins de servidor también pueden requerir reiniciar el demonio de sesiones; el reinicio interrumpe las sesiones activas.}}"
   },
+  // src/client/src/restart.messages.ts
+  "core.restart": {
+    "action": "Reiniciar…",
+    "actionDescription": "Ejecutar un comando de reinicio en la terminal de la pasarela",
+    "title": "Reiniciar PI WEB",
+    "scope": "El comando se abre en una terminal de la máquina de la pasarela que sirve esta dirección de PI WEB, no en una máquina remota seleccionada.",
+    "services": "Servicios que se reiniciarán",
+    "web": "Servicio web",
+    "sessiond": "Demonio de sesiones",
+    "both": "Ambos servicios",
+    "webEffect": "El navegador se desconectará brevemente. Las sesiones del agente continuarán.",
+    "daemonEffect": "Reiniciar el demonio de sesiones interrumpe el trabajo de los agentes y las terminales.",
+    "bothEffect": "El navegador se desconectará brevemente. Se interrumpirán el trabajo de los agentes y las terminales.",
+    "active": "Hay actividad que se interrumpirá",
+    "unknownActivity": "No se pudo comprobar la actividad. El trabajo de los agentes y las terminales podrían interrumpirse.",
+    "unavailable": "No hay un comando de reinicio disponible para este servicio. Usa los controles de servicio de tu instalación.",
+    "loading": "Cargando comandos de reinicio…",
+    "retryAvailability": "Recargar comandos",
+    "confirm": "Ejecutar en terminal",
+    "opening": "Abriendo terminal…",
+    "terminalHint": "Consulta la terminal para ver la salida y los errores. Reiniciar el demonio puede cerrar la terminal. Si cambiaste el acceso por nombre de host, vuelve a conectarte con una dirección permitida.",
+    "restartWeb": "Reiniciar servicio web",
+    "cancel": "Cancelar"
+  },
   // src/client/src/components/settings/settingsGeneral.messages.ts
   "core.settingsGeneral": {
     "hostAccess": "Nombres de host permitidos",

@@ -240,6 +240,7 @@ export interface MaintenanceTerminal {
 
 export interface PiWebUnstableRuntimeContext {
   openSettings?: (section?: SettingsSection) => void;
+  openRestart?: () => void;
   openMcpAuth?: (mode: "login" | "logout") => void | Promise<void>;
 }
 

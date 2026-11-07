@@ -1,3 +1,4 @@
+import { restartMessages } from "../../restartMessages";
 import { coreActionMessages as m } from "./messages";
 import { isSessionActive } from "../../../../shared/activity";
 import type { AppState } from "../../appState";
@@ -105,6 +106,13 @@ export function createCoreActions(): PluginAction[] {
       shortcut: "mod+,",
       get group() { return m.t("groupPreferences"); },
       run: (context) => { context.piWebUnstable?.openSettings?.(); },
+    },
+    {
+      id: "app.restart",
+      get title() { return restartMessages.t("action"); },
+      get description() { return restartMessages.t("actionDescription"); },
+      get group() { return m.t("groupGeneral"); },
+      run: (context) => { context.piWebUnstable?.openRestart?.(); },
     },
     {
       id: "app.reload-page",

@@ -660,6 +660,9 @@
 </tr>
 </tbody></table></div>
 <p id="deployment-paths"><strong>Serving at a URL prefix?</strong> No config key is needed. The proxy must redirect to a trailing slash and strip the prefix before forwarding HTTP and WebSocket traffic. <a href="install#reverse-proxy-prefix">Reverse-proxy example →</a></p>
+<h3 id="restart-services">Restarting from PI WEB</h3>
+<p>Open <strong>Restart…</strong> from the actions menu, choose <strong>Web service</strong>, <strong>Session daemon</strong>, or <strong>Both services</strong>, and select <strong>Run in terminal</strong>. This opens the displayed command in the gateway's maintenance terminal, like the Updates panel. Confirmation switches to the gateway if a remote machine is selected. A missing targeted command disables that choice rather than restarting additional services.</p>
+<p>Web-only restart preserves agent sessions. Restarting the daemon interrupts agent work and terminals; the dialog shows a simple activity hint. Check terminal output for errors. The command owns the restart: the dialog does not track completion or retry it. If the daemon restart closes the terminal or web does not return, use your installation's service controls to inspect and recover it. After hostname-policy changes, reconnect using an allowed address and refresh the page.</p>
 <h3 id="browser-request-security">Browser request security</h3>
 <p>Choose one gateway <code>hostAccess</code> policy for both production and development in <strong>Settings → General → Allowed hostnames</strong>:</p>
 <ul>

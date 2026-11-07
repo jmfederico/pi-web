@@ -11,13 +11,13 @@ afterEach(async () => {
 });
 
 it("does not invent a decision before gateway configuration loads", () => {
-  expect(hostAccessNotices(undefined, vi.fn())).toEqual([]);
+  expect(hostAccessNotices(undefined, vi.fn(), vi.fn())).toEqual([]);
 });
 
 it.each([{}, { allowedHosts: true }, { allowedHosts: ["legacy.local"] }] satisfies PiWebConfigValues[])("keeps missing policies actionable regardless of legacy settings (%j)", (legacy) => {
   for (const exists of [false, true]) {
     const open = vi.fn();
-    const rows = hostAccessNotices({ ...configResponse(legacy), exists, activeHostAccess: null }, open);
+    const rows = hostAccessNotices({ ...configResponse(legacy), exists, activeHostAccess: null }, open, vi.fn());
     expect(rows).toHaveLength(1);
     const row = rows[0];
     expect(row).toMatchObject({ id: "gateway-host-access", severity: "warning", source: "PI WEB", message: messages.t("hostAccessDecision") });
@@ -29,9 +29,9 @@ it.each([{}, { allowedHosts: true }, { allowedHosts: ["legacy.local"] }] satisfi
 
 it("does not count legacy environment configuration as a decision, but accepts explicit environment policy", () => {
   const legacy = { ...configResponse({ allowedHosts: true }), enforcedSettings: { "/allowedHosts": "PI_WEB_ALLOWED_HOSTS" }, activeHostAccess: null };
-  expect(hostAccessNotices(legacy, vi.fn())[0]?.message).toBe(messages.t("hostAccessDecision"));
+  expect(hostAccessNotices(legacy, vi.fn(), vi.fn())[0]?.message).toBe(messages.t("hostAccessDecision"));
   const hostAccess = { mode: "restricted" as const, hosts: [] };
-  expect(hostAccessNotices({ ...legacy, effectiveConfig: { hostAccess }, activeHostAccess: hostAccess, enforcedSettings: { "/hostAccess": "PI_WEB_HOST_ACCESS" } }, vi.fn())).toEqual([]);
+  expect(hostAccessNotices({ ...legacy, effectiveConfig: { hostAccess }, activeHostAccess: hostAccess, enforcedSettings: { "/hostAccess": "PI_WEB_HOST_ACCESS" } }, vi.fn(), vi.fn())).toEqual([]);
 });
 
 const restricted = { mode: "restricted" as const, hosts: ["gateway.local"] };
@@ -52,17 +52,30 @@ it.each<{ desired: PiWebConfigValues["hostAccess"]; active: PiWebConfigResponse[
   { desired: restricted, active: { mode: "restricted", hosts: ["old.local"] }, restart: true },
 ])("compares the complete saved policy with its startup snapshot: %j", ({ desired, active, restart }) => {
   const response = { ...configResponse(desired === undefined ? {} : { hostAccess: desired }), ...(active === undefined ? {} : { activeHostAccess: active }) };
-  const rows = hostAccessNotices(response, vi.fn());
+  const rows = hostAccessNotices(response, vi.fn(), vi.fn());
   expect(rows).toHaveLength(desired === undefined || restart ? 1 : 0);
   const restartMessage = messages.t("hostAccessRestart");
   if (restart) expect(rows[0]?.message).toContain(restartMessage);
   else expect(rows[0]?.message ?? "").not.toContain(restartMessage);
 });
 
+it("routes a saved policy restart to confirmation, while an undecided policy keeps settings priority", () => {
+  const settings = vi.fn();
+  const restart = vi.fn();
+  const saved = hostAccessNotices({ ...configResponse({ hostAccess: any }), activeHostAccess: restricted }, settings, restart);
+  saved[0]?.action?.run();
+  expect(restart).toHaveBeenCalledOnce();
+  expect(settings).not.toHaveBeenCalled();
+  const undecided = hostAccessNotices({ ...configResponse({}), activeHostAccess: restricted }, settings, restart);
+  undecided[0]?.action?.run();
+  expect(settings).toHaveBeenCalledOnce();
+  expect(restart).toHaveBeenCalledOnce();
+});
+
 it("localizes independent decision and restart conditions without duplicating the action", async () => {
   for (const language of ["en-XA", "ar-XB"]) {
     await localization.setPreferences({ language, formatLocale: "en" });
-    const rows = hostAccessNotices({ ...configResponse({}), activeHostAccess: restricted }, vi.fn());
+    const rows = hostAccessNotices({ ...configResponse({}), activeHostAccess: restricted }, vi.fn(), vi.fn());
     expect(rows).toHaveLength(1);
     expect(rows[0]?.message).toContain(messages.t("hostAccessDecision"));
     expect(rows[0]?.message).toContain(messages.t("hostAccessRestart"));

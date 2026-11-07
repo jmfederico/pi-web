@@ -442,6 +442,34 @@ describe("PI WEB status", () => {
     }
   });
 
+  it("does not offer a broad CLI restart as a per-component command", async () => {
+    process.env["PI_WEB_SKIP_VERSION_CHECK"] = "1";
+    disableDockerRuntimeEnv();
+    const home = await tempHome();
+    const binDir = await tempHome();
+    try {
+      process.env["HOME"] = home;
+      await installExecutable(binDir, "pi-web");
+      const npm = join(binDir, "npm");
+      const packageRoot = fileURLToPath(new URL("../../", import.meta.url));
+      await writeFile(npm, `#!/bin/sh\nprintf '%s\\n' ${shellQuote(packageRoot)}\n`);
+      await chmod(npm, 0o755);
+      process.env["PATH"] = `${binDir}:${process.env["PATH"] ?? ""}`;
+
+      const status = await getPiWebStatus(daemonWithRuntime(runningSessiondRuntime()));
+
+      expect(status.components.web.installation?.kind).toBe("npm-global");
+      expect(status.commands.restart).toBe("pi-web restart");
+      expect(status.commands).not.toHaveProperty("restartWeb");
+      expect(status.commands).not.toHaveProperty("restartSessiond");
+    } finally {
+      await Promise.all([
+        rm(home, { recursive: true, force: true }),
+        rm(binDir, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
   it("suggests Docker commands when running inside the Docker runtime", async () => {
     process.env["PI_WEB_SKIP_VERSION_CHECK"] = "1";
     process.env["PI_WEB_DOCKER_RUNTIME"] = "1";
