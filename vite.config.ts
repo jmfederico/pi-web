@@ -5,12 +5,14 @@ import { extname, join, resolve, sep } from "node:path";
 import type { Plugin } from "vite";
 import { defineConfig, normalizePath } from "vite";
 import { effectivePiWebConfig } from "./src/config";
+import { developmentAllowedHosts } from "./src/shared/hostAccess";
 import { DEPLOYMENT_MANIFEST_CONTENT_TYPE, DEPLOYMENT_MANIFEST_PATH, createDeploymentFlavorResolver, deploymentHtmlForFlavor, deploymentIdentityAssetForPath, deploymentManifestForFlavor, isDeploymentIdentityAssetPath } from "./src/server/deploymentIdentity";
 import { detectPiWebInstallation } from "./src/server/piWebStatus";
 import { fetchThemeBootstrap, injectThemeBootstrap } from "./src/server/themeBootstrap";
 
 const { config } = effectivePiWebConfig();
 const apiPort = config.port ?? 8504;
+const allowedHosts = developmentAllowedHosts(config);
 const docsRoot = resolve("docs");
 const docsPrefix = "/site";
 const clientPublicRoot = resolve("src/client/public");
@@ -251,7 +253,7 @@ export default defineConfig({
     ws: false,
     port: 8505,
     strictPort: true,
-    ...(config.allowedHosts === undefined ? {} : { allowedHosts: config.allowedHosts }),
+    ...(allowedHosts === undefined ? {} : { allowedHosts }),
     proxy: {
       "/api": { target: `http://localhost:${String(apiPort)}`, ws: true },
       "/pi-web-plugins": { target: `http://localhost:${String(apiPort)}` },

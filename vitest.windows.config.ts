@@ -20,6 +20,7 @@ export default defineConfig({
       "src/server/workingDirectory.test.ts",
       "src/server/storage/navigationPreferenceStore.test.ts",
       "src/server/sessions/sessionArchiveStore.test.ts",
+      "src/server/sessions/archiveSelfTool.integration.test.ts",
       "src/server/sessions/attachmentService.test.ts",
       // Real filesystem containment, junctions, mutations, and open-file races.
       "src/server/workspaces/pathAccessPolicy.test.ts",

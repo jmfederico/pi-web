@@ -259,7 +259,7 @@ export function registerSessionRoutes(app: FastifyInstance, sessions: SessionRou
     const ref = sessionRefFromQueryOr400(request.params.sessionId, request.query, reply);
     if (ref === undefined) return reply;
     try {
-      return { models: await sessions.modelCatalog(ref) };
+      return await sessions.modelCatalog(ref);
     } catch (error) {
       return reply.code(404).send({ error: errorMessage(error) });
     }
@@ -268,7 +268,7 @@ export function registerSessionRoutes(app: FastifyInstance, sessions: SessionRou
   app.post<{ Params: { sessionId: string }; Body: { cwd?: unknown; provider?: unknown; modelId?: unknown; enabled?: unknown } | undefined }>(`${prefix}/sessions/:sessionId/models/enabled`, async (request, reply) => {
     try {
       const body = optionalRecord(request.body);
-      return { models: await sessions.setModelEnabled(sessionRefFromBody(request.params.sessionId, body), requireString(body, "provider"), requireString(body, "modelId"), requireBoolean(body, "enabled")) };
+      return await sessions.setModelEnabled(sessionRefFromBody(request.params.sessionId, body), requireString(body, "provider"), requireString(body, "modelId"), requireBoolean(body, "enabled"));
     } catch (error) {
       return reply.code(mutationErrorStatus(error)).send({ error: errorMessage(error) });
     }
@@ -278,8 +278,8 @@ export function registerSessionRoutes(app: FastifyInstance, sessions: SessionRou
     try {
       const body = optionalRecord(request.body);
       const mode = body["mode"];
-      if (!isSessionModelScopeMode(mode)) throw new Error("mode field must be all or current");
-      return { models: await sessions.setModelScope(sessionRefFromBody(request.params.sessionId, body), mode) };
+      if (!isSessionModelScopeMode(mode)) throw new Error("mode field must be all, manual, or current");
+      return await sessions.setModelScope(sessionRefFromBody(request.params.sessionId, body), mode);
     } catch (error) {
       return reply.code(mutationErrorStatus(error)).send({ error: errorMessage(error) });
     }
@@ -812,7 +812,7 @@ function optionalNumber(value: string | undefined): number | undefined {
 }
 
 function isSessionModelScopeMode(value: unknown): value is SessionModelScopeMode {
-  return value === "all" || value === "current";
+  return value === "all" || value === "manual" || value === "current";
 }
 
 function errorMessage(error: unknown): string {

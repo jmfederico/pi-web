@@ -8,7 +8,7 @@
   const results = root.querySelector("[data-plugin-results]");
   const more = root.querySelector("[data-plugin-more]");
   const sort = root.querySelector("select");
-  const keywords = ["pi-web.dev-plugin", "pi-web-plugin"];
+  const keyword = "pi-web.dev-plugin";
   const batchSize = 100;
   const pageSize = 20;
   const createdDates = new Map();
@@ -25,7 +25,7 @@
     return response.json();
   }
 
-  async function searchKeyword(keyword, signal) {
+  async function searchKeyword(signal) {
     const items = [];
     let offset = 0;
     let total;
@@ -37,7 +37,7 @@
       if (!Array.isArray(data?.objects) || !Number.isInteger(data.total) || data.total < 0) {
         throw new Error("Invalid npm search response");
       }
-      // Freeze each stream's total on its first page; a changing registry is not a snapshot.
+      // Freeze the total on the first page; a changing registry is not a snapshot.
       total ??= data.total;
       if (data.objects.length === 0 && offset < total) throw new Error("Incomplete npm search response");
       for (const entry of data.objects) {
@@ -183,10 +183,10 @@
     const timeout = window.setTimeout(() => request.abort(), 30000);
     try {
       if (loading) {
-        const streams = await Promise.all(keywords.map((keyword) => searchKeyword(keyword, request.signal)));
+        const packages = await searchKeyword(request.signal);
         if (controller !== request) return;
         const merged = new Map();
-        for (const pkg of streams.flat()) {
+        for (const pkg of packages) {
           if (!merged.has(pkg.name)) merged.set(pkg.name, pkg);
         }
         request.signal.throwIfAborted();

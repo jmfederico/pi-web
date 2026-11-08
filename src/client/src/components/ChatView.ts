@@ -27,8 +27,6 @@ import { ChatRenderKeys } from "../chatRenderKeys";
 import { DEFAULT_CHAT_BEHAVIORS, type ChatBehaviors } from "../chatBehaviors";
 import type { AskUserSubmission, PendingExtensionDialog, QueuedSessionMessage, SessionActivity, SessionRef, SessionStatus } from "../api";
 import type { ClosedExtensionDialog } from "../appState";
-import type { SelectedSessionNotificationView } from "../sessionNotifications";
-import "./SessionNotificationTray";
 import type { ChatLine, ChatPart } from "../chatTypes";
 import { chatStyles } from "./chat/chatStyles";
 import "./AskUserCard";
@@ -157,13 +155,10 @@ export class ChatView extends LitElement {
   @property({ attribute: false }) onAnswerDialog?: ExtensionDialogAnswerCallback;
   @property({ attribute: false }) onCancelDialog?: ExtensionDialogCancelCallback;
   @property({ attribute: false }) onDismissClosedDialog?: ExtensionDialogDismissCallback;
-  @property({ attribute: false }) notificationInbox?: SelectedSessionNotificationView;
   @property({ attribute: false }) onClearServerQueue?: () => void;
   @property({ attribute: false }) onQueuedMessageAction?: (target: QueuedMessageActionTarget) => Promise<void>;
   @property({ type: Boolean }) queuedMessageActionPending = false;
   @state() private queuedCopyFailed = false;
-  @property({ attribute: false }) onDismissNotification?: (notificationId: string) => void;
-  @property({ attribute: false }) onDismissAllNotifications?: () => void;
   @property({ attribute: false }) onLoadMore?: () => void;
   @property({ attribute: false }) behaviors: ChatBehaviors = DEFAULT_CHAT_BEHAVIORS;
   /**
@@ -367,7 +362,6 @@ export class ChatView extends LitElement {
       };
     }));
     return html`
-      ${this.renderTopNotices()}
       <div class=${this.behaviors.visualEffects ? "chat-wrap" : "chat-wrap plain"}>
         <div class="chat" @image-open=${(event: CustomEvent<ImageOpenDetail>) => { this.openImageZoom(event.detail); }}
           @scroll=${this.behaviors.rememberPosition || this.behaviors.followTail || this.behaviors.automaticHistory ? this.handleScroll : undefined}
@@ -413,24 +407,14 @@ export class ChatView extends LitElement {
     </nav>`;
   }
 
-  private renderTopNotices() {
-    return html`<div class="top-notices">
-      <session-notification-tray
-        .sessionId=${this.sessionId}
-        .notificationInbox=${this.notificationInbox}
-        .onDismissNotification=${this.onDismissNotification}
-        .onDismissAllNotifications=${this.onDismissAllNotifications}
-      ></session-notification-tray>
-    </div>`;
-  }
-
   private groupedMessages(): ChatGroup[] {
     if (this.groupedMessagesInput === this.messages && this.groupedMessagesStart === this.messageStart && this.groupedRenderers === this.transcriptRenderers) return this.groupedMessagesCache;
     this.groupedMessagesInput = this.messages;
     this.groupedMessagesStart = this.messageStart;
     this.groupedRenderers = this.transcriptRenderers;
     this.groupedMessagesCache = groupChatMessages(this.messages, this.messageStart,
-      (customType) => this.transcriptRenderers.some((renderer) => renderer.target === "custom-message" && renderer.customType === customType));
+      (customType) => customType === "session.message"
+        || this.transcriptRenderers.some((renderer) => renderer.target === "custom-message" && renderer.customType === customType));
     return this.groupedMessagesCache;
   }
 

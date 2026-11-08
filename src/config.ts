@@ -9,6 +9,7 @@ import { requireDefaultLocalization } from "./shared/defaultLocalization.js";
 import { requireDefaultStreamingBehavior } from "./shared/streamingBehavior.js";
 import { migrateSessionNamingConfig } from "./configSessionNamingMigration.js";
 import { requireInstallationName } from "./shared/installationName.js";
+import { requireHostAccess } from "./shared/hostAccess.js";
 
 import { PI_WEB_CONFIG_DEFINITIONS, overlayPiWebConfig, parsePiWebEnvBoolean, piWebConfigEnvName, piWebConfigNamespaceFields, piWebConfigSettingPointers } from "./shared/configResolution.js";
 import { versionChecksDisabled } from "./shared/versionCheckPolicy.js";
@@ -257,14 +258,17 @@ export function savePiWebConfig(config: PiWebConfig, options: LoadOptions = {}):
   const env = options.env ?? process.env;
   const path = piWebConfigPath(env, options.cwd ?? process.cwd());
   const defaultsSelector = envValue(env, "PI_WEB_DEFAULTS_CONFIG");
+  let defaultsConfig: PiWebConfig = {};
   if (defaultsSelector !== undefined) {
     const defaultsPath = resolve(options.cwd ?? process.cwd(), defaultsSelector);
     const canonicalPath = (candidate: string): string => existsSync(candidate) ? realpathSync(candidate) : resolve(candidate);
     if (canonicalPath(path) === canonicalPath(defaultsPath)) throw new Error("PI_WEB_CONFIG must not select the PI_WEB_DEFAULTS_CONFIG file");
     // Validate deployment policy before touching the writable file.
-    parseFileConfig(readConfigObject(defaultsPath), defaultsPath);
+    defaultsConfig = parseFileConfig(readConfigObject(defaultsPath), defaultsPath);
   }
   const normalized = parsePiWebConfig(piWebConfigRecord(config), path);
+  // Reject malformed environment policy before publishing a write.
+  applyPiWebConfigEnv(overlayPiWebConfig(defaultsConfig, normalized), env);
   effectiveAgentConfig(env, normalized);
   const existing = readExistingConfigObject(path);
   if (existing["agent"] !== undefined) parseAgentConfig(existing["agent"], path);
@@ -389,11 +393,12 @@ function requireNamespaceKeys(value: Record<string, unknown>, key: string, path:
 
 export function parsePiWebConfig(value: Record<string, unknown>, path = "request", pathHost: AgentPathHost = "current"): PiWebConfig {
   rejectRetiredSessionNaming(value, path);
-  return {
+  const config: PiWebConfig = {
     ...(value["installationName"] !== undefined ? { installationName: requireInstallationName(value["installationName"], `PI WEB config installationName: ${path}`) } : {}),
     ...(value["host"] !== undefined ? { host: parseString(value["host"], "host", path) } : {}),
     ...(value["port"] !== undefined ? { port: parsePort(value["port"], "port", path) } : {}),
     ...(value["allowedHosts"] !== undefined ? { allowedHosts: parseAllowedHosts(value["allowedHosts"], path) } : {}),
+    ...(value["hostAccess"] !== undefined ? { hostAccess: requireHostAccess(value["hostAccess"], `PI WEB config hostAccess: ${path}`) } : {}),
     ...(value["shortcuts"] !== undefined ? { shortcuts: parseShortcuts(value["shortcuts"], path) } : {}),
     ...(value["defaultTheme"] !== undefined ? { defaultTheme: requireDefaultThemePreference(value["defaultTheme"], path) } : {}),
     ...(value["defaultLocalization"] !== undefined ? { defaultLocalization: requireDefaultLocalization(value["defaultLocalization"], path) } : {}),
@@ -414,6 +419,7 @@ export function parsePiWebConfig(value: Record<string, unknown>, path = "request
     ...(value["extensionDialogsTimeoutMs"] !== undefined ? { extensionDialogsTimeoutMs: parseExtensionDialogsTimeoutMs(value["extensionDialogsTimeoutMs"], path) } : {}),
     ...(value["agent"] !== undefined ? { agent: parseAgentConfig(value["agent"], path, pathHost) } : {}),
   };
+  return config;
 }
 
 export function parseSessionArchiveConfig(value: unknown, path: string): NonNullable<PiWebConfigValues["sessionArchive"]> {
@@ -747,6 +753,6 @@ function isNonEmptyStringArray(value: unknown): value is string[] {
 }
 
 export function examplePiWebConfig(config: PiWebConfig = {}): string {
-  return `${JSON.stringify({ host: config.host ?? "127.0.0.1", port: config.port ?? 8504, allowedHosts: config.allowedHosts ?? [] }, null, 2)}\n`;
+  return `${JSON.stringify({ host: config.host ?? "127.0.0.1", port: config.port ?? 8504, allowedHosts: config.allowedHosts ?? [], ...(config.hostAccess === undefined ? {} : { hostAccess: config.hostAccess }) }, null, 2)}\n`;
 }
 

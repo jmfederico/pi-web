@@ -453,8 +453,8 @@ async function commandsFor(components: PiWebStatusResponse["components"], option
     piWebCliCommands(installation),
   ]);
   const restart = restartCommandFor(installation, serviceCommands, cliCommands);
-  const restartWeb = serviceCommands.restartWeb ?? cliCommands.restart;
-  const restartSessiond = serviceCommands.restartSessiond ?? cliCommands.restart;
+  const restartWeb = serviceCommands.restartWeb;
+  const restartSessiond = serviceCommands.restartSessiond;
   const status = serviceCommands.status ?? cliCommands.status;
   const update = updateCommandFor(installation, options);
 

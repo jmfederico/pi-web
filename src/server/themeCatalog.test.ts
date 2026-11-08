@@ -12,7 +12,7 @@ import { parseThemeMetadata } from "./themeMetadata.js";
 const metadata = {
   id: "palette", browserRoot: "public",
   themes: [
-    { id: "day", name: "Day", colorScheme: "light", stylesheets: [{ id: "base", path: "css/day #1.css", order: -1 }] },
+    { id: "day", name: "Day", colorScheme: "light", loadingScreen: { background: "#fff", foreground: "#123456", logo: "#ABC" }, stylesheets: [{ id: "base", path: "css/day #1.css", order: -1 }] },
     { id: "night", name: "Night", colorScheme: "dark", description: "A dark palette", order: 2, stylesheets: [{ id: "base", path: "night.css" }] },
   ],
   themePairs: [{ id: "system", name: "System", light: "day", dark: "night" }],
@@ -71,7 +71,7 @@ describe("static gateway theme catalog", () => {
       ...metadata, themes: [...metadata.themes, { ...metadata.themes[1], id: "extra", name: "Extra" }],
     }] } }));
     const service = new PiWebThemeCatalog(catalog());
-    await writeFile(join(root, "index.html"), '<script id="pi-web-theme-data" type="application/json"></script>');
+    await writeFile(join(root, "index.html"), '<script id="pi-web-theme-data" type="application/json"></script><style id="pi-web-startup-theme"></style>');
     const app = await buildApp({
       themeCatalog: service, clientDist: root, logger: false,
       agentProfileProvider: { getActiveAgentProfile: () => { throw new Error("Static themes must not wait for sessiond"); } },
@@ -85,7 +85,7 @@ describe("static gateway theme catalog", () => {
       expect(response.statusCode).toBe(200);
       const body = response.json<PiWebThemeCatalogResponse>();
       expect(body).toMatchObject({
-        themes: [{ id: "palette:day", pluginId: "palette", name: "Day", colorScheme: "light" }, { id: "palette:night", description: "A dark palette", order: 2 }, { id: "palette:extra" }],
+        themes: [{ id: "palette:day", pluginId: "palette", name: "Day", colorScheme: "light", loadingScreen: metadata.themes[0]?.loadingScreen }, { id: "palette:night", description: "A dark palette", order: 2 }, { id: "palette:extra" }],
         themePairs: [{ id: "palette:system", light: "palette:day", dark: "palette:night", pluginId: "palette" }],
         defaultTheme: { themeId: "palette:day", auto: true }, enforcedBy: "PI_WEB_DEFAULT_THEME",
       });
@@ -107,6 +107,7 @@ describe("static gateway theme catalog", () => {
         expect(html.headers["cache-control"]).toBe("private, no-cache");
         const data = /<script[^>]*>([\s\S]*?)<\/script>/u.exec(html.body)?.[1] ?? "";
         expect(JSON.parse(data)).toEqual(bootstrap);
+        expect(html.body).toContain("--pi-startup-background:#fff");
       }
       const stylesheet = body.themes[0]?.stylesheets[0];
       expect(stylesheet).toMatchObject({ id: "palette:base", order: -1 });
@@ -263,6 +264,14 @@ describe("static gateway theme catalog", () => {
 });
 
 describe("theme metadata validation", () => {
+  it.each([null, {}, { background: "#fff", foreground: "#000" },
+    { background: "red", foreground: "#000", logo: "#fff" },
+    { background: "#ffff", foreground: "#000", logo: "#fff" },
+    { background: "#fff", foreground: "#000", logo: "</style><script>alert(1)</script>" },
+  ])("rejects invalid loading-screen contributions %#", (loadingScreen) => {
+    expect(() => parseThemeMetadata({ themes: [{ ...metadata.themes[0], loadingScreen }] }, "package.json")).toThrow("loadingScreen");
+  });
+
   it.each([
     { themes: {} },
     { themes: [{ ...metadata.themes[0], colorScheme: "system" }] },

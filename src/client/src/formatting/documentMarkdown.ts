@@ -1,5 +1,5 @@
-import { marked } from "marked";
-import type { FilesContent } from "./filesLocalization";
+import { Renderer } from "marked";
+import type { MarkdownRenderRequest } from "../../../shared/markdownTypes";
 
 const NO_ATTRIBUTES = new Set<string>();
 
@@ -38,29 +38,22 @@ const SAFE_LINK_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
 const SAFE_TABLE_ALIGNMENTS = new Set(["left", "center", "right"]);
 const TABLE_SCROLL_CLASS = "table-scroll";
 
-/** Render untrusted workspace Markdown through the dedicated allowlist policy. */
-export function renderWorkspaceMarkdownHtml(markdown: string, content?: FilesContent): string {
-  const renderer = new marked.Renderer();
-  // Workspace bytes and translated annotations are text, never trusted HTML.
+/** Render document bytes and translated annotations as text, never trusted HTML. */
+export function createDocumentMarkdownRenderer(labels?: MarkdownRenderRequest["labels"]): Renderer {
+  const renderer = new Renderer();
   renderer.html = ({ text }) => escapeHtml(text);
-  renderer.image = ({ text }) => escapeHtml(content === undefined
+  renderer.image = ({ text }) => escapeHtml(labels === undefined
     ? text === "" ? "[Image omitted]" : `[Image omitted: ${text}]`
-    : content.messages.t("imageOmitted", { alt: text, hasAlt: text === "" ? "no" : "yes" }));
+    : labels.imageOmitted(text));
   renderer.checkbox = ({ checked }) => checked ? "[x] " : "[ ] ";
-  const generated = marked.parse(markdown, {
-    async: false,
-    breaks: true,
-    gfm: true,
-    renderer,
-  });
-  return sanitizeWorkspaceMarkdownHtml(generated, content);
+  return renderer;
 }
 
 /**
- * Sanitize HTML generated from workspace Markdown. This seam is exported so
+ * Sanitize HTML generated from document Markdown. This seam is exported so
  * the element, attribute, and URL policy can be contract-tested directly.
  */
-export function sanitizeWorkspaceMarkdownHtml(generatedHtml: string, content?: FilesContent): string {
+export function sanitizeDocumentMarkdownHtml(generatedHtml: string, labels?: MarkdownRenderRequest["labels"]): string {
   const template = document.createElement("template");
   template.innerHTML = generatedHtml;
 
@@ -79,14 +72,14 @@ export function sanitizeWorkspaceMarkdownHtml(generatedHtml: string, content?: F
       }
     }
 
-    if (tag === "a") secureWorkspaceMarkdownLink(element);
+    if (tag === "a") secureDocumentMarkdownLink(element);
   }
 
-  wrapTablesInScrollRegions(template.content, content);
+  wrapTablesInScrollRegions(template.content, labels);
   return template.innerHTML;
 }
 
-function secureWorkspaceMarkdownLink(element: Element): void {
+function secureDocumentMarkdownLink(element: Element): void {
   if (!element.hasAttribute("href")) {
     element.removeAttribute("target");
     element.removeAttribute("rel");
@@ -124,12 +117,12 @@ function hasAsciiControlCharacter(value: string): boolean {
 
 // Markdown tables stay readable on narrow panels without accepting any class,
 // role, or tabindex values from the untrusted generated HTML.
-function wrapTablesInScrollRegions(root: DocumentFragment, content?: FilesContent): void {
+function wrapTablesInScrollRegions(root: DocumentFragment, labels?: MarkdownRenderRequest["labels"]): void {
   root.querySelectorAll("table").forEach((table) => {
     const wrapper = document.createElement("div");
     wrapper.className = TABLE_SCROLL_CLASS;
     wrapper.setAttribute("role", "region");
-    wrapper.setAttribute("aria-label", content?.messages.t("table") ?? "Table");
+    wrapper.setAttribute("aria-label", labels?.table ?? "Table");
     wrapper.setAttribute("tabindex", "0");
     table.before(wrapper);
     wrapper.append(table);

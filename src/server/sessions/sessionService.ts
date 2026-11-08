@@ -12,6 +12,7 @@ import type {
   SessionNotificationDismissRequest,
   SessionNotificationInboxSnapshot,
   SessionModelScopeMode,
+  SessionModelCatalogResponse,
   SessionDefaults,
   SessionDefaultsUpdate,
   SessionUnreadAcknowledgeRequest,
@@ -26,7 +27,6 @@ import type {
   ClientSessionCleanupExecuteResponse,
   ClientSessionCleanupPreviewResponse,
   ClientSessionModel,
-  ClientSessionModelCatalogEntry,
   ClientSessionRef,
   ClientSessionStatus,
   ClientSessionTreeForkRequest,
@@ -81,12 +81,12 @@ export interface SessionRouteService {
   setSessionDefaults(ref: SessionRouteRef, defaults: SessionDefaultsUpdate): Promise<SessionDefaults>;
   availableModels(ref: SessionRouteRef): Promise<ClientSessionModel[]>;
   /** The session machine's full available-model catalog with per-model enabled state, enabled models first. */
-  modelCatalog(ref: SessionRouteRef): Promise<ClientSessionModelCatalogEntry[]>;
+  modelCatalog(ref: SessionRouteRef): Promise<SessionModelCatalogResponse>;
   setModel(ref: SessionRouteRef, provider: string, modelId: string): Promise<ClientSessionStatus>;
   /** Add/remove one model to/from pi's enabled-models scope; returns the updated full catalog. */
-  setModelEnabled(ref: SessionRouteRef, provider: string, modelId: string, enabled: boolean): Promise<ClientSessionModelCatalogEntry[]>;
-  /** Atomically select every model or retain only the session's current model. */
-  setModelScope(ref: SessionRouteRef, mode: SessionModelScopeMode): Promise<ClientSessionModelCatalogEntry[]>;
+  setModelEnabled(ref: SessionRouteRef, provider: string, modelId: string, enabled: boolean): Promise<SessionModelCatalogResponse>;
+  /** Atomically clear the selection, snapshot available models, or retain only the current model. */
+  setModelScope(ref: SessionRouteRef, mode: SessionModelScopeMode): Promise<SessionModelCatalogResponse>;
   cycleModel(ref: SessionRouteRef, direction: "forward" | "backward"): Promise<ClientSessionStatus>;
   availableThinkingLevels(ref: SessionRouteRef): Promise<ClientThinkingLevel[]>;
   setThinkingLevel(ref: SessionRouteRef, level: string): Promise<ClientSessionStatus>;

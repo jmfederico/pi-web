@@ -53,7 +53,8 @@ async function inboxService(childIds = ["child-1"]) {
   if (child === undefined) throw new Error("Expected at least one child");
   const runtimes = [parent.runtime, ...children.map((fixture) => fixture.runtime)];
   let index = 0;
-  const service = new PiSessionService(new CapturingSessionEventHub(), {
+  const events = new CapturingSessionEventHub();
+  const service = new PiSessionService(events, {
     agentDir: "/tmp/pi-web-test-agent",
     modelRuntime: testModelRuntime,
     createAgentRuntime: () => {
@@ -75,7 +76,7 @@ async function inboxService(childIds = ["child-1"]) {
   // The fake prompt resolves without running an agent. Flush its host mutation
   // receipt before explicitly emitting the real child run below.
   await vi.advanceTimersByTimeAsync(0);
-  return { service, parent, child, children };
+  return { service, parent, child, children, events };
 }
 
 type ParentFixture = Awaited<ReturnType<typeof inboxService>>["parent"];
@@ -455,6 +456,54 @@ describe("PiSessionService shared subsession completion inbox", () => {
     await expect(service.joinSubsessions(PARENT_ID, PARENT_FILE)).resolves.toMatchObject({ completions: [{ finalText: "final answer" }] });
   });
 
+  it("a child completion wakes a manually interrupted parent", async () => {
+    const { service, parent, child } = await inboxService();
+    startChildRun(child);
+    await service.abort(sessionRef(PARENT_ID));
+    await settleParent(parent);
+    expect(parent.calls.sendCustomMessage).toHaveLength(0);
+
+    finishChildRun(child);
+    await vi.advanceTimersByTimeAsync(HEARTBEAT_MS * 3);
+    expect(parent.calls.sendCustomMessage).toHaveLength(1);
+    await expect(service.joinSubsessions(PARENT_ID, PARENT_FILE)).resolves.toMatchObject({ completions: [] });
+  });
+
+  it.each(["during", "after"] as const)("a child completing %s a failed wake retries all unread notices without a retry loop", async (timing) => {
+    const { service, parent, children, events } = await inboxService(["child-1", "child-2"]);
+    const [first, second] = children;
+    if (first === undefined || second === undefined) throw new Error("Expected two children");
+    startChildRun(first);
+    startChildRun(second);
+    finishChildRun(first);
+    let rejectWake!: (error: Error) => void;
+    const send = vi.spyOn(parent.session, "sendCustomMessage").mockImplementationOnce(() => {
+      // Settlement can run before the delivery promise rejects. It must not
+      // schedule an immediate retry of the same failed wake.
+      parent.emit({ type: "agent_settled" });
+      return new Promise<void>((_resolve, reject) => { rejectWake = reject; });
+    });
+    await settleParent(parent);
+    if (timing === "during") {
+      finishChildRun(second);
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_MS * 3);
+    }
+    expect(send).toHaveBeenCalledOnce();
+    rejectWake(new Error("parent send failed"));
+    await vi.advanceTimersByTimeAsync(HEARTBEAT_MS * 3);
+    expect(events.sessionEvents.filter(({ event }) => event.type === "session.error")).toHaveLength(0);
+
+    if (timing === "after") {
+      expect(send).toHaveBeenCalledOnce();
+      finishChildRun(second);
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_MS * 3);
+    }
+    expect(send).toHaveBeenCalledTimes(2);
+    const completionIds = children.flatMap(({ journal }) => persistedSubsessionCompletions(journal.entries).map(({ completionId }) => completionId));
+    expect(completionReceiptIds(send.mock.calls[1]?.[0].details)).toEqual(completionIds);
+    await expect(service.joinSubsessions(PARENT_ID, PARENT_FILE)).resolves.toMatchObject({ completions: [] });
+  });
+
   it("a failing automatic parent send releases the claim and leaves the answer pending", async () => {
     const { service, parent, child } = await inboxService();
     startChildRun(child);
@@ -468,20 +517,98 @@ describe("PiSessionService shared subsession completion inbox", () => {
     expect(joined.completions).toEqual(persistedSubsessionCompletions(child.journal.entries));
     expect(joined.completions).toMatchObject([{ finalText: "final answer" }]);
     await settleParent(parent);
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(send).toHaveBeenCalledOnce();
   });
 
-  it("does not treat message_end before a failed custom-message write as a durable receipt", async () => {
+  it("retries a failed insertion after message_end without treating the event as a receipt", async () => {
     const { service, parent, child } = await inboxService();
     startChildRun(child);
     finishChildRun(child);
-    const send = vi.spyOn(parent.session, "sendCustomMessage").mockImplementation((message) => {
+    const send = vi.spyOn(parent.session, "sendCustomMessage").mockImplementationOnce((message) => {
       parent.emit({ type: "message_end", message: { role: "custom", ...message } });
       return Promise.reject(new Error("custom-message storage failed"));
     });
     await settleParent(parent);
     expect(send).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(parent.journal.entries.filter((entry) => typeof entry === "object" && entry !== null && "customType" in entry
+      && entry.customType === SUBSESSION_NOTIFICATION_CUSTOM_TYPE)).toHaveLength(1);
+    await expect(service.joinSubsessions(PARENT_ID, PARENT_FILE)).resolves.toMatchObject({ completions: [] });
+  });
+
+  it("bounds insertion retries with backoff and reports exhaustion once", async () => {
+    const { service, parent, child, events } = await inboxService();
+    startChildRun(child);
+    finishChildRun(child);
+    const send = vi.spyOn(parent.session, "sendCustomMessage").mockRejectedValue(new Error("insertion unavailable"));
+    await settleParent(parent);
+    expect(send).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(send).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(send).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(events.sessionEvents.filter(({ event }) => event.type === "session.error")).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(send).toHaveBeenCalledTimes(4);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(send).toHaveBeenCalledTimes(4);
+    expect(events.sessionEvents.filter(({ event }) => event.type === "session.error")).toEqual([
+      { sessionId: PARENT_ID, event: { type: "session.error", message: "insertion unavailable" } },
+    ]);
     await expect(service.joinSubsessions(PARENT_ID, PARENT_FILE)).resolves.toMatchObject({ completions: [{ finalText: "final answer" }] });
+  });
+
+  it("does not retry a rejected run once the notice exists in the conversation", async () => {
+    const { service, parent, child } = await inboxService();
+    startChildRun(child);
+    finishChildRun(child);
+    const send = vi.spyOn(parent.session, "sendCustomMessage").mockImplementationOnce((message) => {
+      parent.journal.entries.push({ type: "custom_message", ...message });
+      return Promise.reject(new Error("agent failed after insertion"));
+    });
+    await settleParent(parent);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(send).toHaveBeenCalledOnce();
+    await expect(service.joinSubsessions(PARENT_ID, PARENT_FILE)).resolves.toMatchObject({ completions: [] });
+  });
+
+  it("defers a retry while the parent is busy and delivers once it settles", async () => {
+    const { service, parent, child } = await inboxService();
+    startChildRun(child);
+    finishChildRun(child);
+    const send = vi.spyOn(parent.session, "sendCustomMessage").mockRejectedValueOnce(new Error("insertion unavailable"));
+    await settleParent(parent);
+    parent.session.isStreaming = true;
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(send).toHaveBeenCalledOnce();
+    await settleParent(parent);
+    expect(send).toHaveBeenCalledTimes(2);
+    await expect(service.joinSubsessions(PARENT_ID, PARENT_FILE)).resolves.toMatchObject({ completions: [] });
+  });
+
+  it.each(["close", "dispose"] as const)("cancels delayed delivery on runtime %s", async (action) => {
+    const { service, parent, child } = await inboxService();
+    const timers = vi.spyOn(globalThis, "setTimeout");
+    const clearTimer = vi.spyOn(globalThis, "clearTimeout");
+    startChildRun(child);
+    finishChildRun(child);
+    const send = vi.spyOn(parent.session, "sendCustomMessage").mockRejectedValueOnce(new Error("insertion unavailable"));
+    await settleParent(parent);
+    const retryIndex = timers.mock.calls.findIndex(([, delay]) => delay === 2_000);
+    const retryTimer: unknown = timers.mock.results[retryIndex]?.value;
+    expect(retryTimer).toBeDefined();
+    if (action === "close") await service.stop(sessionRef(PARENT_ID));
+    else {
+      await service.dispose();
+      services.delete(service);
+    }
+    expect(clearTimer).toHaveBeenCalledWith(retryTimer);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(send).toHaveBeenCalledOnce();
   });
 
   it.each(["join", "check", "read"])("a parent receipt persistence failure in %s leaves the result unread", async (method) => {

@@ -79,6 +79,8 @@ Local sticky headers, shadows, and decorations can still use small stacking valu
 
 Use the existing `ModalSurface` component for native modality, focus placement/restoration, Escape, backdrop dismissal, and dialog naming. The content patterns in `ui/dialogStyles.ts` compose with that surface; they do not add another modal controller or wrapper.
 
+For a simple yes/no decision, mount `ConfirmationDialog` and call `request({ title, message, confirmLabel, cancelLabel })`. Text may be a string or a function for live localization. It composes `ModalSurface`, focuses Cancel initially, and resolves `true` only on confirmation; cancellation, removal, and replacement resolve `false`. The caller owns the action, error handling, and validation that the pending action is still current. It does not execute work or queue requests.
+
 - `uiDialogStyles` provides common header, close button, search row, scrollable body, and footer treatment. It includes `uiButtonStyles`.
 - `uiSelectionStyles` provides gapless option rows, composite rows with separate pin/checkbox actions, descriptions, and empty states. Combine it with `uiDialogStyles` for selections such as models, thinking levels, and Actions.
 - `uiFormStyles` from `ui/formStyles.ts` provides field labels, native input and textarea styling, checkbox rows, and form errors. It is also re-exported by `ui/dialogStyles.ts`. Combine it with `uiDialogStyles` for provider login, adding machines, and adding projects. Inline question forms and extension dialogs reuse the same fields without importing modal layout. A dialog with both choices and a form can compose all three.
@@ -101,6 +103,12 @@ Sections own their internal padding and a bottom separator. Do not surround them
 
 `SettingsPanelFrame` composes the section heading, refresh action, notices, and slotted content for settings panels. `uiNoticeStyles` from `ui/noticeStyles.ts` provides `ui-notice` with error, success, warning, and info tones. Consumers retain the appropriate live-region role and message content; styling does not announce a message by itself. These internal patterns are not yet part of the public plugin UI styles capability.
 
+### Navigating to a setting
+
+Settings actions can call `openSettings(section, target)` with a stable target name. `SettingsDialog.target` finds the matching `data-settings-target` inside the active panel, including nested shadow roots. Mark a subsection or field group, give it `tabindex="-1"` and an accessible name, and keep names unique within the section. The dialog waits for Lit rendering, scrolls the group into view, and focuses its first available control; a group with locked controls receives focus itself.
+
+Revealing is one-shot per destination. Missing targets are retried when dialog data rerenders; saves and unrelated updates do not reclaim focus after a successful reveal. Closing or navigating away cancels pending navigation, and a newer modal retains focus ownership. Keep target navigation in the dialog rather than adding per-setting scrolling handlers. These destinations are internal UI navigation, not URL bookmarks or public plugin API.
+
 ## Transcript hierarchy
 
 Chat uses flat transcript sections rather than nested card outlines. Put breathing room inside the section; use restrained role/state tones and labels to distinguish hierarchy. Successful tools stay neutral, while running and error states remain explicit. Nested sections do not need another enclosing border. Code/diff content may retain one useful boundary, and editable inputs retain their input affordance.
@@ -109,9 +117,17 @@ Chat uses flat transcript sections rather than nested card outlines. Put breathi
 
 Chat navigation arrows render as one bordered group anchored to the message input's top-right, with a divider between the arrows. The bottom-right attachment button matches an individual arrow's 28px size for every pointer type, and stays anchored as the input grows, without a separate row between transcript and composer. `ChatView` retains scroll ownership and supplies its controls through `onNavigationChange`; `PromptEditor.chatNavigation` renders them with shared `chatNavigationStyles`. The non-interactive activity indicator is 18px tall, centred horizontally and vertically across the chat/composer border, and disappears when idle. `ConversationLayout` positions the indicator over the shared border without adding padding or a separate row; neither the transcript nor composer is raised above the other to accommodate it.
 
-The statistics footer is non-interactive: it extends into the shell's reserved bottom safe area, has a minimum height of 32px or the bottom inset (whichever is larger), and vertically centres its text. The shell continues to reserve its bottom inset for every other surface, keeping interactive controls above it. Persistent session warnings belong to the ordinary Notices panel, not the composer or statistics footer; immediate event notifications remain in the chat notification tray.
+The statistics footer is non-interactive: it extends into the shell's reserved bottom safe area, has a minimum height of 32px or the bottom inset (whichever is larger), and vertically centres its text. The shell continues to reserve its bottom inset for every other surface, keeping interactive controls above it. Persistent application and session warnings belong to the ordinary Notices panel, not separate banners, the composer, or the statistics footer. Core Notices accepts a client-owned notice provider alongside selected-session warnings, so gateway conditions remain available without a workspace or session. Its existing row renderer supports optional action buttons; runtime warning payloads cannot supply executable actions. Availability and badges count both sources. Session dismissals remain session-scoped; application notices clear when their owning condition resolves. Browser errors, server event notices, and Pi session notifications share the application-shell notification area described below.
 
 Composer control purposes and default-action states have [supported hooks](theme-styling-contract.md#composer-controls) on the existing toolbar groups and native buttons; no extra wrapper is needed. The editor keeps a two-line text minimum even when empty or containing one line. Vertical padding belongs to the editor frame, outside the scroller, so long drafts retain top and bottom clearance at the 220px height cap.
+
+### Notification area
+
+`NotificationArea` is the shared presentation for browser-local failures, server notices, and selected-session notifications. It sits outside `ConversationLayout` and transcript scrolling, remains available without a selected session, and uses the shared toolbar and button styles. Severity icons and counts share one header row in both expanded and collapsed states, including narrow panes. Full severity labels remain available to screen readers and through tooltips; the heading can truncate to preserve the counts and controls. A new error occurrence reopens a collapsed area without taking keyboard focus; refreshed or restored copies of an already displayed error do not.
+
+Adapters supply source-qualified occurrence IDs, severity, localized display text, source/scope attribution, and owner callbacks. Browser errors stay browser-local; server and session items retain their existing daemon storage and dismissal APIs. Scope filtering happens before rendering. Re-reporting a browser error creates a new occurrence, while a language change preserves its identity.
+
+Dismiss and Retry call the item's owner. Clear captures only the displayed dismissible groups, preserving other contexts and later arrivals. Each owner retains failed items and reports action failures; one failed clear must not prevent the other captured groups from being cleared. Session overflow counts remain separate from retained severity counts. This is a unified presentation, not a merged notification store or a history panel.
 
 ### Message frames
 
@@ -123,6 +139,8 @@ Choose action placement explicitly:
 - `header`: messages with a visible label, including system notices and tool-image output. Source-only rows can omit the body; bundle headings can omit actions.
 
 Metadata follows the content area, outside the action anchor. Each content area isolates its local controls so they cannot paint over the activity group's sticky heading. Disabling visual effects does not change action placement. Headerless tool executions and question records retain their own surfaces without a message frame.
+
+System messages use the same header-placement frame with a neutral background, a visible label, and full-contrast body text. Standalone messages have a restrained leading edge; grouped messages retain their activity group's boundary. Session messages split the sender header from the body only when `customType: "session.message"` has string content, a nonempty `details.sendingSessionId`, and a string `details.body`. The sender link opens the session-only route on the message's machine, which resolves the sender's workspace on page load. The body is displayed verbatim from that metadata, without stripping a prefix from the original content. Legacy messages without body metadata, unknown types, and malformed metadata retain their original presentation under the default System heading. The persisted and agent-facing content still includes attribution; browser display text does not change history, original action text, or custom-renderer input. Message prose is never used to infer a sender, severity, or lifecycle state.
 
 The frame exposes the supported `.chat-message-*` content/header/body hooks only when rendering a conversation bubble; activity messages do not become conversation bubbles by sharing the layout. Consumers own content padding and may set `--message-frame-header-padding` and `--message-frame-meta-padding`. These frame details are internal, not plugin theme compatibility hooks.
 

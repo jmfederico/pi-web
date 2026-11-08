@@ -1,4 +1,5 @@
 import type { PiWebConfigValues } from "../../api";
+import { requireHostAccess } from "../../../../shared/hostAccess";
 
 export type SettingsConfigValidation =
   | { kind: "port" }
@@ -13,8 +14,8 @@ export class SettingsConfigValidationError extends Error {
 export interface GatewayServerConfigDraft {
   host: string;
   port: string;
-  allowedHostsMode: "list" | "all";
-  allowedHostsText: string;
+  hostAccessMode: "" | "restricted" | "any";
+  hostAccessText: string;
 }
 
 export interface MachineAccessConfigDraft {
@@ -25,7 +26,7 @@ export interface MachineAccessConfigDraft {
 }
 
 export function emptyGatewayServerConfigDraft(): GatewayServerConfigDraft {
-  return { host: "", port: "", allowedHostsMode: "list", allowedHostsText: "" };
+  return { host: "", port: "", hostAccessMode: "", hostAccessText: "" };
 }
 
 export function emptyMachineAccessConfigDraft(): MachineAccessConfigDraft {
@@ -36,8 +37,9 @@ export function gatewayServerDraftFromConfig(config: PiWebConfigValues): Gateway
   return {
     host: config.host ?? "",
     port: config.port === undefined ? "" : String(config.port),
-    allowedHostsMode: config.allowedHosts === true ? "all" : "list",
-    allowedHostsText: Array.isArray(config.allowedHosts) ? config.allowedHosts.join("\n") : "",
+    hostAccessMode: config.hostAccess?.mode ?? "",
+    hostAccessText: config.hostAccess?.mode === "restricted" ? config.hostAccess.hosts.join("\n")
+      : config.hostAccess === undefined && Array.isArray(config.allowedHosts) ? config.allowedHosts.join("\n") : "",
   };
 }
 
@@ -69,7 +71,9 @@ export function gatewayServerConfigFromDraft(draft: GatewayServerConfigDraft, ba
     if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) throw new SettingsConfigValidationError({ kind: "port" }, "Port must be an integer from 1 to 65535.");
     config.port = parsed;
   }
-  config.allowedHosts = draft.allowedHostsMode === "all" ? true : parseAllowedHostsText(draft.allowedHostsText);
+  // An untouched placeholder is not a policy decision, even when other fields change.
+  if (draft.hostAccessMode === "restricted") config.hostAccess = requireHostAccess({ mode: "restricted", hosts: parseAllowedHostsText(draft.hostAccessText) });
+  else if (draft.hostAccessMode === "any") config.hostAccess = { mode: "any" };
   return config;
 }
 

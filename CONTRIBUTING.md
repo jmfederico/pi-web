@@ -8,7 +8,9 @@ Use plain, concise language. State what happened or what should change, and why 
 
 Start with `## What and why`, using **250 words maximum**. The opening must stand alone without requiring code or appendix reading. For bugs, include expected/actual behavior and only the reproduction steps needed to understand the report.
 
-Put implementation walkthroughs, file inventories, lengthy logs, and detailed verification in one optional collapsed appendix. Keep essential decisions, risks, and questions in the opening.
+Brief implementation context, including code identifiers or a short explanation of a fix, may stay in the opening when the problem and outcome remain understandable without reading code. Technical detail alone is not a readability problem.
+
+Put implementation walkthroughs, file inventories, lengthy logs, and detailed verification in one optional collapsed appendix. Keep essential decisions, risks, and questions in the opening. Omit the appendix when there is no extended detail to separate.
 
 ```markdown
 ## What and why

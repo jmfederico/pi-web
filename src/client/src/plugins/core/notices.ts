@@ -2,6 +2,7 @@ import { html } from "lit";
 import type { SessionWarning } from "../../api";
 import type { AppState } from "../../appState";
 import { sessionNoticesMessages } from "../../components/SessionNoticesPanel";
+import type { ChatSessionWarningRow } from "../../components/chat/SessionWarnings";
 import type { ApplicationPanelContribution } from "../types";
 
 export const EMPTY_SESSION_NOTICES: readonly SessionWarning[] = Object.freeze([]);
@@ -25,20 +26,20 @@ export function sessionNotices(state: AppState): readonly SessionWarning[] {
   return preview;
 }
 
-export function createCoreNoticesPanel(): ApplicationPanelContribution {
+export function createCoreNoticesPanel(getApplicationNotices: () => readonly ChatSessionWarningRow[] = () => []): ApplicationPanelContribution {
   return {
     id: "notices",
     order: 0,
     get title() { return sessionNoticesMessages.t("title"); },
-    visible: (context) => sessionNotices(context.state).length > 0,
-    badge: (context) => sessionNotices(context.state).length || undefined,
+    visible: (context) => getApplicationNotices().length + sessionNotices(context.state).length > 0,
+    badge: (context) => getApplicationNotices().length + sessionNotices(context.state).length || undefined,
     render: (context) => {
       const warnings = sessionNotices(context.state);
       const status = context.state.status;
       const matchedStatus = status?.sessionId === context.state.selectedSession?.id ? status : undefined;
       const displayedStatus = matchedStatus === undefined || warnings === (matchedStatus.warnings ?? EMPTY_SESSION_NOTICES)
         ? matchedStatus : { ...matchedStatus, warnings: [...warnings] };
-      return html`<session-notices-panel .status=${displayedStatus} .machineId=${context.machine.id}></session-notices-panel>`;
+      return html`<session-notices-panel .notices=${getApplicationNotices()} .status=${displayedStatus} .machineId=${context.machine.id}></session-notices-panel>`;
     },
   };
 }

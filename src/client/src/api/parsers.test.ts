@@ -96,6 +96,24 @@ describe("API parsers", () => {
     expect(() => parsePiWebConfigResponse({ ...response, defaultsConfig: { basePaths: [42] } })).toThrow();
   });
 
+  it("preserves explicit Host decisions and active runtime state without inventing choices for older servers", () => {
+    const response = { path: "config.json", exists: true, config: {}, effectiveConfig: {}, envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false } };
+    expect(parsePiWebConfigResponse(response)).not.toHaveProperty("activeHostAccess");
+    expect(parsePiWebConfigResponse({ ...response, activeHostAccess: null }).activeHostAccess).toBeNull();
+    for (const hostAccess of [{ mode: "restricted", hosts: [] }, { mode: "restricted", hosts: ["gateway.local"] }, { mode: "any" }]) {
+      for (const field of ["config", "effectiveConfig", "defaultsConfig"] as const) {
+        expect(parsePiWebConfigResponse({ ...response, [field]: { hostAccess, allowedHosts: true } })[field]).toEqual({ hostAccess, allowedHosts: true });
+      }
+      expect(parsePiWebConfigResponse({ ...response, activeHostAccess: hostAccess }).activeHostAccess).toEqual(hostAccess);
+    }
+    // The shared validator owns the schema matrix; prove each response boundary uses it.
+    for (const field of ["config", "effectiveConfig", "defaultsConfig"] as const) {
+      expect(() => parsePiWebConfigResponse({ ...response, [field]: { hostAccess: null } })).toThrow("hostAccess");
+      expect(() => parsePiWebConfigResponse({ ...response, [field]: { hostAccess: { mode: "restricted" } } })).toThrow("hostAccess");
+    }
+    expect(() => parsePiWebConfigResponse({ ...response, activeHostAccess: { mode: "any", hosts: [] } })).toThrow("activeHostAccess");
+  });
+
   it("parses and validates installation identity in config responses", () => {
     const response = { path: "config.json", exists: true, config: { installationName: " Build lab " }, effectiveConfig: {}, envOverrides: { host: false, port: false, allowedHosts: false, maxUploadBytes: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false } };
     expect(parsePiWebConfigResponse(response).config.installationName).toBe("Build lab");
@@ -780,7 +798,19 @@ describe("API parsers", () => {
     });
   });
 
+  it.each(["all", "manual"] as const)("preserves the catalog's explicit %s scope independently of row membership", (scope) => {
+    const models = [{ provider: "p", id: "m", enabled: true }];
+    expect(parseSessionModelCatalogResponse({ models, scope })).toEqual({ models, scope });
+    expect(parseSessionModelCatalogResponse({ models: [], scope })).toEqual({ models: [], scope });
+  });
+
+  it("leaves an older server's availability mode unknown instead of inferring it from checked rows", () => {
+    const models = [{ provider: "p", id: "m", enabled: true }];
+    expect(parseSessionModelCatalogResponse({ models })).toEqual({ models });
+  });
+
   it("rejects malformed model catalog entries", () => {
+    expect(() => parseSessionModelCatalogResponse({ models: [], scope: true })).toThrow("Invalid model catalog scope");
     expect(() => parseSessionModelCatalogResponse({ models: [{ id: "m", enabled: true }] })).toThrow("Expected string field: provider");
     expect(() => parseSessionModelCatalogResponse({ models: [{ provider: "p", enabled: true }] })).toThrow("Expected string field: id");
     expect(() => parseSessionModelCatalogResponse({ models: [{ provider: "p", id: "m", enabled: "yes" }] })).toThrow("Expected boolean field: enabled");

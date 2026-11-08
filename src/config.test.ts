@@ -2,7 +2,7 @@ import { chmod, lstat, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile 
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_ATTACHMENT_FOLDER, DEFAULT_EXTENSION_DIALOGS_TIMEOUT_MS, DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_UPLOADS_FOLDER, AGENT_SESSION_DIR_ENV_KEYS, agentSessionDirEnvOverride, askUserEnabled, detectDeprecatedAgentInputs, effectiveAgentConfig, environmentFactsEnabled, effectivePiWebConfig, loadPiWebConfig, maxUploadBytes, offlineModeEnabled, savePiWebConfig, sessionArchiveDirectory, sessionMessagesEnabled, spawnSessionsEnabled, subsessionsEnabled, applyPiWebConfigEnv, overlayPiWebConfig, piWebConfigSources, piWebConfigEnforcedSettings, resolveEffectivePiWebConfig } from "./config.js";
+import { DEFAULT_ATTACHMENT_FOLDER, DEFAULT_EXTENSION_DIALOGS_TIMEOUT_MS, DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_UPLOADS_FOLDER, AGENT_SESSION_DIR_ENV_KEYS, agentSessionDirEnvOverride, askUserEnabled, detectDeprecatedAgentInputs, effectiveAgentConfig, environmentFactsEnabled, effectivePiWebConfig, loadPiWebConfig, maxUploadBytes, offlineModeEnabled, savePiWebConfig, sessionArchiveDirectory, sessionMessagesEnabled, spawnSessionsEnabled, subsessionsEnabled, applyPiWebConfigEnv, overlayPiWebConfig, piWebConfigSources, piWebConfigEnforcedSettings, resolveEffectivePiWebConfig, examplePiWebConfig } from "./config.js";
 
 let tempDir: string;
 let configPath: string;
@@ -32,6 +32,60 @@ describe("configuration save integrity", () => {
   it("validates bootstrap boolean policies before resolving effective configuration", () => {
     expect(() => effectivePiWebConfig({ env: { PI_WEB_CONFIG: configPath, PI_WEB_SKIP_VERSION_CHECK: "perhaps" } })).toThrow("PI_WEB_SKIP_VERSION_CHECK");
     expect(() => effectivePiWebConfig({ env: { PI_WEB_CONFIG: configPath, PI_WEB_OFFLINE: "yes" } })).toThrow("PI_WEB_OFFLINE");
+  });
+});
+
+describe("Host access decision", () => {
+  it("leaves fresh installs undecided without writing an override", async () => {
+    expect(effectivePiWebConfig(testOptions()).config).not.toHaveProperty("hostAccess");
+    expect(await readdir(tempDir)).not.toContain("config.json");
+    expect(JSON.parse(examplePiWebConfig())).not.toHaveProperty("hostAccess");
+  });
+
+  it.each([[], ["old.example.test"], true].map((allowedHosts) => ({ allowedHosts })))("keeps legacy allowedHosts $allowedHosts undecided without rewriting the file", async ({ allowedHosts }) => {
+    const original = JSON.stringify({ allowedHosts });
+    await writeFile(configPath, original);
+    expect(effectivePiWebConfig(testOptions()).config).toMatchObject({ allowedHosts });
+    expect(effectivePiWebConfig(testOptions()).config).not.toHaveProperty("hostAccess");
+    expect(await readFile(configPath, "utf8")).toBe(original);
+  });
+
+  it.each([{ mode: "any" as const }, { mode: "restricted" as const, hosts: [] }, { mode: "restricted" as const, hosts: [".example.test"] }])("persists and resolves an explicit %j decision", (hostAccess) => {
+    savePiWebConfig({ hostAccess }, testOptions());
+    expect(loadPiWebConfig(testOptions()).config.hostAccess).toEqual(hostAccess);
+    expect(effectivePiWebConfig(testOptions()).config.hostAccess).toEqual(hostAccess);
+    expect(piWebConfigSources(loadPiWebConfig(testOptions()), testOptions())).toMatchObject({ "/hostAccess": "config" });
+  });
+
+  it("replaces defaults, writable and enforced objects atomically and resets to absence", async () => {
+    const defaults = join(tempDir, "defaults.json");
+    const restricted = { mode: "restricted" as const, hosts: ["default.test"] };
+    await writeFile(defaults, JSON.stringify({ hostAccess: restricted }));
+    const options = { env: { ...testOptions().env, PI_WEB_DEFAULTS_CONFIG: defaults } };
+    expect(effectivePiWebConfig(options).config.hostAccess).toEqual(restricted);
+    savePiWebConfig({ hostAccess: { mode: "any" } }, options);
+    expect(effectivePiWebConfig(options).config.hostAccess).toEqual({ mode: "any" });
+    const enforced = { env: { ...options.env, PI_WEB_HOST_ACCESS: JSON.stringify({ mode: "restricted", hosts: [] }) } };
+    expect(effectivePiWebConfig(enforced).config.hostAccess).toEqual({ mode: "restricted", hosts: [] });
+    expect(loadPiWebConfig(enforced).config.hostAccess).toEqual({ mode: "any" });
+    expect(piWebConfigEnforcedSettings(enforced.env)["/hostAccess"]).toBe("PI_WEB_HOST_ACCESS");
+    savePiWebConfig({}, options);
+    expect(effectivePiWebConfig(options).config.hostAccess).toEqual(restricted);
+    expect(effectivePiWebConfig(testOptions()).config).not.toHaveProperty("hostAccess");
+  });
+
+  it("rejects malformed saved and deployment policy even when the environment overrides it", async () => {
+    await writeFile(configPath, JSON.stringify({ hostAccess: { mode: "restricted" } }));
+    expect(() => effectivePiWebConfig({ env: { ...testOptions().env, PI_WEB_HOST_ACCESS: '{"mode":"any"}' } })).toThrow("hostAccess");
+    expect(() => effectivePiWebConfig({ env: { PI_WEB_CONFIG: join(tempDir, "missing.json"), PI_WEB_DEFAULTS_CONFIG: configPath } })).toThrow("hostAccess");
+  });
+
+  it("keeps legacy enforcement independent from hostAccess", () => {
+    const hostAccess = { mode: "restricted" as const, hosts: [] };
+    const env = { ...testOptions().env, PI_WEB_ALLOWED_HOSTS: "true" };
+    savePiWebConfig({ hostAccess }, { env });
+    expect(effectivePiWebConfig({ env }).config.hostAccess).toEqual(hostAccess);
+    expect(piWebConfigEnforcedSettings(env)).toEqual({ "/allowedHosts": "PI_WEB_ALLOWED_HOSTS" });
   });
 });
 
@@ -674,7 +728,7 @@ describe("environment setting resolution", () => {
 
   it("supports every core setting with source-aware validators", () => {
     const config = {
-      installationName: "Deployment", host: "0.0.0.0", port: 9001, allowedHosts: ["host"],
+      installationName: "Deployment", host: "0.0.0.0", port: 9001, allowedHosts: ["host"], hostAccess: { mode: "any" as const },
       shortcuts: { stop: null }, defaultTheme: { themeId: "themes:pi-web-light", auto: false },
       defaultLocalization: { language: "de" }, defaultStreamingBehavior: "followUp" as const,
       quietMode: true, plugins: { git: { enabled: false, settings: { key: { value: 1 } } } },
@@ -734,6 +788,7 @@ describe("environment setting resolution", () => {
     ["PI_WEB_ASK_USER", "enabled"], ["PI_WEB_ENVIRONMENT_FACTS", "null"],
     ["PI_WEB_BASE_PATHS", "/a,/b"], ["PI_WEB_PATH_ACCESS", "[]"], ["PI_WEB_UPLOADS", "null"],
     ["PI_WEB_ALLOWED_HOSTS", "[broken"], ["PI_WEB_MAX_UPLOAD_BYTES", "0"],
+    ["PI_WEB_HOST_ACCESS", ""], ["PI_WEB_HOST_ACCESS", "false"], ["PI_WEB_HOST_ACCESS", "unknown"], ["PI_WEB_HOST_ACCESS", '{"mode":"restricted"}'],
     ["PI_WEB_EXTENSION_DIALOGS_TIMEOUT_MS", "-1"], ["PI_WEB_DEFAULT_THEME", "{}"],
   ])("rejects invalid %s with variable context", (key, value) => {
     expect(() => applyPiWebConfigEnv({}, { [key]: value })).toThrow(key);

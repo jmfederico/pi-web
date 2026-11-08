@@ -45,6 +45,7 @@ const namespaces = [
   "core.projectWorkspaceFeedback",
   "core.sessionFeedback",
   "core.pluginRecovery",
+  "core.restart",
   "core.actions",
   "core.messageActions",
   "plugin:themes:themes",

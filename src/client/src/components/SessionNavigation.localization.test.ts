@@ -7,7 +7,8 @@ import { notificationDismissLabel, type SelectedSessionNotificationView } from "
 import { installPopoverFake } from "./anchoredPopup.testSupport";
 installPopoverFake();
 import { SessionList, sessionNavigationMessages as messages } from "./SessionList";
-import { SessionNotificationTray } from "./SessionNotificationTray";
+import { NotificationArea } from "./NotificationArea";
+import { sessionNotificationGroup } from "../notificationAdapters";
 
 let release: (() => void) | undefined;
 afterEach(async () => {
@@ -27,7 +28,7 @@ function required<T extends HTMLElement>(host: HTMLElement, selector: string, ty
   if (!(found instanceof type)) throw new Error(`Missing ${selector}`);
   return found;
 }
-async function settle(view: SessionList | SessionNotificationTray): Promise<void> {
+async function settle(view: SessionList | NotificationArea): Promise<void> {
   await view.updateComplete;
   await view.updateComplete;
 }
@@ -117,13 +118,14 @@ it("keeps a session action menu open and renders destructive confirmations in th
 it("updates notification chrome, announcements and regional time without changing content, collapse or callbacks", async () => {
   const notification = { id: "daemon:1", message: "User <b>notice</b> https://example.com/value", severity: "warning" as const, truncated: true, receivedAt: "2026-07-18T00:00:00.000Z", order: 1 };
   const inbox: SelectedSessionNotificationView = { machineId: "local", sessionId: "s", cwd: "/repo", daemonInstanceId: "daemon", notifications: [notification], retainedCount: 1, discardedCount: 1234, highestSeverity: "warning", dismissThrough: { order: 1, overflowWatermark: 0 }, pendingDismissedIds: new Set(), dismissAllPending: false, announcements: [{ id: "a", severity: "warning", message: notification.message }] };
-  const view = new SessionNotificationTray();
-  view.sessionId = "s"; view.notificationInbox = inbox;
-  view.onDismissNotification = vi.fn(); view.onDismissAllNotifications = vi.fn();
+  const view = new NotificationArea();
+  const dismiss = vi.fn(); const clear = vi.fn();
+  view.contextKey = "s";
+  view.groups = [sessionNotificationGroup(inbox, { dismiss, clear })];
   document.body.append(view);
   await settle(view);
   const toggle = required(view, ".notification-toggle", HTMLButtonElement);
-  const announcement = required(view, "[data-announcement-id='a']", HTMLElement);
+  const announcement = required(view, "[data-announcement-id]", HTMLElement);
   toggle.click(); toggle.focus();
   for (const language of ["en-XA", "ar-XB", "en"]) {
     await localization.setPreferences({ language, formatLocale: "ar-EG", timeZone: "Asia/Tokyo", hourCycle: "h23" });
@@ -136,11 +138,11 @@ it("updates notification chrome, announcements and regional time without changin
     expect(view.shadowRoot?.querySelector("b")).toBeNull();
     expect(required(view, ".notification-row-dismiss", HTMLElement).getAttribute("aria-label")).toBe(notificationDismissLabel(notification));
     expect(required(view, "time", HTMLElement).textContent).toBe(new Intl.DateTimeFormat("ar-EG", { timeStyle: "short", timeZone: "Asia/Tokyo", hourCycle: "h23" }).format(new Date(notification.receivedAt)));
-    expect(required(view, "[data-announcement-id='a']", HTMLElement)).toBe(announcement);
+    expect(required(view, "[data-announcement-id]", HTMLElement)).toBe(announcement);
     expect(announcement.textContent).toBe(sessionNotificationMessages.t("announcement", { severity: "warning" }));
-    expect(view.onDismissNotification).not.toHaveBeenCalled(); expect(view.onDismissAllNotifications).not.toHaveBeenCalled();
+    expect(dismiss).not.toHaveBeenCalled(); expect(clear).not.toHaveBeenCalled();
   }
   toggle.click(); await settle(view);
   required(view, ".notification-row-dismiss", HTMLButtonElement).click();
-  expect(view.onDismissNotification).toHaveBeenCalledExactlyOnceWith(notification.id);
+  expect(dismiss).toHaveBeenCalledExactlyOnceWith(notification.id);
 });

@@ -8,7 +8,7 @@ const file: FileContentResponse = { path: "misleading.txt", content: "", encodin
 
 describe("document preview contributions", () => {
   it("uses authoritative media classification and preserves safe defaults", () => {
-    const previewers = createDocumentPreviewers({ html, content: filesLocalizationFixture().content, getContentRendering: () => undefined, getStylesheetIntegration: () => undefined });
+    const previewers = createDocumentPreviewers({ html, content: filesLocalizationFixture().content, getMarkdownRendering: () => undefined, getStylesheetIntegration: () => undefined });
     for (const [mediaType, binary, id, mode] of [
       ["image", true, "image", "automatic"], ["image", false, "svg", "manual"],
       ["pdf", true, "pdf", "automatic"], ["html", false, "html", "manual"], ["markdown", false, "markdown", "manual"],
@@ -22,7 +22,7 @@ describe("document preview contributions", () => {
 
   it("keeps contribution titles localized", async () => {
     const { content, service } = filesLocalizationFixture();
-    const previewer = createDocumentPreviewers({ html, content, getContentRendering: () => undefined, getStylesheetIntegration: () => undefined })[0];
+    const previewer = createDocumentPreviewers({ html, content, getMarkdownRendering: () => undefined, getStylesheetIntegration: () => undefined })[0];
     if (previewer === undefined) throw new Error("Missing previewer");
     service.registerCatalog({ id: "files-test", namespace: "plugin:files:files", locale: "fr", load: () => Promise.resolve({ preview: "Aperçu" }) });
     await service.setPreferences({ ...service.preferences, language: "fr" });

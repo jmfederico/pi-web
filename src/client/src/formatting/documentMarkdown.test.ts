@@ -1,16 +1,18 @@
 // @vitest-environment happy-dom
 
 import { afterEach, describe, expect, it } from "vitest";
-import { renderWorkspaceMarkdownHtml, sanitizeWorkspaceMarkdownHtml } from "./workspaceMarkdown";
+import type { MarkdownRenderRequest } from "../../../shared/markdownTypes";
+import { createDocumentMarkdownRenderer, sanitizeDocumentMarkdownHtml } from "./documentMarkdown";
+import { createMarkdownEngine } from "./markdownEngine";
 
 afterEach(() => {
   document.body.replaceChildren();
   localStorage.clear();
 });
 
-describe("workspace Markdown sanitizer", () => {
+describe("document Markdown sanitizer", () => {
   it("keeps only the generated element and attribute allowlists", () => {
-    const root = parseHtml(sanitizeWorkspaceMarkdownHtml(`
+    const root = parseHtml(sanitizeDocumentMarkdownHtml(`
       <section><strong>removed with its unknown container</strong></section>
       <p id="clobber" class="attacker" onclick="alert(1)">
         <strong data-extra="no">kept</strong>
@@ -45,7 +47,7 @@ describe("workspace Markdown sanitizer", () => {
   });
 
   it("allows only explicit link protocols and gives every usable link a safe opener", () => {
-    const root = parseHtml(sanitizeWorkspaceMarkdownHtml(`
+    const root = parseHtml(sanitizeDocumentMarkdownHtml(`
       <p>
         <a href="https://example.test">https</a>
         <a href="HTTP://example.test">http</a>
@@ -88,7 +90,7 @@ describe("workspace Markdown sanitizer", () => {
 
 [click](https://example.test/docs)
 `;
-    const root = parseHtml(renderWorkspaceMarkdownHtml(source));
+    const root = parseHtml(renderDocumentMarkdownHtml(source));
 
     expect(root.querySelector("h1")?.textContent).toBe("Safe heading");
     expect(root.querySelector("img, script, iframe, object, embed, svg, input, audio, video, source")).toBeNull();
@@ -102,8 +104,19 @@ describe("workspace Markdown sanitizer", () => {
     expect(link.getAttribute("rel")).toBe("noopener noreferrer");
   });
 
+  it("treats localized image and table annotations as text", () => {
+    const labels = {
+      imageOmitted: (alt: string) => `<img src="https://attacker.test/pixel">${alt}`,
+      table: '<script>table label</script>" onfocus="bad()',
+    };
+    const root = parseHtml(renderDocumentMarkdownHtml("![alt](https://attacker.test/image)\n\n| a |\n| - |\n| b |", labels));
+    expect(root.querySelector("img, script, [src], [onfocus]")).toBeNull();
+    expect(root.textContent).toContain('<img src="https://attacker.test/pixel">alt');
+    expect(root.querySelector('[role="region"]')?.getAttribute("aria-label")).toBe(labels.table);
+  });
+
   it("strips parser-generated classes and wraps tables with trusted accessibility attributes", () => {
-    const root = parseHtml(renderWorkspaceMarkdownHtml(`
+    const root = parseHtml(renderDocumentMarkdownHtml(`
 \`\`\`javascript
 alert("shown as code")
 \`\`\`
@@ -124,6 +137,14 @@ alert("shown as code")
     expect(requiredElement(wrapper.querySelector("th"), "table header").getAttribute("align")).toBe("left");
   });
 });
+
+function renderDocumentMarkdownHtml(text: string, labels?: MarkdownRenderRequest["labels"]): string {
+  return createMarkdownEngine().parse(
+    text,
+    createDocumentMarkdownRenderer(labels),
+    (html) => sanitizeDocumentMarkdownHtml(html, labels),
+  ).html;
+}
 
 function parseHtml(html: string): DocumentFragment {
   const template = document.createElement("template");

@@ -1,0 +1,25 @@
+import { message } from "./localization/service";
+
+export default {
+  action: message("Restart…", "Core action that opens restart confirmation"),
+  actionDescription: message("Run a restart command in the gateway terminal", "Core restart action description"),
+  title: message("Restart PI WEB", "Restart confirmation dialog title"),
+  scope: message("The command opens in a terminal on the gateway machine serving this PI WEB address, not a selected remote machine.", "Fixed gateway scope; confirmation may switch the selected machine"),
+  services: message("Services to restart", "Accessible label for the restart target choices"),
+  web: message("Web service", "Restart target label"),
+  sessiond: message("Session daemon", "Restart target label"),
+  both: message("Both services", "Restart target label"),
+  webEffect: message("Your browser will briefly disconnect. Agent sessions will continue.", "Effect of restarting only the web service"),
+  daemonEffect: message("Restarting the session daemon interrupts agent work and terminals.", "Effect of restarting the session daemon"),
+  bothEffect: message("Your browser will briefly disconnect. Agent work and terminals will be interrupted.", "Effect of restarting both services"),
+  active: message("There is activity that will be interrupted", "Simple activity warning; no counts or session list"),
+  unknownActivity: message("Activity could not be checked. Agent work and terminals may be interrupted.", "Conservative warning without a gateway activity snapshot"),
+  unavailable: message("No restart command is available for this service. Use your installation's service controls.", "No targeted command is supplied by existing status API"),
+  loading: message("Loading restart commands…", "Status request in progress"),
+  retryAvailability: message("Reload commands", "Retry reading existing status commands"),
+  confirm: message("Run in terminal", "Explicit confirmation to launch the displayed command"),
+  opening: message("Opening terminal…", "Terminal launch in progress, not restart completion"),
+  terminalHint: message("Check the terminal for output and errors. Restarting the daemon may close the terminal. If you changed hostname access, reconnect using an allowed address.", "Execution and recovery remain with the existing terminal and service commands"),
+  restartWeb: message("Restart web service", "Hostname notice action opens confirmation"),
+  cancel: message("Cancel", "Dismiss without launching a command"),
+};

@@ -105,12 +105,12 @@
                     <option value="newest">Newest packages</option>
                   </select>
                 </div>
-                <p id="plugin-sort-help">Popularity uses downloads from the past month.</p>
+                <p id="plugin-sort-help">Only packages tagged <code>pi-web.dev-plugin</code> are listed. Tags are author-provided, not a compatibility check. Popularity uses downloads from the past month.</p>
                 <p role="status" aria-live="polite">Enable JavaScript to search here, or browse directly on npm below.</p>
                 <ul class="plugin-results" data-plugin-results aria-label="Community plugin results" aria-busy="false"></ul>
                 <button class="button secondary" type="button" data-plugin-more hidden>Load more</button>
               </div>
-              <p>Browse directly on npm: <a href="https://www.npmjs.com/search?q=keywords%3Api-web.dev-plugin">PI WEB plugins</a> · <a href="https://www.npmjs.com/search?q=keywords%3Api-web-plugin">broader plugin search</a> (may include unrelated packages).</p>
+              <p>Browse directly on npm: <a href="https://www.npmjs.com/search?q=keywords%3Api-web.dev-plugin">PI WEB plugins</a>.</p>
             </section>
             <details id="install" class="config-details plugin-guide">
               <summary>Install a plugin</summary>
@@ -126,9 +126,9 @@
               <summary>Share your plugin</summary>
               <p>Publish a public npm package with a working <code>piWeb.plugins</code> declaration and add these keywords to its <code>package.json</code>:</p>
               <div class="code-card"><pre><code>{
-  "keywords": ["pi-web.dev-plugin", "pi-package", "pi-web-plugin"]
+  "keywords": ["pi-web.dev-plugin", "pi-package"]
 }</code></pre></div>
-              <p>Use <code>pi-web.dev-plugin</code> to identify plugins for this project. Include <code>pi-web-plugin</code> too so users of the broader search can find them.</p>
+              <p>The directory searches only for <code>pi-web.dev-plugin</code>. Add this keyword even if your package already uses the broader <code>pi-web-plugin</code> tag.</p>
               <p>No keyword registration or submission to PI WEB is needed. Publish a new package version with the keywords; discovery depends on npm search indexing and may not be immediate.</p>
               <p>Include a useful description, repository link, installation instructions, and supported PI WEB versions so users can evaluate your package. The keyword makes it discoverable; it does not replace the plugin manifest.</p>
               <p><a href="plugins.md#agent-development">Publishing contracts and examples →</a></p>

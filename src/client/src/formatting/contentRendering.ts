@@ -10,6 +10,7 @@ import "../components/ContentRendererHost";
 import "../components/ContentRenderingBoundary";
 import { renderIntentMemory } from "./renderIntentMemory";
 import type { CodeBlockSourcePolicy } from "./codeBlockPolicy";
+import { defaultMarkdownEngine, type MarkdownEngine, type MarkdownParseResult } from "./markdownEngine";
 
 export const contentRenderingCapabilityToken: PluginCapability<ContentRenderingCapability> = {
   pluginId: "pi-web", id: "content-rendering", version: 1,
@@ -43,9 +44,16 @@ export function isClosedFence(token: Tokens.Code): boolean {
   return closing?.startsWith(opening) === true;
 }
 
+/** Host-only seam: reuse parsed fence tokens instead of lexing extended syntax a second time. */
+export interface ParsedMarkdownRenderRequest extends ContentMarkdownRenderRequest {
+  parsed?: MarkdownParseResult;
+}
+
 /** Host-only Chat seam; intent identity is never part of the plugin capability. */
 export interface ChatContentRendering {
-  renderMarkdown(request: ContentMarkdownRenderRequest, intentKey?: string, sourcePolicy?: CodeBlockSourcePolicy): TemplateResult;
+  readonly machineId?: string;
+  readonly markdown: MarkdownEngine;
+  renderMarkdown(request: ParsedMarkdownRenderRequest, intentKey?: string, sourcePolicy?: CodeBlockSourcePolicy): TemplateResult;
 }
 
 type RenderingRevision = (request: ContentRenderRequest) => unknown;
@@ -54,7 +62,7 @@ export function createContentRenderingCapability(select: SelectRenderer, revisio
   return createContentRenderingService(select, revision).capability;
 }
 
-export function createContentRenderingService(select: SelectRenderer, revision?: RenderingRevision): ChatContentRendering & { capability: ContentRenderingCapability } {
+export function createContentRenderingService(select: SelectRenderer, revision?: RenderingRevision, markdown: MarkdownEngine = defaultMarkdownEngine): ChatContentRendering & { capability: ContentRenderingCapability } {
   const selection = (request: ContentRenderRequest): readonly ContentRendererChoice[] => {
     if (request.truncated === true || request.text.length > MAX_CONTENT_RENDERER_LENGTH) return [];
     return select(request);
@@ -63,13 +71,10 @@ export function createContentRenderingService(select: SelectRenderer, revision?:
     .renderingRevision=${revision?.(request)} .codeBlocks=${sourcePolicy} .intentKey=${intentKey} .externalControls=${externalControls} .text=${request.text} .machineId=${request.machineId} .language=${request.language} .filePath=${request.filePath} .choices=${choices} .rendererId=${rendererId} .allowManualPreview=${allowManualPreview}
   ></pi-web-content-renderer>`;
 
-  const renderMarkdown = (request: ContentMarkdownRenderRequest, identity?: string, sourcePolicy?: CodeBlockSourcePolicy): TemplateResult => {
+  const renderMarkdown = (request: ParsedMarkdownRenderRequest, identity?: string, sourcePolicy?: CodeBlockSourcePolicy): TemplateResult => {
       const template = document.createElement("template");
-      template.innerHTML = request.toSafeHtml(request.text);
-      const tokens: Tokens.Code[] = [];
-      void marked.walkTokens(marked.lexer(request.text, { gfm: true, breaks: true }), (token) => {
-        if (isCodeToken(token)) tokens.push(token);
-      });
+      template.innerHTML = request.parsed?.html ?? request.toSafeHtml(request.text);
+      const tokens = request.parsed?.codeBlocks ?? legacyCodeTokens(request.text);
       const hosts = new Map<Node, TemplateResult>();
       const blockSelector = "pre, .plain-code-block";
       template.content.querySelectorAll(blockSelector).forEach((block, index) => {
@@ -129,5 +134,14 @@ export function createContentRenderingService(select: SelectRenderer, revision?:
       style="display: contents" .source=${request.text} .renderContent=${() => renderMarkdown(request)}
     ></pi-web-content-rendering-boundary>`,
   });
-  return { capability, renderMarkdown };
+  return { capability, renderMarkdown, markdown };
+}
+
+/** Compatibility for content-rendering@1 callers that still own their parser. */
+function legacyCodeTokens(text: string): readonly Tokens.Code[] {
+  const tokens: Tokens.Code[] = [];
+  void marked.walkTokens(marked.lexer(text, { gfm: true, breaks: true }), (token) => {
+    if (isCodeToken(token)) tokens.push(token);
+  });
+  return tokens;
 }

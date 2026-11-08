@@ -18,7 +18,7 @@ import { StatusBar } from "./StatusBar";
 import { PluginRegistry } from "../plugins/registry";
 import type { ExternalPluginLoadResult } from "../plugins/external";
 import type { ContentRendererInput } from "../../../plugin-api";
-import { corePlugin } from "../plugins/core";
+import * as core from "../plugins/core";
 import type { WorkspacePanelContext } from "../plugins/types";
 import { PiWebApp } from "./PiWebApp";
 import { themeStylesheetFetch } from "./themeStylesheetFetch.testSupport";
@@ -939,11 +939,14 @@ describe("application rendering boundaries", () => {
   it("refreshes guarded surfaces when built-in registration finishes asynchronously", async () => {
     let finishActivation: () => void = () => { throw new Error("Activation gate was not initialized"); };
     const ready = new Promise<void>((resolve) => { finishActivation = resolve; });
-    vi.spyOn(corePlugin, "activate").mockImplementationOnce(async () => {
-      await ready;
-      return { contributions: { workspacePanels: [{
-        id: "late-panel", title: "Late panel", render: () => html`<p>Loaded asynchronously</p>`,
-      }] } };
+    vi.spyOn(core, "createCorePlugin").mockReturnValueOnce({
+      ...core.corePlugin,
+      activate: async () => {
+        await ready;
+        return { contributions: { workspacePanels: [{
+          id: "late-panel", title: "Late panel", render: () => html`<p>Loaded asynchronously</p>`,
+        }] } };
+      },
     });
     const app = await mountApp({ selectedWorkspace: workspace, workspaces: [workspace] });
     Reflect.set(app, "verifiedPluginModeByMachine", new Map([["local", "recovery-disabled"]]));
@@ -1119,8 +1122,7 @@ describe("application rendering boundaries", () => {
     const refreshSelected = vi.spyOn(sessions, "refreshSelectedSession").mockResolvedValue();
     const refreshWorkspace = vi.spyOn(sessions, "refreshCurrentWorkspaceSessions").mockResolvedValue();
     await settle(app);
-    const retry = [...app.shadowRoot?.querySelectorAll<HTMLButtonElement>("main .error button") ?? []].find((button) => button.textContent.trim() === "Retry");
-    if (retry === undefined) throw new Error("Expected a recovery Retry button");
+    const retry = namedButton(app.shadowRoot?.querySelector("notification-area")?.shadowRoot, "Retry");
     retry.click();
 
     if (recovery === "session-refresh") {
@@ -1140,9 +1142,9 @@ describe("application rendering boundaries", () => {
       browserErrors: reportBrowserError({}, sessionBrowserErrorScope("local", session.id), "Prompt delivery could not be confirmed"),
     });
     await settle(app);
-    expect(app.shadowRoot?.textContent).toContain("Prompt delivery could not be confirmed");
-    const retry = [...app.shadowRoot?.querySelectorAll<HTMLButtonElement>("main .error button") ?? []].find((button) => button.textContent.trim() === "Retry");
-    expect(retry).toBeUndefined();
+    const notifications = app.shadowRoot?.querySelector("notification-area")?.shadowRoot;
+    expect(notifications?.textContent).toContain("Prompt delivery could not be confirmed");
+    expect(notifications?.querySelector(".notification-retry")).toBeNull();
   });
 
   it("updates the workspace empty state as project loading completes", async () => {

@@ -40,14 +40,7 @@ async function startSessionWithSettings(settings: Record<string, unknown> | unde
   if (settings !== undefined) {
     await writeFile(join(agentDir, "settings.json"), JSON.stringify(settings));
   }
-  const gateway = sessionGateway([]);
-  gateway.create = (cwd) => SessionManager.inMemory(cwd);
-  const service = new PiSessionService(new CapturingSessionEventHub(), {
-    agentDir,
-    modelRuntime,
-    sessionManager: gateway,
-    heartbeatIntervalMs: 60_000,
-  });
+  const service = createService(agentDir);
   try {
     const created = await service.start(workspace);
     return { service, ref: { id: created.id, cwd: workspace }, agentDir };
@@ -55,6 +48,17 @@ async function startSessionWithSettings(settings: Record<string, unknown> | unde
     await service.dispose();
     throw error;
   }
+}
+
+function createService(agentDir: string): PiSessionService {
+  const gateway = sessionGateway([]);
+  gateway.create = (cwd) => SessionManager.inMemory(cwd);
+  return new PiSessionService(new CapturingSessionEventHub(), {
+    agentDir,
+    modelRuntime,
+    sessionManager: gateway,
+    heartbeatIntervalMs: 60_000,
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -134,9 +138,10 @@ describe("PiSessionService global startup defaults", () => {
 
 describe("PiSessionService model catalog", () => {
   it("marks every available model enabled in catalog order when no scope is configured", async () => {
-    const { service, ref } = await startSessionWithSettings(undefined);
+    const { service, ref, agentDir } = await startSessionWithSettings(undefined);
     try {
-      const catalog = await service.modelCatalog(ref);
+      const { models: catalog, scope } = await service.modelCatalog(ref);
+      expect(scope).toBe("all");
       const snapshotIds = catalogIds(modelRuntime.getAvailableSnapshot().map((model) => ({ provider: model.provider, id: model.id })));
 
       expect(catalog.length).toBeGreaterThan(1);
@@ -147,7 +152,118 @@ describe("PiSessionService model catalog", () => {
       expect(first?.provider).toBe(PROVIDER);
       expect(typeof first?.name).toBe("string");
       expect(typeof first?.contextWindow).toBe("number");
+      if (first === undefined) throw new Error("expected a catalog entry");
+      // Legacy API callers can still set row membership in all mode. Enabling
+      // an already-enabled row must not accidentally create a manual selection.
+      expect(await service.setModelEnabled(ref, first.provider, first.id, true)).toEqual({ models: catalog, scope: "all" });
+      await expectPersistedEnabledModels(agentDir, undefined);
     } finally {
+      await service.dispose();
+    }
+  });
+
+  it("distinguishes identical all/manual rows across sessions and service reloads, persisting both transitions", async () => {
+    const started = await startSessionWithSettings(undefined);
+    const { agentDir } = started;
+    let { service, ref } = started;
+    try {
+      const initial = await service.modelCatalog(ref);
+      expect(initial.scope).toBe("all");
+
+      for (const mode of ["manual", "all"] as const) {
+        const status = await service.status(ref);
+        const second = await service.start(ref.cwd);
+        const secondRef = { id: second.id, cwd: ref.cwd };
+        expect((await service.modelCatalog(secondRef)).scope).toBe(mode === "manual" ? "all" : "manual");
+        const updated = await service.setModelScope(ref, mode);
+        expect(updated).toEqual({ models: initial.models, scope: mode });
+        expect((await service.status(ref)).model).toEqual(status.model);
+        await expectPersistedEnabledModels(agentDir, mode === "manual" ? catalogIds(initial.models) : undefined);
+
+        expect(await service.modelCatalog(secondRef)).toEqual(updated);
+
+        // A fresh service must recover intent from settings, not the old
+        // canonical snapshot or the SDK's normalized cycling scope.
+        await service.dispose();
+        service = createService(agentDir);
+        const reopened = await service.start(ref.cwd);
+        ref = { id: reopened.id, cwd: ref.cwd };
+        expect(await service.modelCatalog(ref)).toEqual(updated);
+      }
+    } finally {
+      await service.dispose();
+    }
+  });
+
+  it("pins only currently available models in manual mode and admits new models only in all mode", async () => {
+    const { service, ref, agentDir } = await startSessionWithSettings(undefined);
+    const available = modelRuntime.getAvailableSnapshot();
+    const current = (await service.status(ref)).model;
+    const added = available.find((model) => model.id !== current?.id);
+    if (added === undefined) throw new Error("expected a non-current model");
+    const initial = available.filter((model) => model !== added);
+    const snapshot = vi.spyOn(modelRuntime, "getAvailableSnapshot").mockReturnValue(initial);
+    try {
+      const manual = await service.setModelScope(ref, "manual");
+      expect(manual.scope).toBe("manual");
+      expect(catalogIds(manual.models)).toEqual(catalogIds(initial));
+      await expectPersistedEnabledModels(agentDir, catalogIds(initial));
+
+      snapshot.mockReturnValue(available);
+      const changed = await service.modelCatalog(ref);
+      expect(changed.scope).toBe("manual");
+      expect(changed.models.find((model) => model.id === added.id)?.enabled).toBe(false);
+      expect(catalogIds((await service.availableModels(ref)).map((model) => ({ provider: model.provider ?? "", id: model.id ?? "" })))).toEqual(catalogIds(initial));
+
+      // Removing the disabled model makes every row enabled again, but does
+      // not change manual intent or the persisted selection.
+      snapshot.mockReturnValue(initial);
+      expect(await service.modelCatalog(ref)).toEqual(manual);
+      await service.setModelScope(ref, "all");
+      snapshot.mockReturnValue(available);
+      const all = await service.modelCatalog(ref);
+      expect(all.scope).toBe("all");
+      expect(all.models.every((model) => model.enabled)).toBe(true);
+      await expectPersistedEnabledModels(agentDir, undefined);
+    } finally {
+      snapshot.mockRestore();
+      await service.dispose();
+    }
+  });
+
+  it("keeps an empty manual snapshot after service reload and later catalog discovery", async () => {
+    const started = await startSessionWithSettings(undefined);
+    const { agentDir } = started;
+    let { service, ref } = started;
+    const available = modelRuntime.getAvailableSnapshot();
+    const snapshot = vi.spyOn(modelRuntime, "getAvailableSnapshot").mockReturnValue([]);
+    try {
+      expect(await service.setModelScope(ref, "manual")).toEqual({ models: [], scope: "manual" });
+      await expectPersistedEnabledModels(agentDir, []);
+      await service.dispose();
+      service = createService(agentDir);
+      const reopened = await service.start(ref.cwd);
+      ref = { id: reopened.id, cwd: ref.cwd };
+      expect(await service.modelCatalog(ref)).toEqual({ models: [], scope: "manual" });
+
+      snapshot.mockReturnValue(available);
+      const catalog = await service.modelCatalog(ref);
+      expect(catalog.scope).toBe("manual");
+      expect(catalog.models.length).toBeGreaterThan(0);
+      expect(catalog.models.every((model) => !model.enabled)).toBe(true);
+      expect(await service.availableModels(ref)).toEqual([]);
+      await expect(service.cycleModel(ref, "forward")).rejects.toThrow("No enabled models available");
+
+      // Reopening with newly discovered models must not widen the empty selection.
+      await service.dispose();
+      service = createService(agentDir);
+      const discovered = await service.start(ref.cwd);
+      ref = { id: discovered.id, cwd: ref.cwd };
+      expect(await service.modelCatalog(ref)).toEqual(catalog);
+      expect(await service.availableModels(ref)).toEqual([]);
+      await expect(service.cycleModel(ref, "backward")).rejects.toThrow("No enabled models available");
+    } finally {
+      snapshot.mockRestore();
       await service.dispose();
     }
   });
@@ -157,7 +273,8 @@ describe("PiSessionService model catalog", () => {
       enabledModels: [`${PROVIDER}/${FIRST_MODEL}`, `${PROVIDER}/${DEFAULT_MODEL}`],
     });
     try {
-      const catalog = await service.modelCatalog(ref);
+      const { models: catalog, scope } = await service.modelCatalog(ref);
+      expect(scope).toBe("manual");
 
       expect(catalogIds(catalog.slice(0, 2))).toEqual([`${PROVIDER}/${FIRST_MODEL}`, `${PROVIDER}/${DEFAULT_MODEL}`]);
       expect(catalog.slice(0, 2).map((entry) => entry.enabled)).toEqual([true, true]);
@@ -175,12 +292,13 @@ describe("PiSessionService model catalog", () => {
   it("persists a disable edit as an explicit list and narrows the live session scope", async () => {
     const { service, ref, agentDir } = await startSessionWithSettings(undefined);
     try {
-      const catalog = await service.modelCatalog(ref);
+      const { models: catalog } = await service.modelCatalog(ref);
       const target = catalog[0];
       if (target === undefined) throw new Error("expected a catalog entry");
       const remainingIds = catalogIds(catalog).filter((id) => id !== `${target.provider}/${target.id}`);
 
-      const updated = await service.setModelEnabled(ref, target.provider, target.id, false);
+      const { models: updated, scope } = await service.setModelEnabled(ref, target.provider, target.id, false);
+      expect(scope).toBe("manual");
 
       expect(updated.find((entry) => entry.provider === target.provider && entry.id === target.id)?.enabled).toBe(false);
       expect(catalogIds(updated)).toEqual([...remainingIds, `${target.provider}/${target.id}`]);
@@ -225,7 +343,7 @@ describe("PiSessionService model catalog", () => {
         `${PROVIDER}/${FIRST_MODEL}`,
         `${target.provider}/${target.id}`,
       ]);
-      expect((await service.modelCatalog(secondRef)).find((entry) => entry.provider === target.provider && entry.id === target.id)?.enabled).toBe(true);
+      expect((await service.modelCatalog(secondRef)).models.find((entry) => entry.provider === target.provider && entry.id === target.id)?.enabled).toBe(true);
       expect(hub.globalEvents).toContainEqual({ type: "models.changed", revision: 1 });
     } finally {
       await service.dispose();
@@ -272,9 +390,11 @@ describe("PiSessionService model catalog", () => {
         `${target.provider}/${target.id}`,
       ]);
       expect(catalogIds((await service.availableModels(projectRef)).map((model) => ({ provider: model.provider ?? "", id: model.id ?? "" })))).toEqual(projectIds);
-      expect((await service.modelCatalog(projectRef)).every((entry) => entry.editable === false)).toBe(true);
-      expect((await service.modelCatalog(globalRef)).every((entry) => entry.editable !== false)).toBe(true);
+      expect((await service.modelCatalog(projectRef)).models.every((entry) => entry.editable === false)).toBe(true);
+      expect((await service.modelCatalog(globalRef)).models.every((entry) => entry.editable !== false)).toBe(true);
       await expect(service.setModelScope(projectRef, "all")).rejects.toThrow("workspace's .pi/settings.json");
+      await expect(service.setModelScope(projectRef, "manual")).rejects.toThrow("workspace's .pi/settings.json");
+      expect((await service.modelCatalog(projectRef)).scope).toBe("manual");
       expect(hub.globalEvents).toContainEqual({ type: "models.changed", revision: 1 });
     } finally {
       await service.dispose();
@@ -286,12 +406,12 @@ describe("PiSessionService model catalog", () => {
     try {
       const current = (await service.status(ref)).model;
       const currentId = current?.provider === undefined || current.id === undefined ? undefined : `${current.provider}/${current.id}`;
-      const targets = (await service.modelCatalog(ref)).filter((entry) => `${entry.provider}/${entry.id}` !== currentId).slice(0, 2);
+      const targets = (await service.modelCatalog(ref)).models.filter((entry) => `${entry.provider}/${entry.id}` !== currentId).slice(0, 2);
       expect(targets).toHaveLength(2);
 
       await Promise.all(targets.map((target) => service.setModelEnabled(ref, target.provider, target.id, false)));
 
-      const updated = await service.modelCatalog(ref);
+      const { models: updated } = await service.modelCatalog(ref);
       for (const target of targets) {
         expect(updated.find((entry) => entry.provider === target.provider && entry.id === target.id)?.enabled).toBe(false);
       }
@@ -308,7 +428,8 @@ describe("PiSessionService model catalog", () => {
       if (current?.provider === undefined || current.id === undefined) throw new Error("expected a current model");
       const currentId = `${current.provider}/${current.id}`;
 
-      const narrowed = await service.setModelScope(ref, "current");
+      const { models: narrowed, scope } = await service.setModelScope(ref, "current");
+      expect(scope).toBe("manual");
 
       expect(catalogIds(narrowed.filter((entry) => entry.enabled))).toEqual([currentId]);
       await expectPersistedEnabledModels(agentDir, [currentId]);
@@ -317,27 +438,43 @@ describe("PiSessionService model catalog", () => {
 
       const all = await service.setModelScope(ref, "all");
 
-      expect(all.every((entry) => entry.enabled)).toBe(true);
+      expect(all.scope).toBe("all");
+      expect(all.models.every((entry) => entry.enabled)).toBe(true);
       await expectPersistedEnabledModels(agentDir, undefined);
+
+      const manual = await service.setModelScope(ref, "manual");
+      expect(manual).toEqual({ models: all.models, scope: "manual" });
+      // Switching back snapshots the full catalog, never the discarded narrow selection.
+      await expectPersistedEnabledModels(agentDir, catalogIds(all.models));
     } finally {
       await service.dispose();
     }
   });
 
-  it("normalizes re-enabling everything back to no scope, live and on disk", async () => {
+  it("keeps re-enabling everything as an explicit pinned list instead of collapsing to no scope", async () => {
     const { service, ref, agentDir } = await startSessionWithSettings(undefined);
     try {
-      const catalog = await service.modelCatalog(ref);
+      const { models: catalog } = await service.modelCatalog(ref);
       const target = catalog[0];
       if (target === undefined) throw new Error("expected a catalog entry");
 
       await service.setModelEnabled(ref, target.provider, target.id, false);
-      const restored = await service.setModelEnabled(ref, target.provider, target.id, true);
+      const { models: restored, scope } = await service.setModelEnabled(ref, target.provider, target.id, true);
+      expect(scope).toBe("manual");
 
       expect(restored.every((entry) => entry.enabled)).toBe(true);
-      // The response is the fresh post-edit read: no scope, so plain catalog order.
-      expect(catalogIds(restored)).toEqual(catalogIds(catalog));
-      await expectPersistedEnabledModels(agentDir, undefined);
+      // Toggle order appends the re-enabled model last, so compare as sets.
+      const expectedIds = [...catalogIds(catalog)].sort();
+      expect([...catalogIds(restored)].sort()).toEqual(expectedIds);
+      // The explicit list survives on disk: collapsing it here would enable
+      // every model a later catalog refresh discovers.
+      await vi.waitFor(async () => {
+        const persisted = await persistedEnabledModels(agentDir);
+        expect(persisted.found).toBe(true);
+        // Membership check avoids order coupling: toggling appends the re-enabled model last.
+        expect(persisted.value).toHaveLength(expectedIds.length);
+        for (const id of expectedIds) expect(persisted.value).toContain(id);
+      }, { timeout: 5_000 });
       expect(catalogIds((await service.availableModels(ref)).map((model) => ({ provider: model.provider ?? "", id: model.id ?? "" })))).toEqual(catalogIds(catalog));
     } finally {
       await service.dispose();
@@ -347,14 +484,14 @@ describe("PiSessionService model catalog", () => {
   it("resolves configured glob patterns to explicit ids when an edit is persisted, like pi's selector", async () => {
     const { service, ref, agentDir } = await startSessionWithSettings({ enabledModels: [`${PROVIDER}/*sonnet*`] });
     try {
-      const catalog = await service.modelCatalog(ref);
+      const { models: catalog } = await service.modelCatalog(ref);
       const matchedIds = catalogIds(catalog.filter((entry) => entry.enabled));
       expect(matchedIds.length).toBeGreaterThan(0);
       expect(matchedIds.every((id) => id.includes("sonnet"))).toBe(true);
       const target = catalog.find((entry) => !entry.enabled);
       if (target === undefined) throw new Error("expected a disabled catalog entry");
 
-      const updated = await service.setModelEnabled(ref, target.provider, target.id, true);
+      const { models: updated } = await service.setModelEnabled(ref, target.provider, target.id, true);
 
       expect(updated.find((entry) => entry.provider === target.provider && entry.id === target.id)?.enabled).toBe(true);
       await expectPersistedEnabledModels(agentDir, [...matchedIds, `${target.provider}/${target.id}`]);
@@ -366,8 +503,11 @@ describe("PiSessionService model catalog", () => {
   it("keeps stale no-match patterns through an edit, mirroring pi", async () => {
     const { service, ref, agentDir } = await startSessionWithSettings({ enabledModels: ["anthropic/not-a-real-model"] });
     try {
-      const catalog = await service.modelCatalog(ref);
+      const { models: catalog, scope } = await service.modelCatalog(ref);
+      expect(scope).toBe("manual");
       expect(catalog.every((entry) => !entry.enabled)).toBe(true);
+      expect(await service.availableModels(ref)).toEqual([]);
+      await expect(service.cycleModel(ref, "forward")).rejects.toThrow("No enabled models available");
       const target = catalog[0];
       if (target === undefined) throw new Error("expected a catalog entry");
 

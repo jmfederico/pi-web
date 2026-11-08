@@ -1,4 +1,4 @@
-import { api as defaultApi, type AskUserSubmission, type CommandResult, type ExtensionDialogAnswer, type ExtensionDialogCloseReason, type ExtensionDialogCloseResponse, type ExtensionDialogOutcome, type MessagePage, type PendingExtensionDialog, type PromptAttachment, type QueuedSessionMessage, type SessionActivity, type SessionBulkFailure, type SessionCleanupExecuteResponse, type SessionInfo, type SessionModelCatalogEntry, type SessionModelScopeMode, type SessionRef, type SessionStatus, type SessionStreamSnapshot, type SessionTreeForkResult, type SessionTreeNavigateResult, type SessionTreeSnapshot, type SessionTreeSummaryChoice, type Workspace } from "../api";
+import { api as defaultApi, type AskUserSubmission, type CommandResult, type ExtensionDialogAnswer, type ExtensionDialogCloseReason, type ExtensionDialogCloseResponse, type ExtensionDialogOutcome, type MessagePage, type PendingExtensionDialog, type PromptAttachment, type QueuedSessionMessage, type SessionActivity, type SessionBulkFailure, type SessionCleanupExecuteResponse, type SessionInfo, type SessionModelCatalogResponse, type SessionModelScopeMode, type SessionRef, type SessionStatus, type SessionStreamSnapshot, type SessionTreeForkResult, type SessionTreeNavigateResult, type SessionTreeSnapshot, type SessionTreeSummaryChoice, type Workspace } from "../api";
 import type { AppState, ClosedExtensionDialog } from "../appState";
 import { NetworkRequestError } from "../api/http";
 import { BrowserErrorReporter, sessionBrowserErrorScope, workspaceBrowserErrorScope, type SessionBrowserErrorOwner } from "../browserErrors";
@@ -1196,16 +1196,16 @@ export class SessionController {
     }
   }
 
-  async listModelCatalog() {
+  async listModelCatalog(): Promise<SessionModelCatalogResponse> {
     const session = this.getState().selectedSession;
-    if (!session || session.archived === true) return [];
+    if (!session || session.archived === true) return { models: [] };
     const machineId = selectedMachineId(this.getState());
     const errorOwner = this.captureSessionErrorOwner(session);
     try {
-      return (await this.api.modelCatalog(session, machineId)).models;
+      return await this.api.modelCatalog(session, machineId);
     } catch (error) {
       this.reportSessionError(session, machineId, error, errorOwner);
-      return [];
+      return { models: [] };
     }
   }
 
@@ -1214,28 +1214,28 @@ export class SessionController {
    * updated catalog on success and `undefined` on failure, so the caller can
    * leave (or revert) the row's control when the edit did not apply.
    */
-  async setModelEnabled(provider: string, modelId: string, enabled: boolean): Promise<SessionModelCatalogEntry[] | undefined> {
+  async setModelEnabled(provider: string, modelId: string, enabled: boolean): Promise<SessionModelCatalogResponse | undefined> {
     const session = this.getState().selectedSession;
     if (!session || session.archived === true) return undefined;
     const machineId = selectedMachineId(this.getState());
     const errorOwner = this.captureSessionErrorOwner(session);
     try {
-      return (await this.api.setModelEnabled(session, provider, modelId, enabled, machineId)).models;
+      return await this.api.setModelEnabled(session, provider, modelId, enabled, machineId);
     } catch (error) {
       this.reportSessionError(session, machineId, error, errorOwner);
       return undefined;
     }
   }
 
-  /** Atomically switch between an unrestricted catalog and the current model alone. */
-  async setModelScope(mode: SessionModelScopeMode): Promise<SessionModelCatalogEntry[] | undefined> {
+  /** Atomically change availability mode or apply a manual-selection preset. */
+  async setModelScope(mode: SessionModelScopeMode): Promise<SessionModelCatalogResponse | undefined> {
     const state = this.getState();
     const session = state.selectedSession;
     if (!session || session.archived === true) return undefined;
     const machineId = selectedMachineId(state);
     const errorOwner = this.captureSessionErrorOwner(session);
     try {
-      return (await this.api.setModelScope(session, mode, machineId)).models;
+      return await this.api.setModelScope(session, mode, machineId);
     } catch (error) {
       this.reportSessionError(session, machineId, error, errorOwner);
       return undefined;

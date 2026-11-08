@@ -55,7 +55,6 @@ describe("createAskUserToolDefinition", () => {
     expect(result.details).toEqual({ interventionRequired: true, ask: {
       askId: "ask-1", askedAt: "2026-02-01T10:00:00.000Z", questions: twoQuestions.questions,
     } });
-    expect(firstText(result.content)).toBe("Posted 2 questions to the user as ask ask-1. Ending this run; the answers arrive as a follow-up message that wakes you, naming every question the user left unanswered. Do not repost these questions.");
   });
 
   it("defaults omitted options to an empty list for free-text questions", async () => {

@@ -85,6 +85,10 @@ export const appStyles = css`
   }
   status-bar { flex: 0 0 auto; }
   conversation-layout { flex: 1 1 auto; min-width: 0; min-height: 0; }
+  /* Keep the capped area's content height: transcript intrinsic height must not squeeze short notices away. */
+  notification-area { flex: 0 0 auto; min-block-size: 0; max-block-size: min(40%, 40dvh); overflow: hidden; }
+  /* Workspace mode gives main an auto-sized grid row; a viewport cap still bounds the pinned area. */
+  .shell.two-column-layout.workspace-view notification-area { max-block-size: 40dvh; }
   .composer-area { display: grid; min-width: 0; background: var(--pi-bg); }
   /* Share a grid cell instead of adding banner height; allow long notices to grow the area rather than clip their controls. */
   .composer-area > prompt-editor, .composer-activity-notice { grid-area: 1 / 1; min-width: 0; }

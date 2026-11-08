@@ -7,7 +7,8 @@ import type { ChatContentRendering } from "../formatting/contentRendering";
 import { customElement, property } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { writeClipboardText } from "../clipboard";
-import { toSafeMarkdownHtml } from "../formatting/markdown";
+import { parseChatMarkdown } from "../formatting/markdown";
+import type { MarkdownEngine, MarkdownParseResult } from "../formatting/markdownEngine";
 import { DEFAULT_CODE_BLOCK_POLICY, type CodeBlockPolicy } from "../formatting/codeBlockPolicy";
 import { rememberExternalMarkdownImageDimensions, restoreExternalMarkdownImageDimensions } from "../formatting/externalMarkdownImages";
 import type { MarkdownWorkspaceContext, WorkspaceFileOpenRequest } from "../formatting/workspaceLinks";
@@ -33,7 +34,7 @@ export class FormattedText extends LitElement {
   private readonly enhancement = new VisibleContentController(this);
   private phase: "markdown" | "preview" | "done" = "markdown";
   private scheduled = false;
-  private markup: string | undefined;
+  private parsed: MarkdownParseResult | undefined;
   private content: TemplateResult | undefined;
   private displayedText = "";
   private replacing = false;
@@ -48,7 +49,7 @@ export class FormattedText extends LitElement {
     this.enhancement.cancel();
     this.scheduled = false;
     this.phase = "markdown";
-    this.markup = undefined;
+    this.parsed = undefined;
     // Retain stable source controls and completed previews while prose streams.
     // New identities/replacements must never show the previous content.
     this.replacing = !this.text.startsWith(this.displayedText) || changes.has("intentKey") || changes.has("machineId") || changes.has("workspaceContext");
@@ -120,10 +121,16 @@ export class FormattedText extends LitElement {
     }
   }
 
+  private get markdownEngine(): MarkdownEngine | undefined {
+    const machineId = this.workspaceContext?.machineId ?? this.machineId;
+    return this.contentRendering?.machineId === undefined || this.contentRendering.machineId === machineId
+      ? this.contentRendering?.markdown : undefined;
+  }
+
   private formatMarkdown(): void {
     this.notifyDeferredLayoutChanging();
     try {
-      this.markup = toSafeMarkdownHtml(this.text, this.workspaceContext, this.intentKey, this.imagesEnabled, this.codeBlocks);
+      this.parsed = parseChatMarkdown(this.text, this.workspaceContext, this.intentKey, this.imagesEnabled, this.codeBlocks, this.markdownEngine);
       if (this.codeBlocks.previews && this.contentRendering !== undefined) {
         this.phase = "preview";
         if (this.content === undefined) this.showMarkdown();
@@ -141,7 +148,7 @@ export class FormattedText extends LitElement {
   private showMarkdown(): void {
     this.labelsDirty = true;
     this.layoutChanged = true;
-    this.content = html`${unsafeHTML(this.markup)}`;
+    this.content = html`${unsafeHTML(this.parsed?.html)}`;
     this.displayedText = this.text;
     this.replacing = false;
   }
@@ -154,8 +161,8 @@ export class FormattedText extends LitElement {
       this.content = this.contentRendering?.renderMarkdown({
         text: this.text,
         machineId: this.workspaceContext?.machineId ?? this.machineId,
-        toSafeHtml: (text) => text === this.text && this.markup !== undefined ? this.markup
-          : toSafeMarkdownHtml(text, this.workspaceContext, this.intentKey, this.imagesEnabled, this.codeBlocks),
+        ...(this.parsed === undefined ? {} : { parsed: this.parsed }),
+        toSafeHtml: (text) => parseChatMarkdown(text, this.workspaceContext, this.intentKey, this.imagesEnabled, this.codeBlocks, this.markdownEngine).html,
       }, this.intentKey, this.codeBlocks);
       this.displayedText = this.text;
       this.replacing = false;

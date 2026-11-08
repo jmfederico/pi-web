@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
+// @vitest-environment-options {"settings":{"enableIframePageLoading":true,"navigation":{"disableChildFrameNavigation":true}}}
+// Create inert frame contexts, but block child navigation so fixtures cannot fetch pages.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { html, LitElement } from "lit";
-import type { ContentRenderingCapability, FileContentResponse, FilePreviewerContribution, WorkspaceFilesCapabilityV1 } from "@jmfederico/pi-web/plugin-api";
+import type { FileContentResponse, FilePreviewerContribution, WorkspaceFilesCapabilityV1 } from "@jmfederico/pi-web/plugin-api";
 import { ContentRendererHost } from "../../src/client/src/components/ContentRendererHost";
-import { createContentRenderingCapability } from "../../src/client/src/formatting/contentRendering";
 import { settleDeferredContent, useDeferredContent } from "../../src/client/src/formatting/deferredContent.testSupport";
 import { adaptPublicPlugin } from "../../src/client/src/plugins/publicContext";
 import { PluginRegistry } from "../../src/client/src/plugins/registry";
@@ -66,7 +67,7 @@ function file(path: string, patch: Partial<FileContentResponse> = {}): FileConte
 function store(preference: WorkspaceFileViewMode | "fresh" = "raw") {
   return { adopt: () => preference === "fresh" ? undefined : preference, publish: vi.fn<(mode: WorkspaceFileViewMode) => void>() } satisfies WorkspaceFileViewModeStore;
 }
-async function mount(initial: FileContentResponse | undefined, preference: WorkspaceFileViewMode | "fresh" = "raw", rendering?: ContentRenderingCapability) {
+async function mount(initial: FileContentResponse | undefined, preference: WorkspaceFileViewMode | "fresh" = "raw") {
   const localization = filesLocalizationFixture();
   const registry = new PluginRegistry({ localization: localization.service }); registries.push(registry);
   const viewer = new WorkspaceFileViewer();
@@ -89,7 +90,7 @@ async function mount(initial: FileContentResponse | undefined, preference: Works
   };
   viewer.files = files;
   await registry.register({ id: "documents", plugin: adaptPublicPlugin({ apiVersion: 5, name: "Document previews", activate: () => ({ contributions: {
-    filePreviewers: createDocumentPreviewers({ html, content: localization.content, getContentRendering: () => rendering ?? registry.contentRendering, getStylesheetIntegration: () => undefined }),
+    filePreviewers: createDocumentPreviewers({ html, content: localization.content, getMarkdownRendering: () => registry.markdownRendering, getStylesheetIntegration: () => undefined }),
   } }) }) });
   viewer.file = initial; viewer.selectedPath = initial?.path;
   document.body.append(viewer); await settle(viewer);
@@ -224,8 +225,11 @@ describe("Files as a preview contribution consumer", () => {
 
   it("keeps saved Markdown preview intent, sanitization and fenced-renderer controls", async () => {
     const source = "# Notes\n\n![tracking](https://evil.test/pixel)\n\n```diagram\nsource\n```\n\n<script>bad()</script>";
-    const rendering = createContentRenderingCapability(() => [{ id: "diagram", label: "Diagram", renderer: { id: "diagram", languages: ["diagram"], render: ({ text }) => html`<b>${text}</b>` } }]);
-    const { viewer } = await mount(file("notes.md", { mediaType: "markdown", content: source, size: source.length }), "preview", rendering);
+    const { viewer, registry } = await mount(file("notes.md", { mediaType: "markdown", content: source, size: source.length }), "preview");
+    await registry.register({ id: "diagram", plugin: adaptPublicPlugin({ apiVersion: 5, name: "Diagram", activate: () => ({ contributions: {
+      contentRenderers: [{ id: "diagram", title: "Diagram", languages: ["diagram"], render: ({ text }) => html`<b>${text}</b>` }],
+    } }) }) });
+    viewer.requestUpdate(); await settle(viewer);
     const preview = required(query(viewer, ".markdown-preview"));
     expect(preview.querySelector("h1")?.textContent).toBe("Notes");
     expect(preview.querySelector("script,img")).toBeNull();

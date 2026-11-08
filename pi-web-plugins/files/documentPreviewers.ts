@@ -1,10 +1,10 @@
-import type { ContentRenderingCapability, FilePreviewerContribution, PluginActivationContext, StylesheetIntegrationCapabilityV1 } from "@jmfederico/pi-web/plugin-api";
+import type { MarkdownRenderingCapability, FilePreviewerContribution, PluginActivationContext, StylesheetIntegrationCapabilityV1 } from "@jmfederico/pi-web/plugin-api";
 import type { FilesContent } from "./filesLocalization";
 
 export function createDocumentPreviewers(options: {
   html: PluginActivationContext["html"];
   content: FilesContent;
-  getContentRendering: () => ContentRenderingCapability | undefined;
+  getMarkdownRendering: () => MarkdownRenderingCapability | undefined;
   getStylesheetIntegration: () => StylesheetIntegrationCapabilityV1 | undefined;
 }): FilePreviewerContribution[] {
   return [
@@ -18,6 +18,6 @@ export function createDocumentPreviewers(options: {
     get title() { return options.content.messages.t("preview"); },
     renderMode: renderMode === "automatic" ? "automatic" : "manual",
     supports: ({ file }) => file.mediaType === mediaType && (binary === undefined || file.binary === binary),
-    render: (input) => options.html`<pi-web-files-document-preview .input=${input} .content=${options.content} .contentRendering=${options.getContentRendering()} .stylesheetIntegration=${options.getStylesheetIntegration()}></pi-web-files-document-preview>`,
+    render: (input) => options.html`<pi-web-files-document-preview .input=${input} .content=${options.content} .markdownRendering=${options.getMarkdownRendering()} .stylesheetIntegration=${options.getStylesheetIntegration()}></pi-web-files-document-preview>`,
   }));
 }

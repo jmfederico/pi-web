@@ -14,6 +14,8 @@ import type {
   QualifiedContributionId,
   SessionLabelContext,
   ContentRenderingCapability,
+  MarkdownExtensionContribution,
+  MarkdownRenderingCapability,
   ContentRendererInput,
   TranscriptRendererContribution,
   JsonValue,
@@ -77,6 +79,23 @@ export function checkTranscriptContributions(v4: PluginContributions, v5: Plugin
   v5.transcriptRenderers = [transcriptToolRenderer, transcriptMessageRenderer];
   // @ts-expect-error Transcript contributions are v5-only.
   v4.transcriptRenderers = [];
+}
+
+export function checkMarkdownExtensions(v4: PluginContributions, v5: PluginContributionsV5, capability: MarkdownRenderingCapability): void {
+  const extension: MarkdownExtensionContribution = {
+    id: "highlight", level: "inline",
+    start: (source) => source.includes("==") ? source.indexOf("==") : undefined,
+    tokenize: (source) => source.startsWith("==x==") ? { raw: "==x==", text: "x" } : undefined,
+    render: (token) => `<mark>${token.text}</mark>`,
+  };
+  v5.markdownExtensions = [extension];
+  // @ts-expect-error Syntax contributions are v5-only.
+  v4.markdownExtensions = [extension];
+  capability.render({ machineId: "local", text: "==x==", allowManualPreview: true });
+  // @ts-expect-error Document HTML policy belongs to the host, not the caller.
+  capability.render({ machineId: "local", text: "x", toSafeHtml: (text: string) => text });
+  // @ts-expect-error Synchronous rendering cannot return a Promise.
+  extension.render = async () => "<mark>x</mark>";
 }
 
 export function previewSessionAgePolicy(sessions: readonly PluginSessionSnapshot[], cutoff: number) {

@@ -1,18 +1,16 @@
-import type { ContentRenderingCapability, FilePreviewerInput, StylesheetIntegrationCapabilityV1 } from "@jmfederico/pi-web/plugin-api";
+import type { MarkdownRenderingCapability, FilePreviewerInput, StylesheetIntegrationCapabilityV1 } from "@jmfederico/pi-web/plugin-api";
 import { css, html, LitElement, type TemplateResult } from "lit";
 import { property } from "lit/decorators.js";
 import { ifDefined } from "lit/directives/if-defined.js";
 import { keyed } from "lit/directives/keyed.js";
-import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { FilesLocalizationController, formatFileSize, type FilesContent } from "./filesLocalization";
-import { renderWorkspaceMarkdownHtml } from "./workspaceMarkdown";
 
 const DEFAULT_MAX_INLINE_PREVIEW_BYTES = 1024 * 1024;
 
 export class FilesDocumentPreview extends LitElement {
   private readonly text = new FilesLocalizationController(this);
   @property({ attribute: false }) input: FilePreviewerInput | undefined;
-  @property({ attribute: false }) contentRendering: ContentRenderingCapability | undefined;
+  @property({ attribute: false }) markdownRendering: MarkdownRenderingCapability | undefined;
   @property({ attribute: false })
   get content(): FilesContent | undefined { return this.text.content; }
   set content(value: FilesContent | undefined) { this.text.content = value; }
@@ -140,10 +138,14 @@ export class FilesDocumentPreview extends LitElement {
   private renderMarkdown(input: FilePreviewerInput): TemplateResult {
     const { file } = input;
     try {
-      const rendered = this.contentRendering?.renderMarkdown({
+      const rendered = this.markdownRendering?.render({
         machineId: input.machineId, text: file.content, truncated: file.truncated,
-        toSafeHtml: (text) => renderWorkspaceMarkdownHtml(text, this.content), allowManualPreview: true,
-      }) ?? unsafeHTML(renderWorkspaceMarkdownHtml(file.content, this.content));
+        allowManualPreview: true,
+        labels: {
+          imageOmitted: (alt) => this.text.messages.t("imageOmitted", { alt, hasAlt: alt === "" ? "no" : "yes" }),
+          table: this.text.messages.t("table"),
+        },
+      }) ?? html`<pre>${file.content}</pre>`;
       return html`
         ${file.truncated ? html`<p class="preview-note" role="status">${this.text.messages.t("previewTruncated")}</p>` : null}
         <div class="formatted markdown-preview" dir="auto">${rendered}</div>`;

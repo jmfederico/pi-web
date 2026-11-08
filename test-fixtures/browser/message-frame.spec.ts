@@ -84,6 +84,57 @@ for (const visualEffects of [true, false]) {
   });
 }
 
+test("system-message sender links wrap without covering actions or body content", async ({ page }, testInfo) => {
+  await page.goto("/overlays.html");
+  await expect(page.locator("body")).toHaveAttribute("data-ready", "true");
+  const chat = page.locator("chat-view");
+  await chat.evaluate(async (view: ChatView) => {
+    const sender = "01a1ad80-c7eb-7257-b8b6-de0db5391d26";
+    const body = "**Review findings**\n\nCheck the timeout handler before merging.\n\n`retryCount` must remain bounded.";
+    const content = `Message from session ${sender}:\n\n${body}`;
+    view.messages = [
+      { role: "system", parts: [{ type: "text", text: "An extension added context to this session." }] },
+      { role: "system", entryId: "session-message", meta: { timestamp: "2026-07-10T19:15:30.000Z" }, parts: [{
+        type: "customMessage", customType: "session.message", content, details: { sendingSessionId: sender, body }, parts: [{ type: "text", text: content, displayText: body }],
+      }] },
+    ];
+    await view.updateComplete;
+  });
+  const message = chat.locator("article.system").last();
+  const link = message.getByRole("link");
+  const trigger = message.getByRole("button", { name: "Message actions", exact: true });
+  for (const theme of ["themes:pi-web-dark", "themes:pi-web-light"]) {
+    await page.evaluate((id) => window.overlayFixture.applyTheme(id), theme);
+    await expect(message.locator("formatted-text")).toContainText("Review findings");
+    await link.scrollIntoViewIfNeeded();
+    const headerBox = await box(message.locator(".message-frame-header"));
+    const linkBox = await box(link);
+    const triggerBox = await box(trigger);
+    const bodyBox = await box(message.locator(".message-frame-body"));
+    expect(linkBox.x).toBeGreaterThanOrEqual(headerBox.x);
+    expect(linkBox.x + linkBox.width).toBeLessThanOrEqual(triggerBox.x);
+    expect(bodyBox.y).toBeGreaterThanOrEqual(headerBox.y + headerBox.height);
+    expect(await chat.evaluate((view) => {
+      const scroller = view.shadowRoot?.querySelector(".chat");
+      return scroller !== null && scroller !== undefined && scroller.scrollWidth <= scroller.clientWidth;
+    })).toBe(true);
+    await link.focus();
+    await expect(link).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(trigger).toBeFocused();
+    if (testInfo.project.name === "touch") await trigger.tap();
+    else await trigger.click();
+    await message.getByRole("button", { name: "Message information", exact: true }).click();
+    await expect(message.locator(".msg-meta-details")).toBeVisible();
+    await expect(trigger).toBeFocused();
+    const screenshot = testInfo.outputPath(`${theme.split(":")[1] ?? "theme"}-system-messages.png`);
+    await chat.screenshot({ path: screenshot });
+    await testInfo.attach(theme, { path: screenshot, contentType: "image/png" });
+    await trigger.click();
+    await message.getByRole("button", { name: "Message information", exact: true }).click();
+  }
+});
+
 test("mixed grouped content keeps section edges full-width and actions scoped to the whole message", async ({ page }) => {
   await page.goto("/overlays.html");
   await expect(page.locator("body")).toHaveAttribute("data-ready", "true");

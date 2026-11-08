@@ -1,6 +1,6 @@
 import type { PluginLocalization } from "../../../plugin-api.js";
 import { LocalizationController } from "../localization/browser.js";
-import { LocalizationService, message } from "../localization/service.js";
+import { LocalizationService, message, type CatalogMachineScope } from "../localization/service.js";
 
 /** The activation owns all effects; source identity stays stable across machines. */
 export function createPluginLocalization(
@@ -8,6 +8,8 @@ export function createPluginLocalization(
   pluginId: string,
   runtimePluginId: string,
   lifetime: AbortSignal,
+  /** Machines on which this activation's catalogs apply; a remote pack stays on its machine. */
+  catalogScope?: CatalogMachineScope,
 ): PluginLocalization {
   const cleanups = new Set<() => void>();
   const sources = new Set<string>();
@@ -44,7 +46,7 @@ export function createPluginLocalization(
       assertActive();
       if (!contribution.id) throw new Error("A plugin catalog ID is required");
       // JSON tuples preserve identity without ambiguous separators in author IDs.
-      return own(service.registerCatalog({ ...contribution, id: JSON.stringify([runtimePluginId, contribution.id]) }));
+      return own(service.registerCatalog({ ...contribution, id: JSON.stringify([runtimePluginId, contribution.id]) }, catalogScope));
     },
     subscribe(listener) {
       if (lifetime.aborted) return () => undefined;

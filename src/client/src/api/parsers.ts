@@ -16,6 +16,7 @@ import { requireDefaultThemePreference } from "../../../shared/themePreference";
 import { requireDefaultLocalization } from "../../../shared/defaultLocalization";
 import { requireDefaultStreamingBehavior } from "../../../shared/streamingBehavior";
 import { requireInstallationName } from "../../../shared/installationName";
+import { requireHostAccess } from "../../../shared/hostAccess";
 import { parseRuntimeActivityPresentation } from "../../../shared/sessionActivityPresentation";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1265,7 +1266,9 @@ function parseSessionModelCatalogEntry(value: unknown): SessionModelCatalogEntry
 
 export function parseSessionModelCatalogResponse(value: unknown): SessionModelCatalogResponse {
   const record = requireRecord(value);
-  return { models: arrayOf(parseSessionModelCatalogEntry)(record["models"]) };
+  const scope = record["scope"];
+  if (scope !== undefined && scope !== "all" && scope !== "manual") throw new Error("Invalid model catalog scope");
+  return { models: arrayOf(parseSessionModelCatalogEntry)(record["models"]), ...optionalField("scope", scope) };
 }
 
 function parseThinkingLevel(value: unknown): string {
@@ -1517,6 +1520,7 @@ export function parsePiWebConfigResponse(value: unknown): PiWebConfigResponse {
     config: parsePiWebConfigValues(record["config"]),
     effectiveConfig: parsePiWebConfigValues(record["effectiveConfig"]),
     envOverrides: parsePiWebConfigEnvOverrides(record["envOverrides"]),
+    ...optionalField("activeHostAccess", record["activeHostAccess"] === undefined ? undefined : record["activeHostAccess"] === null ? null : requireHostAccess(record["activeHostAccess"], "response activeHostAccess")),
     ...optionalField("enforcedSettings", optionalConfigSources(record["enforcedSettings"])),
     ...optionalField("configSources", optionalConfigSources(record["configSources"])),
     ...optionalField("defaultsConfig", record["defaultsConfig"] === undefined ? undefined : parsePiWebConfigValues(record["defaultsConfig"])),
@@ -1536,11 +1540,12 @@ function optionalConfigSources(value: unknown): Record<string, string> | undefin
 function parsePiWebConfigValues(value: unknown): PiWebConfigValues {
   const record = requireRecord(value);
   if (Object.hasOwn(record, "sessionNaming")) throw new Error("Retired PI WEB sessionNaming config field");
-  return {
+  const config: PiWebConfigValues = {
     ...optionalField("host", optionalString(record, "host")),
     ...optionalField("port", optionalNumber(record, "port")),
     ...optionalField("installationName", record["installationName"] === undefined ? undefined : requireInstallationName(record["installationName"])),
     ...optionalField("allowedHosts", optionalAllowedHosts(record["allowedHosts"])),
+    ...optionalField("hostAccess", record["hostAccess"] === undefined ? undefined : requireHostAccess(record["hostAccess"], "response hostAccess")),
     ...optionalField("shortcuts", optionalShortcuts(record["shortcuts"])),
     ...optionalField("defaultTheme", record["defaultTheme"] === undefined ? undefined : requireDefaultThemePreference(record["defaultTheme"], "response")),
     ...optionalField("defaultStreamingBehavior", record["defaultStreamingBehavior"] === undefined ? undefined : requireDefaultStreamingBehavior(record["defaultStreamingBehavior"], "response")),
@@ -1561,6 +1566,7 @@ function parsePiWebConfigValues(value: unknown): PiWebConfigValues {
     ...optionalField("extensionDialogsTimeoutMs", optionalNumber(record, "extensionDialogsTimeoutMs")),
     ...optionalField("sessionArchive", optionalSessionArchive(record["sessionArchive"])),
   };
+  return config;
 }
 
 function optionalSessionArchive(value: unknown): PiWebConfigValues["sessionArchive"] {

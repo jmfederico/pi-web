@@ -43,6 +43,29 @@ describe("runtime activity presentation", () => {
     } finally { await f.service.dispose(); }
   });
 
+  it("keeps a running tool presented while that tool streams output", async () => {
+    const f = await fixture();
+    try {
+      f.fake.emit({ type: "tool_execution_start", toolName: "bash" });
+      f.fake.emit({ type: "tool_execution_update", toolCallId: "call", toolName: "bash", partialResult: { content: [] } });
+      const streaming = f.activities().at(-1);
+      expect(streaming).toMatchObject({ phase: "active", label: "running tool", detail: "bash", runtimePresentation: { kind: "runningTool" } });
+      expect(f.hub.sessionEvents.map(({ event }) => event)).toContainEqual({ type: "activity.update", activity: streaming });
+    } finally { await f.service.dispose(); }
+  });
+
+  it("leaves the running activity unchanged when a session entry is appended mid-turn", async () => {
+    const f = await fixture();
+    try {
+      f.fake.emit({ type: "tool_execution_start", toolName: "bash" });
+      const running = f.activities().at(-1);
+      const published = f.activities().length;
+      f.fake.emit({ type: "entry_appended", entry: { type: "custom", customType: "background.notice" } });
+      expect(f.activities()).toHaveLength(published);
+      expect(f.activities().at(-1)).toBe(running);
+    } finally { await f.service.dispose(); }
+  });
+
   it("retains kinds and raw tool details through heartbeat re-publication, then clears stale activity", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     const f = await fixture();

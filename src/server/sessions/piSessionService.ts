@@ -85,6 +85,7 @@ import type {
   SessionNotificationDismissRequest,
   SessionNotificationInboxSnapshot,
   SessionModelScopeMode,
+  SessionModelCatalogResponse,
   SessionUnreadAcknowledgeRequest,
   SessionUnreadCatalogSnapshot,
   SessionWarning,
@@ -100,7 +101,8 @@ import { readSessionHeaderSummary } from "./sessionFileHeader.js";
 import type { WorkspaceActivityService } from "../activity/workspaceActivityService.js";
 import { createAskUserToolDefinition } from "./askUserTool.js";
 import { createRequestHumanInterventionToolDefinition } from "./requestHumanInterventionTool.js";
-import { requestsHumanIntervention, SESSION_INTERVENTION_CUSTOM_TYPE, sessionInterventionRequired } from "./sessionIntervention.js";
+import { createArchiveSelfToolDefinition } from "./archiveSelfTool.js";
+import { continuesConversation, requestsHumanIntervention, SESSION_INTERVENTION_CUSTOM_TYPE, sessionInterventionRequired } from "./sessionIntervention.js";
 import { createAskUserOutcome, renderAskUserAnswersText, resolveAskUserRequest } from "./askUserDomain.js";
 import { PendingExtensionDialogStore, type ExtensionDialogCancelReason } from "./pendingExtensionDialogStore.js";
 import { ExtensionDialogWaiters, effectiveExtensionDialogTimeoutMs, extensionDialogCancelValue } from "./extensionDialogWaiters.js";
@@ -137,6 +139,7 @@ export interface PiSessionLogger {
 
 const noopLogger: PiSessionLogger = { info() { /* no-op */ } };
 const DEFAULT_UNREAD_PUBLICATION_RETRY_MS = 1_000;
+const SUBSESSION_DELIVERY_RETRY_DELAYS_MS = [2_000, 10_000, 30_000] as const;
 /**
  * User-facing names for the two phases of session startup PI WEB can prove it
  * is inside: it awaits exactly one call for each, so the phase is a fact rather
@@ -821,6 +824,7 @@ export function createPiWebCustomToolDefinitions(
   return [
     createPiWebEditToolDefinition(cwd),
     createRequestHumanInterventionToolDefinition(),
+    createArchiveSelfToolDefinition(),
     // Messaging does not grant delegation or child-management capabilities.
     ...(messaging === undefined ? [] : [createSendSessionMessageToolDefinition(cwd, messaging)]),
     ...(delegationEnabled && spawn !== undefined ? [createSpawnSessionToolDefinition(cwd, { spawn })] : []),
@@ -1142,6 +1146,8 @@ export interface PiSessionServiceDependencies {
   createAgentRuntime?: CreateAgentRuntime;
   modelRuntime: ModelRuntime;
   heartbeatIntervalMs?: number;
+  /** Refresh browser session lists after agent-requested archival. */
+  onSessionArchived?: (cwd: string) => void | Promise<void>;
   workspaceActivity?: Pick<WorkspaceActivityService, "applySessionStatus" | "applySessionActivity" | "removeSession" | "reconcileSessionActivity" | "applySessionIntervention">;
   /**
    * When provided, `spawn_session` is available to sessions whose creation
@@ -1244,6 +1250,13 @@ export class PiSessionService implements SessionRouteService {
   readonly mcpAuthFlows = new McpAuthFlowService();
   private readonly runtimeMessageCounts = new WeakMap<PiAgentSession, number>();
   private readonly interventionStates = new WeakMap<PiAgentSession, boolean>();
+  /** Fresh tool intent only: reopening a transcript never replays archival. */
+  private readonly selfArchiveRequests = new WeakMap<PiAgentSession, { sessionId: string; toolCallId: string; persisted: boolean; settled: boolean }>();
+  private readonly selfArchiveScheduled = new WeakSet<PiAgentSession>();
+  private readonly selfArchivingSessionIds = new Set<string>();
+  private readonly selfArchiveOperations = new Set<Promise<void>>();
+  private selfArchiveStopped = false;
+  private readonly onSessionArchived: PiSessionServiceDependencies["onSessionArchived"];
   private readonly snapshotMessageCounts = new WeakMap<readonly unknown[], number>();
   private readonly pendingPromptEchoes = new WeakMap<PiAgentSession, { userIndex: number; message: ReturnType<typeof userMessage> }[]>();
   private readonly publishedAssistantPartials = new WeakMap<PiAgentSession, unknown>();
@@ -1263,9 +1276,10 @@ export class PiSessionService implements SessionRouteService {
   private readonly treeExclusiveSessionOperationCounts = new Map<string, number>();
   /** Parent id/file identity -> one inbox shared by all completion delivery paths. */
   private readonly subsessionInboxes = new Map<string, SubsessionCompletionInbox>();
-  private readonly subsessionStoppedParents = new WeakSet<PiAgentSession>();
   private readonly subsessionDeliveringParents = new WeakSet<PiAgentSession>();
-  private readonly subsessionDeliveryScheduled = new WeakSet<PiAgentSession>();
+  private readonly subsessionDeliveryTimers = new Map<PiAgentSession, { timer: ReturnType<typeof setTimeout>; delayMs: number }>();
+  private readonly subsessionDeliveryRetries = new WeakMap<PiAgentSession, number>();
+  private subsessionDeliveryStopped = false;
   private readonly compactionPromptQueues = new Map<string, QueuedPrompt[]>();
   private readonly compactionDrainTimers = new Map<string, NodeJS.Timeout>();
   private readonly authLossWarnings = new Set<string>();
@@ -1323,6 +1337,7 @@ export class PiSessionService implements SessionRouteService {
 
   constructor(private readonly events: SessionEventHub, deps: PiSessionServiceDependencies) {
     this.archiveStore = deps.archiveStore ?? new SessionArchiveStore();
+    this.onSessionArchived = deps.onSessionArchived;
     this.sessionPins = deps.sessionPins;
     this.agentDir = deps.agentDir;
     this.sessionManager = deps.sessionManager;
@@ -1512,6 +1527,10 @@ export class PiSessionService implements SessionRouteService {
   }
 
   async dispose(): Promise<void> {
+    this.subsessionDeliveryStopped = true;
+    for (const session of this.subsessionDeliveryTimers.keys()) this.clearSubsessionDelivery(session);
+    this.selfArchiveStopped = true;
+    await Promise.all(this.selfArchiveOperations);
     this.mcpAuthFlows.dispose();
     this.unreadPublicationStopped = true;
     this.clearUnreadPublicationRetry();
@@ -1989,7 +2008,9 @@ export class PiSessionService implements SessionRouteService {
 
   /**
    * The models a session may pick from: its synchronized scoped set when
-   * model-scoped, otherwise the runtime's available snapshot. Refreshes the
+   * model-scoped, otherwise the runtime's available snapshot. An explicit
+   * selection with no available matches stays empty despite the SDK fallback.
+   * Refreshes the
    * shared runtime catalog first so callers see newly configured providers and
    * models. The refresh stays local (`allowNetwork: false`); network refreshes
    * belong to the bounded background catalog refresher, not this request path.
@@ -1998,6 +2019,8 @@ export class PiSessionService implements SessionRouteService {
     await session.modelRuntime.refresh({ allowNetwork: false });
     const available = session.modelRuntime.getAvailableSnapshot();
     await this.synchronizeSessionModelScope(session, available);
+    const enabledIds = (await this.modelScopeSnapshot(session)).enabledIds;
+    if (enabledIds !== null && !available.some((model) => enabledIds.includes(modelScopeId(model)))) return [];
     return session.scopedModels.length > 0
       ? session.scopedModels.map((scoped) => scoped.model)
       : available;
@@ -2009,13 +2032,16 @@ export class PiSessionService implements SessionRouteService {
    * natural catalog index for stable picker placement. The enabled state comes
    * from the keyed scope snapshot rather than a session-local SettingsManager.
    */
-  private async enabledModelCatalog(session: PiAgentSession): Promise<EnabledModelCatalogEntry<AgentModel>[]> {
+  private async enabledModelCatalog(session: PiAgentSession): Promise<SessionModelCatalogResponse> {
     await session.modelRuntime.refresh({ allowNetwork: false });
     const available = session.modelRuntime.getAvailableSnapshot();
     await this.synchronizeSessionModelScope(session, available);
     const context = this.modelScopeContext(session);
     const enabledIds = (await this.modelScopeSnapshot(session, context)).enabledIds;
-    return catalogWithEnabledFirst(available, enabledIds);
+    return {
+      models: catalogWithEnabledFirst(available, enabledIds).map((entry) => catalogEntryToClientModel(entry, context.editable)),
+      scope: enabledIds === null ? "all" : "manual",
+    };
   }
 
   private runModelScopeMutation<T>(operation: () => Promise<T>): Promise<T> {
@@ -2030,12 +2056,12 @@ export class PiSessionService implements SessionRouteService {
     available: readonly AgentModel[],
     enabledIds: readonly string[] | null,
   ): void {
-    const availableIds = available.map(modelScopeId);
-    const persisted = persistedEnabledModelPatterns(enabledIds, availableIds);
+    const persisted = persistedEnabledModelPatterns(enabledIds);
     const nextState: ModelScopeSnapshot = {
-      // Pi normalizes a scope covering the complete current catalog to an
-      // omitted setting, which is the global canonical all-enabled state.
-      enabledIds: persisted === undefined ? null : enabledIds === null ? [] : [...enabledIds],
+      // The explicit all-enabled intent (`null`) collapses to the omitted
+      // setting; a concrete list is persisted verbatim so catalog churn cannot
+      // silently widen the selection.
+      enabledIds: persisted === undefined || enabledIds === null ? null : [...enabledIds],
       revision: ++this.modelScopeRevision,
     };
     session.settingsManager.setEnabledModels(persisted);
@@ -2111,7 +2137,6 @@ export class PiSessionService implements SessionRouteService {
     ));
     void delivery.catch((error: unknown) => {
       if (!accepted) return; // Pre-acceptance failures still reject the request.
-      this.subsessionStoppedParents.add(session);
       const message = error instanceof Error ? error.message : String(error);
       this.publishActivity(session, { kind: "error" }, "error", message);
       this.events.publish(session.sessionId, { type: "session.error", message });
@@ -2322,7 +2347,7 @@ export class PiSessionService implements SessionRouteService {
         customType: "session.message",
         content: `Message from session ${input.sendingSessionId}:\n\n${message}`,
         display: true,
-        details: { sendingSessionId: input.sendingSessionId },
+        details: { sendingSessionId: input.sendingSessionId, body: message },
       }, { triggerTurn: true, deliverAs: "steer" });
     }).catch((error: unknown) => {
       const detail = error instanceof Error ? error.message : String(error);
@@ -2771,13 +2796,16 @@ export class PiSessionService implements SessionRouteService {
 
   /** Busy parents receive notices at turn boundaries; idle parents need a wake. */
   private async deliverPendingSubsessionCompletions(session: PiAgentSession): Promise<void> {
-    if (this.hasActiveWork(session) || !this.isCurrentActiveSession(session) || this.subsessionStoppedParents.has(session)) return;
+    if (this.subsessionDeliveryStopped || this.hasActiveWork(session) || !this.isCurrentActiveSession(session)) return;
+    // A boundary or inspection may have acknowledged the notice during backoff.
+    this.restoreSubsessionReceipts(session);
     const inbox = this.subsessionInbox(session.sessionId, session.sessionFile);
     const completions = inbox.claim();
     if (completions.length === 0) return;
     const completionIds = completions.map(({ completionId }) => completionId);
     this.subsessionDeliveringParents.add(session);
     let delivered = false;
+    let retryDelayMs: number | undefined;
     try {
       await this.runSessionEntryMutation(session, "deliver subsession results", () => session.sendCustomMessage(
         {
@@ -2789,29 +2817,74 @@ export class PiSessionService implements SessionRouteService {
       ));
       inbox.receive(completionIds);
       delivered = true;
+      this.subsessionDeliveryRetries.delete(session);
     } catch (error: unknown) {
-      this.subsessionStoppedParents.add(session);
-      throw error;
+      this.logSubsessionNotificationFailure(session.sessionId, "inbox", error);
+      // sendCustomMessage spans a whole agent run. Only a missing conversation
+      // receipt permits a retry, never an error after the notice was inserted.
+      // Treat an existing receipt conservatively even if a later write failed:
+      // replaying it could duplicate a message already in the SDK's context.
+      this.restoreSubsessionReceipts(session, false);
+      delivered = completionIds.every((id) => inbox.hasReceived(id));
+      if (delivered) this.subsessionDeliveryRetries.delete(session);
+      else {
+        const retries = this.subsessionDeliveryRetries.get(session) ?? 0;
+        retryDelayMs = SUBSESSION_DELIVERY_RETRY_DELAYS_MS[retries];
+        if (retryDelayMs !== undefined) this.subsessionDeliveryRetries.set(session, retries + 1);
+      }
+      if (retryDelayMs === undefined) this.publishSubsessionDeliveryFailure(session, error);
     } finally {
       inbox.release(completionIds);
       this.subsessionDeliveringParents.delete(session);
-      if (delivered) this.scheduleSubsessionDelivery(session);
+      // A different child may have finished during this attempt. That is a new
+      // wake trigger even if this send failed, unlike retrying the same batch.
+      if (delivered || inbox.pending().some(({ completionId }) => !completionIds.includes(completionId))) {
+        this.scheduleSubsessionDelivery(session);
+      } else if (retryDelayMs !== undefined) {
+        this.scheduleSubsessionDelivery(session, retryDelayMs);
+      }
       this.publishStatus(session);
     }
   }
 
-  private scheduleSubsessionDelivery(session: PiAgentSession): void {
-    if (this.subsessionDeliveryScheduled.has(session) || this.subsessionInbox(session.sessionId, session.sessionFile).pending().length === 0) return;
-    this.subsessionDeliveryScheduled.add(session);
+  private clearSubsessionDelivery(session: PiAgentSession): void {
+    const scheduled = this.subsessionDeliveryTimers.get(session);
+    if (scheduled !== undefined) clearTimeout(scheduled.timer);
+    this.subsessionDeliveryTimers.delete(session);
+    this.subsessionDeliveryRetries.delete(session);
+  }
+
+  private publishSubsessionDeliveryFailure(session: PiAgentSession, error: unknown): void {
+    if (this.subsessionDeliveryStopped || !this.isCurrentActiveSession(session)) return;
+    const message = errorMessage(error);
+    this.publishActivity(session, { kind: "error" }, "error", message);
+    this.events.publish(session.sessionId, { type: "session.error", message });
+  }
+
+  private scheduleSubsessionDelivery(session: PiAgentSession, delayMs = 0): void {
+    // A delivery spans an entire run. Its own settlement must not schedule an
+    // immediate retry before its receipt and failure have been reconciled.
+    if (this.subsessionDeliveryStopped || !this.isCurrentActiveSession(session) || this.subsessionDeliveringParents.has(session)) return;
+    if (this.subsessionInbox(session.sessionId, session.sessionFile).pending().length === 0) {
+      this.clearSubsessionDelivery(session);
+      return;
+    }
+    const scheduled = this.subsessionDeliveryTimers.get(session);
+    if (scheduled !== undefined) {
+      if (delayMs > 0 || scheduled.delayMs === 0) return;
+      clearTimeout(scheduled.timer); // A new lifecycle trigger need not wait for backoff.
+    }
     // Settlement can precede the host prompt-mutation receipt's finally block.
-    // Recheck on the next tick, closing the yield/child-completion race without
-    // restarting a stopped run or putting rendered answers in a follow-up queue.
-    setTimeout(() => {
-      this.subsessionDeliveryScheduled.delete(session);
+    // Recheck on the next tick, closing the yield/child-completion race. Stop
+    // interrupts the current run, not future child-notice delivery.
+    const timer = setTimeout(() => {
+      this.subsessionDeliveryTimers.delete(session);
       void this.deliverPendingSubsessionCompletions(session).catch((error: unknown) => {
         this.logSubsessionNotificationFailure(session.sessionId, "inbox", error);
+        this.publishSubsessionDeliveryFailure(session, error);
       });
-    }, 0);
+    }, delayMs);
+    this.subsessionDeliveryTimers.set(session, { timer, delayMs });
   }
 
   private logSubsessionNotificationFailure(parentId: string, childId: string, error: unknown): void {
@@ -2968,10 +3041,9 @@ export class PiSessionService implements SessionRouteService {
     return models.map(modelToClientModel);
   }
 
-  async modelCatalog(ref: PiSessionRef): Promise<ClientSessionModelCatalogEntry[]> {
+  async modelCatalog(ref: PiSessionRef): Promise<SessionModelCatalogResponse> {
     const session = await this.getOrOpen(ref);
-    const scope = this.modelScopeContext(session);
-    return (await this.enabledModelCatalog(session)).map((entry) => catalogEntryToClientModel(entry, scope.editable));
+    return this.enabledModelCatalog(session);
   }
 
   /**
@@ -2979,7 +3051,7 @@ export class PiSessionService implements SessionRouteService {
    * workspace `.pi/settings.json` override remains authoritative for that
    * workspace and is intentionally read-only in this picker.
    */
-  async setModelEnabled(ref: PiSessionRef, provider: string, modelId: string, enabled: boolean): Promise<ClientSessionModelCatalogEntry[]> {
+  async setModelEnabled(ref: PiSessionRef, provider: string, modelId: string, enabled: boolean): Promise<SessionModelCatalogResponse> {
     await this.assertWritable(ref);
     const session = await this.getOrOpen(ref);
     return this.runModelScopeMutation(async () => {
@@ -2998,14 +3070,13 @@ export class PiSessionService implements SessionRouteService {
       const nextIds = applyEnabledModelToggle(currentIds, availableIds, targetId, enabled);
       this.assertTreeNavigationInactive(session, "change enabled models");
       if (nextIds !== currentIds) this.applyEnabledModelScope(session, available, nextIds);
-      // Respond from a fresh post-edit read so the response is exactly what
-      // GET models/catalog returns after the edit, including pi's normalizations.
-      return (await this.enabledModelCatalog(session)).map((entry) => catalogEntryToClientModel(entry));
+      // Keep mode and rows together in the same canonical post-edit snapshot.
+      return this.enabledModelCatalog(session);
     });
   }
 
-  /** Atomically expose every model or narrow the global enabled scope to the current model. */
-  async setModelScope(ref: PiSessionRef, mode: SessionModelScopeMode): Promise<ClientSessionModelCatalogEntry[]> {
+  /** Atomically clear the selection, snapshot available models, or retain only the current model. */
+  async setModelScope(ref: PiSessionRef, mode: SessionModelScopeMode): Promise<SessionModelCatalogResponse> {
     await this.assertWritable(ref);
     const session = await this.getOrOpen(ref);
     return this.runModelScopeMutation(async () => {
@@ -3015,7 +3086,7 @@ export class PiSessionService implements SessionRouteService {
       await session.modelRuntime.refresh({ allowNetwork: false });
       const available = session.modelRuntime.getAvailableSnapshot();
       const availableIds = available.map(modelScopeId);
-      let nextIds: readonly string[] | null = null;
+      let nextIds: readonly string[] | null = mode === "manual" ? availableIds : null;
       if (mode === "current") {
         const current = session.model;
         if (current === undefined || !availableIds.includes(modelScopeId(current))) {
@@ -3025,7 +3096,7 @@ export class PiSessionService implements SessionRouteService {
       }
       this.assertTreeNavigationInactive(session, "change enabled models");
       this.applyEnabledModelScope(session, available, nextIds);
-      return (await this.enabledModelCatalog(session)).map((entry) => catalogEntryToClientModel(entry));
+      return this.enabledModelCatalog(session);
     });
   }
 
@@ -3048,9 +3119,11 @@ export class PiSessionService implements SessionRouteService {
     await this.assertWritable(ref);
     const session = await this.getOrOpen(ref);
     const result = await this.runModelScopeMutation(async () => {
-      await session.modelRuntime.refresh({ allowNetwork: false });
-      await this.synchronizeSessionModelScope(session, session.modelRuntime.getAvailableSnapshot());
-      return this.runSessionEntryMutation(session, "change models", () => session.cycleModel(direction));
+      const candidates = await this.sessionModelCandidates(session);
+      return this.runSessionEntryMutation(session, "change models", () => {
+        if (candidates.length === 0) throw new Error("No enabled models available");
+        return session.cycleModel(direction);
+      });
     });
     if (result === undefined) throw new Error(session.scopedModels.length > 0 ? "Only one model in scope" : "Only one model available");
     this.publishActivity(session, { kind: "model", value: result.model.id }, "idle", result.model.provider);
@@ -3265,7 +3338,6 @@ export class PiSessionService implements SessionRouteService {
       }
     });
     void promptPromise.catch((error: unknown) => {
-      this.subsessionStoppedParents.add(session);
       const message = error instanceof Error ? error.message : String(error);
       this.publishActivity(session, { kind: "error" }, "error", message);
       this.events.publish(session.sessionId, { type: "session.error", message });
@@ -3646,7 +3718,10 @@ export class PiSessionService implements SessionRouteService {
   }
 
   async archive(ref: PiSessionRef): Promise<void> {
-    const session = await this.getOrOpen(ref);
+    return this.archiveSession(await this.getOrOpen(ref));
+  }
+
+  private async archiveSession(session: PiAgentSession): Promise<void> {
     if (this.hasActiveWork(session)) throw new Error("Stop current session activity before archiving");
     await this.runTreeExclusiveOperation(
       [{ sessionId: session.sessionId, session }],
@@ -3973,8 +4048,8 @@ export class PiSessionService implements SessionRouteService {
     const active = this.activeForRef(ref);
     if (active === undefined) return;
     const sessionId = active.runtime.session.sessionId;
+    this.selfArchiveRequests.delete(active.runtime.session);
     this.clearCompactionPromptQueue(sessionId);
-    this.subsessionStoppedParents.add(active.runtime.session);
     clearSessionQueue(active.runtime.session);
     // Settle run-scoped dialogs now, at abort-request time: pi's agent loop
     // waits for a parked `tool_call` dialog handler before it can emit
@@ -4318,6 +4393,7 @@ export class PiSessionService implements SessionRouteService {
   }
 
   private async getActive(ref: PiSessionRef, options: Pick<CreateSessionRuntimeOptions, "notificationGeneration"> = {}): Promise<ActiveSession<PiSessionRuntime>> {
+    this.assertSelfArchiveInactive(ref.id);
     const active = this.activeForRef(ref);
     const pending = this.pendingSessionOpens.get(JSON.stringify([canonicalizeStoredCwd(ref.cwd), active?.runtime.session.sessionId ?? ref.id]));
     if (pending !== undefined) return pending.promise;
@@ -4349,6 +4425,7 @@ export class PiSessionService implements SessionRouteService {
     openSessionManager: () => PiSessionManager,
     options: Pick<CreateSessionRuntimeOptions, "notificationGeneration" | "notifications"> = {},
   ): Promise<ActiveSession<PiSessionRuntime>> {
+    this.assertSelfArchiveInactive(sessionId);
     const key = JSON.stringify([canonicalizeStoredCwd(cwd), sessionId]);
     const existing = this.pendingSessionOpens.get(key);
     if (existing !== undefined) return existing.promise;
@@ -4428,6 +4505,7 @@ export class PiSessionService implements SessionRouteService {
     cwd: string,
     options: CreateSessionRuntimeOptions = {},
   ): Promise<ActiveSession<PiSessionRuntime>> {
+    this.assertSelfArchiveInactive(sessionManager.getSessionId());
     const startup = this.startupProgress(sessionManager, options.startupIntent ?? "open", options.startupToken);
     const key = JSON.stringify([canonicalizeStoredCwd(cwd), sessionManager.getSessionId()]);
     // Early native observation must not admit ordinary operations before
@@ -4440,6 +4518,8 @@ export class PiSessionService implements SessionRouteService {
     pending.promise = pending.promise.finally(() => {
       startup.end();
       if (this.pendingSessionOpens.get(key) === pending) this.pendingSessionOpens.delete(key);
+      const session = this.active.get(pending.sessionId)?.runtime.session;
+      if (session !== undefined) this.scheduleSelfArchive(session);
     });
     this.pendingSessionOpens.set(key, pending);
     return pending.promise;
@@ -4507,6 +4587,7 @@ export class PiSessionService implements SessionRouteService {
         await this.recoverSubsessionTrackingForOpenedSession(runtime.session);
       }
       startupSignal?.throwIfAborted();
+      this.assertSelfArchiveInactive(runtime.session.sessionId);
       startup.report("extensions");
       // session_start hooks use the same native agent as ordinary prompts.
       // Observe them before binding extensions, including startup messages.
@@ -4930,19 +5011,20 @@ export class PiSessionService implements SessionRouteService {
       const message = getProperty(event, "message");
       const inbox = this.subsessionInbox(session.sessionId, session.sessionFile);
       if (eventType === "agent_start") {
-        this.setInterventionRequired(session, false);
         this.restoreSubsessionReceipts(session, false);
-        this.subsessionStoppedParents.delete(session);
-      }
-      if (eventType === "message_end" && getString(message, "role") === "assistant"
-        && (getString(message, "stopReason") === "aborted" || getString(message, "stopReason") === "error")) {
-        this.subsessionStoppedParents.add(session);
       }
       const entry = getProperty(event, "entry");
       // Regular message_end precedes persistence; boundary drafts instead emit
       // entry_appended. Only message entries contribute to the transcript count.
       const role = getString(message, "role");
-      if (eventType === "message_end" && requestsHumanIntervention(message)) this.setInterventionRequired(session, true);
+      this.observeSelfArchiveRequest(session, eventType, message, event);
+      if (eventType === "message_end") {
+        if (requestsHumanIntervention(message)) this.setInterventionRequired(session, true);
+        // The transcript alone decides, matching the client's open-question
+        // rule: a run woken by a passive notice keeps the request open until
+        // the agent replies, and steering delivered mid-run closes it.
+        else if (continuesConversation(message)) this.setInterventionRequired(session, false);
+      }
       if ((eventType === "message_end" && (role === "user" || role === "assistant" || role === "toolResult" || role === "system"))
         || (eventType === "entry_appended" && getString(entry, "type") === "message")) {
         this.runtimeMessageCounts.set(session, this.runtimeMessageCount(session) + 1);
@@ -4993,12 +5075,105 @@ export class PiSessionService implements SessionRouteService {
       this.updateSubsessionTracking(session, eventType === "agent_start", eventType === "agent_settled");
     });
     active.unsubscribe = () => {
+      this.clearSubsessionDelivery(session);
       this.sessionEvents.close(session);
       unsubscribe();
       this.publishedAssistantPartials.delete(session);
       this.assistantStreamIds.delete(session);
+      this.selfArchiveRequests.delete(session);
     };
     this.active.set(session.sessionId, active);
+  }
+
+  private observeSelfArchiveRequest(session: PiAgentSession, eventType: string | undefined, message: unknown, event: unknown): void {
+    if (eventType === "message_end" && getString(message, "role") === "toolResult"
+      && getString(message, "toolName") === "archive_self" && getBoolean(message, "isError") === false
+      && getBoolean(getProperty(message, "details"), "archiveSelf") === true) {
+      const toolCallId = getString(message, "toolCallId");
+      if (toolCallId !== undefined) this.selfArchiveRequests.set(session, { sessionId: session.sessionId, toolCallId, persisted: false, settled: false });
+      return;
+    }
+    const request = this.selfArchiveRequests.get(session);
+    if (request === undefined) return;
+    const role = getString(message, "role");
+    if (eventType === "agent_start" || eventType === "session_tree"
+      || (eventType === "message_start" && (role === "user" || role === "assistant" || role === "custom"))
+      || (eventType === "agent_settled" && getBoolean(event, "aborted") === true)) {
+      this.selfArchiveRequests.delete(session);
+      this.notifySelfArchive(session, "Self-archival canceled because the conversation continued or was interrupted.", "warning");
+    } else if (eventType === "turn_end") {
+      request.persisted = true;
+    } else if (eventType === "agent_settled") {
+      if (!request.persisted) {
+        this.selfArchiveRequests.delete(session);
+        this.notifySelfArchive(session, "Self-archival canceled because the tool result was not committed.", "error");
+        return;
+      }
+      // message_end precedes SDK persistence; settlement follows committed tool
+      // results and all automatic continuations. Never act on agent_end alone.
+      request.settled = true;
+      this.scheduleSelfArchive(session);
+    }
+  }
+
+  private scheduleSelfArchive(session: PiAgentSession): void {
+    if (this.selfArchiveStopped) return;
+    if (this.selfArchiveRequests.get(session)?.settled !== true || this.selfArchiveScheduled.has(session)) return;
+    this.selfArchiveScheduled.add(session);
+    // Leave the SDK event stack and let the host prompt receipt release before
+    // closing the runtime. A still-held receipt rechecks in endSessionEntryMutation.
+    setTimeout(() => {
+      this.selfArchiveScheduled.delete(session);
+      const request = this.selfArchiveRequests.get(session);
+      if (this.selfArchiveStopped || request?.settled !== true) return;
+      if (!this.isCurrentActiveSession(session) || request.sessionId !== session.sessionId) {
+        this.selfArchiveRequests.delete(session);
+        return;
+      }
+      if (this.isSessionEntryMutationActive(session) || this.pendingSessionOpenPromises(session.sessionId).length > 0) return;
+      this.selfArchiveRequests.delete(session);
+      if (this.hasActiveWork(session)) {
+        this.notifySelfArchive(session, "Self-archival canceled because this session has active or queued work.", "warning");
+        return;
+      }
+      // Reserve before the first await. New submissions must not enter the
+      // gap between runtime teardown and the archive store's durable write.
+      this.selfArchivingSessionIds.add(session.sessionId);
+      const operation = this.archiveSession(session).then(async () => {
+        try {
+          await this.onSessionArchived?.(session.sessionManager.getCwd());
+        } catch (error: unknown) {
+          this.logger.info({ sessionId: request.sessionId, error: errorMessage(error) }, "could not refresh session lists after self-archival");
+          this.notifySelfArchive(session, "Session archived, but the session list could not refresh. Reload the browser.", "warning");
+        }
+      }).catch((error: unknown) => {
+        const message = `Self-archival did not finish: ${errorMessage(error)}`;
+        this.logger.info({ sessionId: request.sessionId, toolCallId: request.toolCallId, error: errorMessage(error) }, "self-archival failed");
+        this.events.publish(request.sessionId, { type: "session.error", message });
+        this.notifySelfArchive(session, message, "error");
+      }).finally(() => {
+        this.selfArchivingSessionIds.delete(request.sessionId);
+        this.selfArchiveOperations.delete(operation);
+      });
+      this.selfArchiveOperations.add(operation);
+    }, 0);
+  }
+
+  private notifySelfArchive(session: PiAgentSession, message: string, severity: "warning" | "error"): void {
+    const cwd = session.sessionManager.getCwd();
+    let generation = this.notificationStore.currentGeneration(session.sessionId, cwd);
+    // Archive closes the runtime before persistence; its extension generation
+    // may already be gone. Keep failures visible even without an open browser.
+    if (generation === undefined) {
+      const registration = this.notificationStore.registerSession(session.sessionId, cwd);
+      generation = registration.generation;
+      this.publishNotificationMutations(registration.mutations);
+    }
+    this.publishNotificationMutations(this.notificationStore.addNotification(generation, message, severity).mutations);
+  }
+
+  private assertSelfArchiveInactive(sessionId: string): void {
+    if (this.selfArchivingSessionIds.has(sessionId)) throw new Error("Session archival is in progress. Wait for it to finish before continuing.");
   }
 
   private publishCompactionOutcome(session: PiAgentSession, event: unknown): void {
@@ -5255,6 +5430,10 @@ export class PiSessionService implements SessionRouteService {
   }
 
   private beginSessionEntryMutation(session: PiAgentSession, action: string): void {
+    this.assertSelfArchiveInactive(session.sessionId);
+    if (this.selfArchiveRequests.delete(session)) {
+      this.notifySelfArchive(session, "Self-archival canceled because new session work was submitted.", "warning");
+    }
     this.mcpAuthFlows.assertSessionAvailable(session.sessionId);
     this.assertTreeNavigationInactive(session, action);
     this.sessionEntryMutationCounts.set(session, (this.sessionEntryMutationCounts.get(session) ?? 0) + 1);
@@ -5267,6 +5446,7 @@ export class PiSessionService implements SessionRouteService {
     else this.sessionEntryMutationCounts.set(session, remaining);
     this.observeUnreadActivityState(session);
     if (remaining <= 0 && !this.subsessionDeliveringParents.has(session)) this.scheduleSubsessionDelivery(session);
+    if (remaining <= 0) this.scheduleSelfArchive(session);
   }
 
   private isSessionEntryMutationActive(session: PiAgentSession, ignoredReceipts = 0): boolean {
@@ -5289,7 +5469,11 @@ export class PiSessionService implements SessionRouteService {
     if (eventType === "message_start") { this.publishActivity(session, { kind: "messageStarted" }, "active"); return; }
     if (eventType === "message_end") { this.publishActivity(session, { kind: "messageComplete" }, "idle"); return; }
     if (eventType === "message_update") { this.publishActivity(session, { kind: "receivingResponse" }, "active"); return; }
-    if (eventType === "tool_execution_start") { this.publishActivity(session, { kind: "runningTool" }, "active", getString(event, "toolName")); return; }
+    // Streamed output belongs to the running tool, not the generic event fallback.
+    if (eventType === "tool_execution_start" || eventType === "tool_execution_update") {
+      this.publishActivity(session, { kind: "runningTool" }, "active", getString(event, "toolName"));
+      return;
+    }
     if (eventType === "tool_execution_end") {
       const isError = getBoolean(event, "isError") === true;
       this.publishActivity(session, isError ? { kind: "toolFailed" } : { kind: "toolComplete" }, isError ? "error" : "idle", getString(event, "toolName"));
@@ -5297,6 +5481,9 @@ export class PiSessionService implements SessionRouteService {
     }
     if (eventType === "bash_execution_start") { this.publishActivity(session, { kind: "runningBash" }, "active"); return; }
     if (eventType === "bash_execution_end") { this.publishActivity(session, { kind: "bashComplete" }, "idle"); return; }
+    // Persisted entries are transcript data, not a change of what the agent is
+    // doing: extensions write them mid-turn while a tool is still running.
+    if (eventType === "entry_appended") return;
     if (this.hasActiveWork(session)) this.publishActivity(session, { kind: "event", value: eventType }, "active");
   }
 

@@ -22,6 +22,9 @@ import type { PluginPromptEditor } from "../../../plugin-api";
 import { selectTranscriptRenderers, snapshotTranscriptRenderer, transcriptRenderingCapability, transcriptRenderingCapabilityToken, type RegisteredTranscriptRenderer } from "./transcriptRenderers";
 import { contentRendererMatches, snapshotContentRenderer, type ContentRendererChoice, type RegisteredContentRenderer } from "./contentRenderers";
 import { createContentRenderingCapability, createContentRenderingService, contentRenderingCapabilityToken, type ChatContentRendering } from "../formatting/contentRendering";
+import { MarkdownRenderingService, markdownRenderingCapabilityToken } from "../formatting/markdownRendering";
+import type { MarkdownEngine } from "../formatting/markdownEngine";
+import { snapshotMarkdownExtension, type RegisteredMarkdownExtension } from "./markdownExtensions";
 import { requirePluginBackendRevision } from "../../../shared/pluginBackendProtocol";
 import type { ApplicationPanelContext, ApplicationPanelContribution, QualifiedApplicationPanelContribution, PiWebPluginRegistration, PiWebPluginRegistrationDeclaration, PluginAction, PluginActivationContext, PluginActivationResult, PluginCapability, PluginCapabilityProvision, PluginContributions, PluginRuntimeContext, PluginStartContext, QualifiedContributionId, QualifiedPluginAction, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspaceLabelContribution, QualifiedWorkspacePanelContribution, QualifiedSessionLabelContribution, SessionLabelContext, SessionLabelContribution, SessionLabelItem, ThemeContribution, ThemePairContribution, WorkspaceInvalidation, WorkspaceLabelContext, WorkspaceLabelContribution, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePanelContribution, WorkspacePluginBinding, WorkspaceResource } from "./types";
 
@@ -103,6 +106,7 @@ interface PreparedPluginContributions {
   readonly contentRenderers: readonly RegisteredContentRenderer[];
   readonly transcriptRenderers: readonly RegisteredTranscriptRenderer[];
   readonly syntaxHighlighters: readonly RegisteredSyntaxHighlighter[];
+  readonly markdownExtensions: readonly RegisteredMarkdownExtension[];
   readonly ids: ReadonlySet<QualifiedContributionId>;
   readonly actions: readonly RegisteredPluginAction[];
   readonly messageActions: readonly RegisteredMessageAction[];
@@ -173,6 +177,14 @@ export class PluginRegistry {
     .filter((previewer) => !previewer.lifetime.aborted && this.isContributionActive(previewer.pluginId, previewer.machineId, request.machineId, previewer.sourcePluginId))
     .sort((a, b) => this.compareDiscoveryOrder(a, b))
     .filter((previewer) => filePreviewerMatches(previewer, request)));
+  private readonly markdownExtensions: RegisteredMarkdownExtension[] = [];
+  private readonly markdownService = new MarkdownRenderingService(
+    (machineId) => this.markdownExtensions.filter((extension) => !extension.lifetime.aborted
+      && this.isContributionActive(extension.pluginId, extension.machineId, machineId, extension.sourcePluginId))
+      .sort((a, b) => this.compareDiscoveryOrder(a, b)),
+    (machineId) => this.getChatContentRendering(machineId),
+  );
+  readonly markdownRendering = this.markdownService.capability;
   private readonly contentRenderers: RegisteredContentRenderer[] = [];
   private readonly transcriptRenderers: RegisteredTranscriptRenderer[] = [];
   private readonly transcriptRendererViews = new Map<string, readonly RegisteredTranscriptRenderer[]>();
@@ -198,6 +210,7 @@ export class PluginRegistry {
   private readonly chatContentRenderingViews = new Map<string, {
     choices: readonly ContentRendererChoice[];
     grammars: readonly RegisteredSyntaxHighlighter[];
+    markdown: MarkdownEngine;
     rendering: ChatContentRendering;
   }>();
 
@@ -221,14 +234,16 @@ export class PluginRegistry {
   getChatContentRendering(machineId: string): ChatContentRendering {
     const choices = this.activeContentRendererChoices(machineId);
     const grammars = this.syntaxHighlightingRevision(machineId);
+    const markdown = this.markdownService.getEngine(machineId);
     const previous = this.chatContentRenderingViews.get(machineId);
-    if (previous?.grammars === grammars && previous.choices.length === choices.length
+    if (previous?.markdown === markdown && previous.grammars === grammars && previous.choices.length === choices.length
       && choices.every((choice, index) => choice.renderer === previous.choices[index]?.renderer)) return previous.rendering;
-    const rendering = createContentRenderingService(
+    const rendering: ChatContentRendering = { ...createContentRenderingService(
       (request) => request.machineId === machineId ? choices.filter(({ renderer }) => contentRendererMatches(renderer, request)) : [],
       () => grammars,
-    );
-    this.chatContentRenderingViews.set(machineId, { choices, grammars, rendering });
+      markdown,
+    ), machineId };
+    this.chatContentRenderingViews.set(machineId, { choices, grammars, markdown, rendering });
     return rendering;
   }
 
@@ -313,6 +328,7 @@ export class PluginRegistry {
     for (const provision of snapshotCapabilityProvisions([
       { capability: filePreviewingCapabilityToken, value: this.filePreviewing },
       { capability: contentRenderingCapabilityToken, value: this.contentRendering },
+      { capability: markdownRenderingCapabilityToken, value: this.markdownRendering },
       { capability: transcriptRenderingCapabilityToken, value: transcriptRenderingCapability },
       { capability: syntaxHighlightingCapabilityToken, value: this.syntaxHighlighting },
       { capability: stylesheetIntegrationCapabilityToken, value: stylesheetIntegrationCapability },
@@ -329,6 +345,7 @@ export class PluginRegistry {
   /** Publish host selection changes independently of contribution rendering. */
   notifySelectionChanged(): void {
     this.selection.notifyChanged();
+    this.markdownService.notifyChanged();
   }
 
   /** Registers one plugin as a serialized single-entry batch and throws its attributed failure. */
@@ -365,6 +382,7 @@ export class PluginRegistry {
     const reason = new DOMException("Browser plugin host is shutting down", "AbortError");
     for (const controller of this.activatingLifetimes) abortLifetime(controller, reason);
     for (const plugin of [...this.activePlugins, ...this.stagedPlugins]) abortLifetime(plugin.lifetimeController, reason);
+    this.markdownService.notifyChanged();
   }
 
   dispose(): Promise<void> {
@@ -389,7 +407,9 @@ export class PluginRegistry {
     this.transcriptRenderers.splice(0);
     this.transcriptRendererViews.clear();
     this.syntaxHighlighters.splice(0);
+    this.markdownExtensions.splice(0);
     this.chatContentRenderingViews.clear();
+    this.markdownService.clear();
     this.syntaxHighlightingViews.clear();
     this.workspacePanels.splice(0);
     this.applicationPanels.splice(0);
@@ -548,7 +568,12 @@ export class PluginRegistry {
           svg,
           signal,
           lifetimeSignal: lifetimeController.signal,
-          localization: createPluginLocalization(this.options.localization ?? localization, declaration.sourcePluginId, registration.id, lifetimeController.signal),
+          localization: createPluginLocalization(
+            this.options.localization ?? localization, declaration.sourcePluginId, registration.id, lifetimeController.signal,
+            // Catalogs register before the host verifies plugin availability and are not re-evaluated when it
+            // changes, so they follow machine ownership only.
+            (selectedMachineId) => this.belongsToMachine(registration.id, registration.machineId, selectedMachineId, registration.sourcePluginId),
+          ),
           selection: this.selection.forPlugin(registration.id, lifetimeController.signal),
         })),
       );
@@ -599,6 +624,14 @@ export class PluginRegistry {
         ...(registration.machineId === undefined ? {} : { machineId: registration.machineId }),
         ...(registration.sourcePluginId === undefined ? {} : { sourcePluginId: registration.sourcePluginId }),
       }));
+    });
+    const markdownExtensions = (contributions.markdownExtensions ?? []).map((value): RegisteredMarkdownExtension => {
+      const snapshot = snapshotMarkdownExtension(value);
+      return Object.freeze({ ...snapshot,
+        id: this.qualify(runtimePluginId, snapshot.id, contributionIds), pluginId: runtimePluginId, lifetime: lifetimeSignal,
+        ...(registration.machineId === undefined ? {} : { machineId: registration.machineId }),
+        ...(registration.sourcePluginId === undefined ? {} : { sourcePluginId: registration.sourcePluginId }),
+      });
     });
     const transcriptRenderers = (contributions.transcriptRenderers ?? []).map((renderer): RegisteredTranscriptRenderer => {
       const snapshot = snapshotTranscriptRenderer(renderer, lifetimeSignal);
@@ -677,7 +710,7 @@ export class PluginRegistry {
     const themePairs = registration.machineId === undefined
       ? (contributions.themePairs ?? []).map((pair) => this.qualifyThemePair(runtimePluginId, pair, contributionIds))
       : [];
-    return Object.freeze({ ids: contributionIds, filePreviewers, contentRenderers, transcriptRenderers, syntaxHighlighters, actions, messageActions, applicationPanels, workspacePanels, workspaceLabels, sessionLabels, stylesheets, themes, fileIconThemes, themePairs });
+    return Object.freeze({ ids: contributionIds, filePreviewers, contentRenderers, transcriptRenderers, syntaxHighlighters, markdownExtensions, actions, messageActions, applicationPanels, workspacePanels, workspaceLabels, sessionLabels, stylesheets, themes, fileIconThemes, themePairs });
   }
 
   private dependencyFailure(
@@ -785,6 +818,7 @@ export class PluginRegistry {
     this.contentRenderers.push(...staged.contributions.contentRenderers);
     this.transcriptRenderers.push(...staged.contributions.transcriptRenderers);
     this.syntaxHighlighters.push(...staged.contributions.syntaxHighlighters);
+    this.markdownExtensions.push(...staged.contributions.markdownExtensions);
     this.actions.push(...staged.contributions.actions);
     this.messageActions.push(...staged.contributions.messageActions);
     this.workspacePanels.push(...staged.contributions.workspacePanels);
@@ -811,6 +845,7 @@ export class PluginRegistry {
       this.gatewayPluginIds.add(staged.registration.id);
       if (staged.declaration.machineSpecific) this.gatewayMachineSpecificPluginIds.add(staged.registration.id);
     }
+    this.markdownService.notifyChanged();
   }
 
   private async failBeforeStart(
@@ -1280,6 +1315,11 @@ export class PluginRegistry {
     // Portable gateway registrations still use selected-machine helpers, so
     // their lifecycle gate follows that effective machine rather than local.
     if (!this.isContributionEnabled(pluginId, machineId ?? selectedMachineId)) return false;
+    return this.belongsToMachine(pluginId, machineId, selectedMachineId, sourcePluginId);
+  }
+
+  /** Machine ownership alone, without the host's asynchronous lifecycle gate. */
+  private belongsToMachine(pluginId: string, machineId: string | undefined, selectedMachineId: string, sourcePluginId: string | undefined): boolean {
     if (machineId === undefined) return !this.isGatewayPluginHiddenForMachine(pluginId, selectedMachineId);
     return machineId === selectedMachineId && !this.isRemotePluginHiddenByGateway(sourcePluginId, machineId);
   }
@@ -1520,6 +1560,9 @@ function contributionsForVersion(contributions: PluginContributions, apiVersion:
   }
   if (contributions.transcriptRenderers !== undefined) {
     throw new BrowserPluginIncompatibleError("Transcript renderer contributions require browser API v5");
+  }
+  if (contributions.markdownExtensions !== undefined) {
+    throw new BrowserPluginIncompatibleError("Markdown extension contributions require browser API v5");
   }
   if (contributions.fileIconThemes !== undefined) {
     throw new BrowserPluginIncompatibleError("File icon theme contributions require browser API v5");
@@ -1883,7 +1926,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-const contributionNames: readonly string[] = ["actions", "applicationPanels", "workspacePanels", "workspaceLabels", "sessionLabels", "stylesheets", "themes", "fileIconThemes", "themePairs", "contentRenderers", "transcriptRenderers", "syntaxHighlighters", "filePreviewers", "messageActions"];
+const contributionNames: readonly string[] = ["actions", "applicationPanels", "workspacePanels", "workspaceLabels", "sessionLabels", "stylesheets", "themes", "fileIconThemes", "themePairs", "contentRenderers", "transcriptRenderers", "syntaxHighlighters", "markdownExtensions", "filePreviewers", "messageActions"];
 
 function isPluginContributions(value: unknown): value is PluginContributions {
   if (!isRecord(value)) return false;

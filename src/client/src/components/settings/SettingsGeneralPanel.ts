@@ -1,5 +1,5 @@
 import { localization, LocalizationController } from "../../localization/browser";
-import { generalMessages as messages, generalConfigError } from "./settingsGeneralMessages";
+import { generalMessages as messages, generalConfigError, formatHostAccess } from "./settingsGeneralMessages";
 import { stylesheetIntegrationCapability } from "../../plugins/styles";
 import { css, html, LitElement, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
@@ -81,7 +81,7 @@ export class SettingsGeneralPanel extends LitElement {
       const submission = this.gatewaySubmission;
       const acknowledged = submission !== undefined && draftsEqual(incoming, submission.expected);
       this.gatewayDraft = reconcileConfigDraft(this.gatewayDraft, acknowledged ? submission.draft : this.gatewayBaseline, incoming);
-      for (const [field, setting] of [["host", "host"], ["port", "port"], ["allowedHostsMode", "allowedHosts"], ["allowedHostsText", "allowedHosts"]] as const) {
+      for (const [field, setting] of [["host", "host"], ["port", "port"], ["hostAccessMode", "hostAccess"], ["hostAccessText", "hostAccess"]] as const) {
         if (enforcedSetting(this.configResponse, `/${setting}`) !== undefined) Object.assign(this.gatewayDraft, { [field]: incoming[field] });
       }
       this.gatewayBaseline = incoming;
@@ -192,18 +192,24 @@ export class SettingsGeneralPanel extends LitElement {
             </label>
             ${this.renderOverrideBadge("port")}
 
-            <div class="field ui-form-field">
-              <span class="field-heading">
-                <label for="allowed-hosts-mode">${messages.t("allowedHosts")}</label>
-                ${this.renderOverrideBadge("allowedHosts")}
-              </span>
-              <select class="ui-input" ?disabled=${enforcedSetting(config, "/allowedHosts") !== undefined} id="allowed-hosts-mode" aria-describedby="allowed-hosts-help" .value=${this.gatewayDraft.allowedHostsMode} @change=${(event: Event) => { this.updateGatewayDraft({ allowedHostsMode: selectValue(event) === "all" ? "all" : "list" }); }}>
-                <option value="list">${messages.t("hostsList")}</option>
-                <option value="all">${messages.t("hostsAll")}</option>
+            <div class="field ui-form-field" data-settings-target="host-access" tabindex="-1" role="group" aria-labelledby="host-access-label">
+              <label id="host-access-label" for="host-access">${messages.t("hostAccess")}</label>
+              <select class="ui-input" id="host-access" aria-describedby="host-access-help" .value=${this.gatewayDraft.hostAccessMode} ?disabled=${enforcedSetting(config, "/hostAccess") !== undefined} @change=${(event: Event) => {
+                const value = selectValue(event);
+                if (value === "restricted" || value === "any") this.updateGatewayDraft({ hostAccessMode: value });
+              }}>
+                <option value="" disabled>${messages.t("hostAccessPending")}</option>
+                <option value="restricted">${messages.t("hostAccessRestricted")}</option>
+                <option value="any">${messages.t("hostAccessAny")}</option>
               </select>
-              <label for="allowed-hosts-list">${messages.t("hostList")}</label>
-              <textarea class="ui-input" id="allowed-hosts-list" aria-describedby="allowed-hosts-help" .value=${this.gatewayDraft.allowedHostsText} ?disabled=${this.gatewayDraft.allowedHostsMode === "all" || enforcedSetting(config, "/allowedHosts") !== undefined} rows="4" placeholder="example.local&#10;192.168.1.20" spellcheck="false" @input=${(event: Event) => { this.updateGatewayDraft({ allowedHostsText: textAreaValue(event) }); }}></textarea>
-              <small id="allowed-hosts-help">${messages.t("hostsHelp")}</small>
+              <small id="host-access-help">${messages.t("hostAccessHelp")}</small>
+              ${settingControls(config, "/hostAccess", this.loading || this.saving, this.onReset)}
+              ${enforcedSetting(config, "/allowedHosts") !== undefined ? html`<small>${messages.t("hostAccessLegacyEnv", { variable: "PI_WEB_ALLOWED_HOSTS" })}</small>` : null}
+              ${this.gatewayDraft.hostAccessMode === "restricted" ? html`
+                <label for="host-access-list">${messages.t("hostList")}</label>
+                <textarea class="ui-input" id="host-access-list" aria-describedby="host-access-list-help" .value=${this.gatewayDraft.hostAccessText} ?disabled=${enforcedSetting(config, "/hostAccess") !== undefined} rows="4" placeholder="example.local&#10;192.168.1.20" spellcheck="false" @input=${(event: Event) => { this.updateGatewayDraft({ hostAccessText: textAreaValue(event) }); }}></textarea>
+                <small id="host-access-list-help">${messages.t("hostsHelp")}</small>
+              ` : null}
             </div>
 
             ${this.renderGatewayEffectiveConfig()}
@@ -306,7 +312,8 @@ export class SettingsGeneralPanel extends LitElement {
         <dl>
           <div><dt>${messages.t("host")}</dt><dd><bdi>${effective.host ?? html`<span class="muted">${messages.t("defaultValue", { value: "127.0.0.1" })}</span>`}</bdi></dd></div>
           <div><dt>${messages.t("port")}</dt><dd>${effective.port === undefined ? html`<span class="muted">${messages.t("defaultValue", { value: "8504" })}</span>` : localization.number(effective.port)}</dd></div>
-          <div><dt>${messages.t("allowedHosts")}</dt><dd>${formatAllowedHosts(effective.allowedHosts)}</dd></div>
+          <div><dt>${messages.t("hostAccess")}</dt><dd>${formatHostAccess(effective.hostAccess ?? null)}</dd></div>
+          <div><dt>${messages.t("hostAccessRunning")}</dt><dd>${formatHostAccess(this.configResponse?.activeHostAccess)}</dd></div>
         </dl>
       </section>
     `;
@@ -447,12 +454,6 @@ export class SettingsGeneralPanel extends LitElement {
     }
     }
   `];
-}
-
-function formatAllowedHosts(value: PiWebConfigValues["allowedHosts"]): string | TemplateResult {
-  if (value === true) return messages.t("anyHost");
-  if (Array.isArray(value)) return value.length === 0 ? html`<span class="muted">${messages.t("noHosts")}</span>` : html`<bdi dir="ltr">${localization.list(value)}</bdi>`;
-  return html`<span class="muted">${messages.t("unset")}</span>`;
 }
 
 function formatAllowedPaths(value: string[] | undefined): string | TemplateResult {

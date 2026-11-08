@@ -290,7 +290,7 @@ describe("PiSessionService same-project session messaging", () => {
           customType: "session.message",
           content: `Message from session ${sendingSessionId}:\n\n${message}`,
           display: true,
-          details: { sendingSessionId },
+          details: { sendingSessionId, body: message },
         },
         options: { triggerTurn: true, deliverAs: "steer" },
       }]);
@@ -354,7 +354,7 @@ describe("PiSessionService same-project session messaging", () => {
         customType: "session.message",
         content: `Message from session ${PARENT}:\n\n${message}`,
         display: true,
-        details: { sendingSessionId: PARENT },
+        details: { sendingSessionId: PARENT, body: message },
       },
       options: { triggerTurn: true, deliverAs: "steer" },
     }]);
@@ -400,7 +400,7 @@ describe("PiSessionService same-project session messaging", () => {
       customType: "session.message",
       content: `Message from session ${PARENT}:\n\n${message}`,
       display: true,
-      details: { sendingSessionId: PARENT },
+      details: { sendingSessionId: PARENT, body: message },
     });
     await expect(service.listSubsessions(PARENT)).resolves.toEqual([]);
   });

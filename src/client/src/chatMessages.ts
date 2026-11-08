@@ -1,4 +1,5 @@
 import { argumentSummaryPresentation, summarizeArgs } from "./chatPresentation";
+import { sessionMessagePresentation } from "./chatSessionMessages";
 import { ASK_USER_ANSWERS_CUSTOM_TYPE } from "../../shared/apiTypes";
 import { parseAskUserOutcome, parseAskUserRequest } from "./api/parsers";
 import { isSessionMediaId, validImageDimensions } from "../../shared/sessionMedia";
@@ -83,10 +84,12 @@ export function normalizeMessage(message: unknown): ChatLine[] {
   // in the fallback without restricting plugin selection.
   if (rawRole === "custom" && customType !== undefined) {
     const details = getProperty(message, "details");
+    const presentation = sessionMessagePresentation(customType, content, details);
     return [withMessageMeta({ role: "system", parts: [{
       type: "customMessage", customType, content,
       ...(details === undefined ? {} : { details }),
-      parts: contentParts.filter((part) => part.type !== "empty"),
+      parts: contentParts.filter((part) => part.type !== "empty").map((part) =>
+        part.type === "text" && presentation !== undefined ? { ...part, displayText: presentation.body } : part),
     }] }, message)];
   }
   const supersededRecord = rawRole === "toolResult"

@@ -1,6 +1,6 @@
 # PI WEB configuration reference
 
-PI WEB configuration covers the machine-local and project-local settings you usually need: the web/API bind address, trusted development-host settings, UI preferences, desired plugin enablement/settings, server-plugin recovery, file-explorer path access, manual upload defaults, upload limits, the Pi agent state directory, and session-daemon tools.
+PI WEB configuration covers the machine-local and project-local settings you usually need: the web/API bind address, trusted request-host settings, UI preferences, desired plugin enablement/settings, server-plugin recovery, file-explorer path access, manual upload defaults, upload limits, the Pi agent state directory, and session-daemon tools.
 
 Settings below describe available choices, scope, limitations, and restart requirements. An HTML version is available at <https://pi-web.dev/config>.
 
@@ -14,7 +14,7 @@ PI WEB separates deployment defaults from writable overrides:
 
 For managed deployments, mount the defaults file read-only and set `PI_WEB_DEFAULTS_CONFIG` in both the web/API and session-daemon environments. Keep `PI_WEB_CONFIG` writable and separate. Deployment defaults supply starting values, not locks; use environment overrides for enforced policy.
 
-Each PI WEB machine has its own config. When using Fleet/machine federation, Settings uses the selected machine for config that affects work running there: session daemon tools, desired PI WEB plugin enablement/settings, external path access, and upload defaults. Gateway/browser-only settings stay local to the gateway: the default theme, keyboard shortcuts, remote machine registry/tokens, and gateway host/port/allowed-hosts.
+Each PI WEB machine has its own config. When using Fleet/machine federation, Settings uses the selected machine for config that affects work running there: session daemon tools, desired PI WEB plugin enablement/settings, external path access, and upload defaults. Gateway/browser-only settings stay local to the gateway: the default theme, keyboard shortcuts, remote machine registry/tokens, and gateway bind address, port, and hostname policy.
 
 Pi package settings are separate from PI WEB config. They live in Pi's package-manager settings on the target machine and are managed by Pi (`pi install`, `pi remove`, `pi update`) or **Settings → Pi packages**. In a federated setup, **Settings → Pi packages** targets the currently selected machine. The PI WEB `plugins` config key controls desired enablement/settings for discovered browser-only, server-only, and dual-entry PI WEB plugins on that machine; it does not install, remove, or update Pi packages.
 
@@ -58,6 +58,64 @@ The deployment path is not a PI WEB config-file key or environment setting. The 
 
 For a nested deployment, redirect the slashless prefix to the trailing-slash URL, strip the prefix before forwarding to PI WEB, and proxy authenticated HTTP and WebSocket traffic through the same location. Relative browser and PWA URLs then stay within that prefix. See the [reverse proxy installation guide](https://pi-web.dev/install#reverse-proxy-prefix) for a complete Nginx example.
 
+## Browser request security
+
+Choose one gateway `hostAccess` policy for both production and development in **Settings → General → Allowed hostnames**:
+
+| Policy | Behavior | UI decision warning |
+| --- | --- | --- |
+| No effective `hostAccess` (default) | Web/API hostname allowlist off; development UI keeps its legacy `allowedHosts` behavior | Persistent until you choose a policy |
+| `{ "mode": "restricted", "hosts": ["pi.example.com"] }` | Both servers allow local addresses and listed hostnames | Decision resolved |
+| `{ "mode": "any" }` | Both servers accept any hostname | Dismissed by explicit choice |
+
+**The warning applies to new and existing installations.** Example configs leave `hostAccess` absent. A missing saved value inherits deployment defaults or an enforced environment policy; without either, no decision has been made. The **Notices** panel keeps that decision visible even without a selected workspace or session, and opens the hostname control directly. Opening Settings, changing an unrelated setting, or retaining legacy `allowedHosts` does not dismiss it. Either explicit policy resolves the decision, including a policy supplied through the environment.
+
+To restrict access, include every public DNS name you use:
+
+```json
+{ "hostAccess": { "mode": "restricted", "hosts": ["pi.example.com"] } }
+```
+
+Unlisted hostnames receive `403`. Matching rules are:
+
+- Localhost, subdomains of `.localhost`, and literal IPv4/IPv6 addresses remain allowed, including with an empty `hosts` list.
+- An exact hostname such as `pi.example.com` allows only that hostname. A leading-dot entry such as `.example.com` allows both `example.com` and its subdomains. Use hostnames, not URLs or host:port pairs.
+- To accept any hostname explicitly, use `{ "hostAccess": { "mode": "any" } }`. This disables hostname restrictions and application-level DNS-rebinding protection.
+
+The web/API also lacks that protection while no policy is chosen. Malformed `Host` headers are rejected and the Origin guard stays active regardless of the policy. These checks are not authentication.
+
+`hostAccess` is gateway-only, not project-local or selected-remote-machine configuration. It is one atomic setting: its mode and list replace lower-priority policy together. `PI_WEB_HOST_ACCESS` accepts the policy object as JSON, for example `PI_WEB_HOST_ACCESS='{"mode":"restricted","hosts":["pi.example.com"]}'`. It overrides saved config and deployment defaults and makes the entire control read-only. Invalid policies fail validation rather than disabling protection. Reset removes the saved policy; the decision warning returns if no lower-priority policy remains.
+
+Before saving or resetting a hostname policy in Settings, PI WEB checks whether the resulting policy allows the hostname in your browser’s URL. If it would block that hostname, choose **Cancel** to keep editing or **Save anyway** to accept the loss of access after restart. This confirmation does not add hostnames, change the policy, or restart services; direct API and file edits do not show it.
+
+Both servers read their policy at startup. Restart web/API and, if running, the development UI server after changing `hostAccess`. A separate restart notice compares the saved effective policy with the running web/API snapshot, including host-list-only changes. It remains until they match; choosing `any` resolves the decision warning but does not erase a pending restart. The snapshot does not confirm the development server's running policy. No session-daemon restart is needed.
+
+### Migration from the development-only setting
+
+Stable releases before `hostAccess` used `allowedHosts` only for the development UI; production did not enforce that list. Until you choose `hostAccess`, that behavior is preserved without rewriting configuration or locking out existing production DNS access:
+
+- Missing `allowedHosts` or `[]`: development allows local addresses.
+- An `allowedHosts` array: development also allows those hostnames.
+- `allowedHosts: true`: development accepts any hostname.
+
+The new list editor starts from an existing legacy list, but requires an explicit policy choice. Once `hostAccess` is supplied, both servers follow it and ignore legacy `allowedHosts`, including `PI_WEB_ALLOWED_HOSTS`. The legacy value remains available if the new policy is later removed. It is no longer a separate editable control in Settings.
+
+For environment-managed deployments, replace `PI_WEB_ALLOWED_HOSTS` with an explicit JSON `PI_WEB_HOST_ACCESS` policy and restart both relevant services. The old variable remains supported as a development-only fallback; by itself it never resolves the decision warning.
+
+### Origin checks
+
+Regardless of the hostname policy, all WebSocket upgrades and HTTP methods other than `GET`, `HEAD`, and `OPTIONS` pass an Origin guard:
+
+- A missing `Origin` is allowed for CLI and Fleet clients; Host syntax checks and any enabled hostname allowlist still apply.
+- A present `Origin` must be a single well-formed HTTP(S) origin, not a URL with credentials, a path, query, or fragment. `null`, malformed origins, and origins with a different hostname or port are rejected with `403`.
+- The origin's hostname and effective port must match the raw preserved `Host` header. An explicit Host port must equal the Origin port (including its scheme default when omitted). If Host omits a port, it is interpreted using the Origin scheme's default: `80` for HTTP or `443` for HTTPS. Thus `Origin: https://pi.example.com:8443` requires `Host: pi.example.com:8443`.
+
+Scheme comparison is intentionally omitted so a TLS-terminating proxy can forward to HTTP. These checks use neither `Forwarded` nor `X-Forwarded-*` headers. There is no `allowedOrigins` setting or added CORS permission; listing two hosts does not permit cross-origin requests between them.
+
+### Proxy responsibilities
+
+Preserve the public `Host`, including any nonstandard port, and the browser's `Origin` unchanged. For Nginx, use `$http_host`, not `$host`. The proxy owns TLS and must authenticate both HTTP and WebSocket traffic, reject unrecognized public hosts, and restrict direct backend access. Host/Origin checks are not authentication. See the [reverse proxy installation guide](https://pi-web.dev/install#reverse-proxy-prefix).
+
 ## Precedence and reloads
 
 Highest priority first, for layers applicable to that setting:
@@ -85,7 +143,7 @@ PI_WEB_DEFAULT_LOCALIZATION='{"timeZone":"UTC"}'
 PI_WEB_PLUGINS='{"git":{"settings":{"workspaceDiscoveryHooks":false}}}'
 ```
 
-Container JSON variables keep their existing names: `PI_WEB_UPLOADS`, `PI_WEB_ATTACHMENTS`, `PI_WEB_SESSION_NAMING`, `PI_WEB_SESSION_ARCHIVE`, `PI_WEB_PATH_ACCESS`, and `PI_WEB_DEFAULT_LOCALIZATION`. Only supplied namespace leaves are enforced, including `pathAccess.allowedPaths` and plugin leaves; `{}` enforces none. Atomic settings lock the whole value. `PI_WEB_PORT` retains the `PORT` fallback; a nonempty `PI_WEB_SESSION_ARCHIVE_DIR` alias wins over `PI_WEB_SESSION_ARCHIVE` JSON. `PI_WEB_ALLOWED_HOSTS` accepts JSON `true` or a string array, plus legacy `true`/comma-separated hosts. Allowing all hosts is unsafe for an exposed development server; prefer an explicit list.
+Container JSON variables keep their existing names: `PI_WEB_UPLOADS`, `PI_WEB_ATTACHMENTS`, `PI_WEB_SESSION_NAMING`, `PI_WEB_SESSION_ARCHIVE`, `PI_WEB_PATH_ACCESS`, and `PI_WEB_DEFAULT_LOCALIZATION`. Only supplied namespace leaves are enforced, including `pathAccess.allowedPaths` and plugin leaves; `{}` enforces none. Atomic settings lock the whole value. `PI_WEB_PORT` retains the `PORT` fallback; a nonempty `PI_WEB_SESSION_ARCHIVE_DIR` alias wins over `PI_WEB_SESSION_ARCHIVE` JSON. `PI_WEB_HOST_ACCESS` accepts one atomic JSON policy: `{"mode":"restricted","hosts":["pi.example.com"]}` or `{"mode":"any"}`. Legacy `PI_WEB_ALLOWED_HOSTS` accepts JSON `true` or a string array, plus legacy `true`/comma-separated hosts; it controls only the development UI when no `hostAccess` policy is supplied. See [migration](#migration-from-the-development-only-setting). The [Origin guard](#origin-checks) remains active regardless of hostname policy.
 
 Boolean environment inputs accept only `true`/`false` (case-insensitive) or `1`/`0`. Invalid supplied policy values fail startup instead of being ignored. Unknown fields in declared core containers are errors, including misspellings in `pathAccess`, `uploads`, and `attachments`. Plugin environment envelopes accept only `enabled` and `settings`; keys inside `settings` remain plugin-owned. Unset a variable to remove enforcement; empty strings are not a general reset syntax. Legacy empty host, port, allowed-hosts, upload-limit, and archive-directory overrides remain ignored. Runtime-only variables have their own contracts; see offline flags below. Markers such as `PI_WEB_SESSION` are not config policy.
 
@@ -106,11 +164,18 @@ Use `PATCH /api/config` for explicit updates, or `PATCH /api/machines/<machineId
 
 `unset` accepts known leaf pointers such as `/defaultLocalization/language`, `/uploads/defaultFolder`, and `/pathAccess/allowedPaths`, as well as container resets such as `/defaultLocalization`. Atomic settings reset at their top-level pointer, such as `/defaultTheme`. UI container-group resets remove only unlocked saved leaves in one request. An API container reset overlapping any enforced leaf is rejected, preserving saved choices hidden by enforcement. Escape `~` as `~0` and `/` as `~1` within pointer segments: a plugin setting named `a/b~c` uses `/plugins/git/settings/a~1b~0c`. Conflicting set/unset targets and changes to enforced settings are rejected. There is no null reset sentinel: `null` retains its schema-defined meaning, such as disabling a shortcut. Existing `PUT` endpoints remain available. They retain replacement semantics for unenforced settings, but omitted enforced settings preserve their hidden saved values. Supplying a different saved value for an enforced setting is rejected; unchanged saved values may round-trip. This protection also applies when no saved override exists: a legacy save cannot create one for an enforced setting. Federated protection requires the target to report enforcement metadata; upgrade older peers before relying on it.
 
+### Restarting from PI WEB
+
+Open **Restart…** from the actions menu, choose **Web service**, **Session daemon**, or **Both services**, and select **Run in terminal**. This opens the displayed restart command in the gateway's maintenance terminal, like the Updates panel. Confirmation switches to the gateway if a remote machine is selected. A missing targeted command disables that choice rather than restarting additional services.
+
+Web-only restart preserves agent sessions. Restarting the daemon interrupts agent work and terminals; the dialog shows a simple activity hint. Check terminal output for errors. The command owns the restart: the dialog does not track completion or retry it. If the daemon restart closes the terminal or web does not return, use your installation's service controls to inspect and recover it. After hostname-policy changes, reconnect using an allowed address and refresh the page.
+
 ### When changes apply
 
 Process restarts depend on the key:
 
 - `host` / `port`: restart the gateway web/API service or process.
+- `hostAccess`: restart web/API and, if running, the development UI server. The UI compares the effective policy, including the host list, with the running web/API snapshot; it cannot confirm the development server's running policy. Legacy `allowedHosts` changes require only a development UI restart and have no effect while `hostAccess` is supplied. No session-daemon restart is needed.
 - `maxUploadBytes`: restart both the web/API process and the session daemon on that machine.
 - `spawnSessions` / `subsessions` / `sessionMessages` / `askUser` / `extensionDialogsTimeoutMs` / `environmentFacts`: restart the session daemon on that machine.
 - `sessionArchive.directory`: restart the session daemon on that machine; changes only the destination for new archives.
@@ -241,7 +306,8 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 | Machine name | `installationName` | `PI_WEB_INSTALLATION_NAME` | Global | Not supported locally | Config refresh; reload other windows |
 | Web/API bind host | `host` | `PI_WEB_HOST` | Global | Not supported locally | Restart web/API |
 | Web/API port | `port` | `PI_WEB_PORT`, `PORT` | Global | Not supported locally | Restart web/API |
-| Dev-server allowed hosts | `allowedHosts` | `PI_WEB_ALLOWED_HOSTS` | Global | Not supported locally | Restart dev web/UI |
+| Shared hostname policy | `hostAccess` | `PI_WEB_HOST_ACCESS` | Gateway only | Not supported locally; absent until an explicit decision | Restart web/API and development UI if running |
+| Legacy dev UI allowed hosts | `allowedHosts` | `PI_WEB_ALLOWED_HOSTS` | Gateway only | Not supported locally; ignored when `hostAccess` is supplied | Restart development UI |
 | Base filesystem roots | `basePaths` | `PI_WEB_BASE_PATHS` (JSON array) | Global | Not supported locally; default `[]` | Next file request |
 | Additional filesystem roots | `pathAccess.allowedPaths` | `PI_WEB_PATH_ACCESS` (JSON object) | Global + project | **Adds** after base roots; global then project, deduplicated; env replaces effective additions | Next file request; refresh existing views if needed |
 | Manual file upload default folder | `uploads.defaultFolder` | `PI_WEB_UPLOADS` (JSON object) | Global + project | **Overrides**: project value wins for workspaces in that project; otherwise global/default applies | New Upload dialogs and direct drag/drop batches after config/workspace refresh |
@@ -330,7 +396,7 @@ Accepted root forms:
 
 Roots must be existing directories. Symlink escapes outside allowed roots are rejected.
 
-In **Settings → General**, external filesystem roots are saved on the selected machine. Gateway host, port, and allowed-hosts fields stay on the gateway config.
+In **Settings → General**, external filesystem roots are saved on the selected machine. Gateway bind address, port, and hostname policy stay on the gateway config.
 
 This is not a sandbox for the underlying Pi Coding Agent or your OS user. It only controls PI WEB UI/API file exposure outside a workspace.
 
@@ -478,11 +544,19 @@ New sessions inherit the parent's model and thinking level unless another model 
 
 In **Settings → Session daemon**, these keys are saved on the selected machine. Restart the session daemon on that machine after changing them.
 
+#### Self-archival
+
+Agents can call `archive_self` with no arguments to end their run and archive their own session. The transcript is preserved and can be restored through the normal archive controls. Other sessions, descendants, and scheduled task definitions are unchanged. The tool is available independently of spawning, messaging, and question-form settings.
+
+Archival policy belongs in your instructions. The tool does not check task outcomes or decide whether a result needs your review. Agents should finish reports and any final summary before calling it, alone and last.
+
+The tool acknowledges a request, not completed archival. PI WEB waits for the saved tool result and an idle session before archiving. New conversation work, queued work, interruption, or a branch change cancels the pending request; it is not replayed when a session reopens. Failures appear in session notifications and daemon logs rather than triggering an automatic retry. Restart the session daemon after upgrading to activate the tool.
+
 #### Human intervention
 
 An agent can call `request_human_intervention` with a short, self-contained `reason` to mark the session **Needs input** and end its run. The reason appears in the transcript as an **Input requested** card, so the request is visible even when the agent wrote nothing else. This tool is always available, independently of the spawning, messaging, and question-form settings. It also covers approvals and actions outside PI WEB; questions in text alone do not set the indicator.
 
-The static hollow ring appears on the session and rolls up to its workspace, project, and machine, including collapsed agent-subsession groups. Unread activity remains separate. Any new agent run clears the agent-requested state, whether started by you, another agent, or a system message. Merely queueing a message, reading the session, or navigating its transcript does not clear it. If the agent still needs help after resuming, it requests intervention again.
+The static hollow ring appears on the session and rolls up to its workspace, project, and machine, including collapsed agent-subsession groups. Unread activity remains separate. The state clears as soon as the conversation continues: a message from you, an agent reply or tool result, or answers to the question form. This includes a message you queued earlier that is delivered after the request. Passive entries, such as extension notices, `!command` output, and compaction or branch summaries, do not clear it; a run woken by another agent or a system message clears it once the agent replies. Merely queueing a message, reading the session, or navigating its transcript does not clear it. If the agent still needs help after resuming, it requests intervention again.
 
 Agent-requested intervention is saved with the session and survives daemon restarts. It is session execution state, not an outstanding question or a branch-specific form. Newly posted `ask_user` forms set the same state automatically. Pending extension dialogs also show **Needs input**, but retain their own answer, cancellation, and timeout lifecycle; runtime-only dialogs are not restored after a daemon restart.
 
@@ -496,7 +570,7 @@ Use **Settings → Session daemon → Allow agents to ask questions** to change 
 
 Agents can ask questions with choices or free-text answers. You may leave questions unanswered; partial submissions are confirmed before sending. Answering or skipping resumes the agent.
 
-Forms are saved in the conversation and survive restarts. Only a form at the end of the active conversation is open; answering, skipping, or sending another message closes it. Earlier forms remain expandable for read-only review. Returning the conversation to a question reopens it; archived conversations remain read-only.
+Forms are saved in the conversation and survive restarts. Only the latest form in the active conversation can be open, and the same rule that clears **Needs input** closes it: answering, skipping, a later message, or an agent reply. Passive entries after the form leave it open. Earlier forms remain expandable for read-only review. Returning the conversation to a question reopens it; archived conversations remain read-only.
 
 Restart the session daemon after changing `askUser` or after upgrading PI WEB to a version that introduces this tool. For the systemd user service, run `systemctl --user restart pi-web-sessiond`.
 

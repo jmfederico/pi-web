@@ -30,6 +30,7 @@ const sourcePaths: Record<string, string> = {
   "core.projectWorkspace": "../src/client/src/components/projectWorkspace.messages.ts",
   "core.images": "../src/client/src/components/image.messages.ts",
   "core.pluginRecovery": "../src/client/src/pluginRecovery.messages.ts",
+  "core.restart": "../src/client/src/restart.messages.ts",
   "core.chatChrome": "../src/client/src/components/chatChrome.messages.ts",
   "core.formattedText": "../src/client/src/components/formattedText.messages.ts",
   "core.sessionNotifications": "../src/client/src/components/sessionNotifications.messages.ts",

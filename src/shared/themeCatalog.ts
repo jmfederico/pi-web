@@ -7,12 +7,20 @@ export interface PiWebThemeStylesheetMetadata {
   order?: number;
 }
 
+export interface PiWebThemeLoadingScreen {
+  background: string;
+  foreground: string;
+  logo: string;
+}
+
 export interface PiWebThemeMetadata {
   id: string;
   name: string;
   description?: string;
   order?: number;
   colorScheme: "light" | "dark";
+  /** Opaque hex colours rendered before application JavaScript runs. */
+  loadingScreen?: PiWebThemeLoadingScreen;
   stylesheets: PiWebThemeStylesheetMetadata[];
 }
 

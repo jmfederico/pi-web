@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, expect, it } from "vitest";
 import { ChatView } from "./ChatView";
+import { chatTranscriptMessages } from "../chatTranscriptMessages";
 
 const message = {
   role: "assistant" as const,
@@ -57,7 +58,7 @@ it("keeps conversational roles available to assistive technology without repeate
   expect(headers[1]?.querySelector(".visually-hidden")?.textContent).toBe("assistant");
   expect(headers[0]?.querySelector(".label")).toBeNull();
   expect(headers[1]?.querySelector(".label")).toBeNull();
-  expect(headers[2]?.querySelector(".label")?.textContent).toBe("system");
+  expect(headers[2]?.querySelector(".label")?.textContent).toBe(chatTranscriptMessages.t("system"));
   expect(view.shadowRoot?.querySelectorAll('button[aria-label="Message information"]')).toHaveLength(3);
 
   // These hooks, unlike the remaining transcript DOM, are the supported theme contract.

@@ -18,7 +18,7 @@ function required<T>(value: T | null | undefined): T {
 }
 const config: PiWebConfigResponse = {
   path: "/raw/<img>/config.json", exists: true, config: { port: 8504 },
-  effectiveConfig: { port: 8504, allowedHosts: ["a.local", "b.local", "c.local"], pathAccess: { allowedPaths: ["/a", "/b", "/c"] } },
+  effectiveConfig: { port: 8504, hostAccess: { mode: "restricted", hosts: ["a.local", "b.local", "c.local"] }, pathAccess: { allowedPaths: ["/a", "/b", "/c"] } },
   envOverrides: { host: false, port: false, allowedHosts: true, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false },
 };
 async function settle(panel: SettingsGeneralPanel): Promise<void> {
@@ -138,15 +138,15 @@ it("updates loading, unavailable and default summaries while retaining parent-ow
   panel.machineLoading = false;
   await settle(panel);
   for (const key of ["chatUnavailable", "gatewayUnavailable", "machineUnavailable"] as const) expect(panel.renderRoot.textContent).toContain(messages.t(key));
-  panel.configResponse = { ...config, effectiveConfig: { allowedHosts: true } };
+  panel.configResponse = { ...config, effectiveConfig: { hostAccess: { mode: "any" } } };
   panel.machineConfigResponse = { ...config, effectiveConfig: {} };
   await settle(panel);
-  for (const key of ["anyHost", "denied"] as const) expect(panel.renderRoot.textContent).toContain(messages.t(key));
+  for (const key of ["hostAccessAny", "denied"] as const) expect(panel.renderRoot.textContent).toContain(messages.t(key));
   expect(panel.renderRoot.textContent).toContain(messages.t("defaultValue", { value: "127.0.0.1" }));
   for (const hosts of [[], undefined]) {
-    panel.configResponse = { ...config, effectiveConfig: { ...(hosts === undefined ? {} : { allowedHosts: hosts }) } };
+    panel.configResponse = { ...config, effectiveConfig: { ...(hosts === undefined ? {} : { hostAccess: { mode: "restricted", hosts } }) } };
     await settle(panel);
-    expect(panel.renderRoot.textContent).toContain(messages.t(hosts === undefined ? "unset" : "noHosts"));
+    expect(panel.renderRoot.textContent).toContain(messages.t(hosts === undefined ? "hostAccessUndecided" : "noHosts"));
   }
 });
 

@@ -211,7 +211,7 @@ describe("agent control composed with native Pi sessions", () => {
     }
   });
 
-  it.each(["idle", "working"] as const)("returns the message tool before a %s recipient finishes and delivers content-only custom steering", async (state) => {
+  it.each(["idle", "working"] as const)("returns the message tool before a %s recipient finishes and preserves old/new attributed messages in model context", async (state) => {
     const f = await fixture();
     const initialEntered = gate();
     const messageEntered = gate();
@@ -219,7 +219,13 @@ describe("agent control composed with native Pi sessions", () => {
     const finishMessage = gate();
     const messageText = "  Investigate this follow-up independently.\n\nPreserve this body.  \n";
     const deliveredContent = `Message from session parent-1:\n\n${messageText}`;
-    const details = { sendingSessionId: "parent-1" };
+    const details = { sendingSessionId: "parent-1", body: messageText };
+    const legacyMessage = {
+      customType: "session.message",
+      content: "Message from session legacy-sender:\n\n  Earlier context.\n\nKeep this too.  \n",
+      display: true,
+      details: { sendingSessionId: "legacy-sender" },
+    };
     const sendCustomMessage = vi.spyOn(f.session, "sendCustomMessage");
     let requests = 0;
     let messageInput: unknown;
@@ -230,7 +236,7 @@ describe("agent control composed with native Pi sessions", () => {
       const release = request === 1 ? finishInitial : finishMessage;
       if (request === 1) initialEntered.resolve();
       else {
-        messageInput = context.messages.at(-1);
+        messageInput = context.messages;
         messageEntered.resolve();
       }
       const finish = (aborted: boolean) => {
@@ -253,6 +259,10 @@ describe("agent control composed with native Pi sessions", () => {
       return stream;
     };
     try {
+      // Seed the pre-upgrade format through Pi's real journal/context boundary,
+      // not a fake transcript. Subsequent turns must retain its attribution.
+      await f.session.sendCustomMessage(legacyMessage, { triggerTurn: false });
+      sendCustomMessage.mockClear();
       await bounded(f.spawn(), "spawn acceptance");
       await bounded(initialEntered.promise, "initial request");
       let firstCompletionId: string | undefined;
@@ -282,9 +292,19 @@ describe("agent control composed with native Pi sessions", () => {
       // The visible transcript and model context both retain sender provenance;
       // metadata alone would not reach the model. This grants no control authority.
       const custom = f.session.messages.filter((message) => message.role === "custom" && message.customType === "session.message");
-      expect(custom).toHaveLength(1);
-      expect(custom[0]).toEqual({ role: "custom", customType: "session.message", content: deliveredContent, display: true, details, timestamp: custom[0]?.timestamp });
-      expect(messageInput).toMatchObject({ role: "user", content: [{ type: "text", text: deliveredContent }] });
+      expect(custom).toHaveLength(2);
+      expect(custom[0]).toEqual({ role: "custom", ...legacyMessage, timestamp: custom[0]?.timestamp });
+      expect(custom[1]).toEqual({ role: "custom", customType: "session.message", content: deliveredContent, display: true, details, timestamp: custom[1]?.timestamp });
+      expect(messageInput).toEqual(expect.arrayContaining([
+        expect.objectContaining({ role: "user", content: [{ type: "text", text: legacyMessage.content }] }),
+        expect.objectContaining({ role: "user", content: [{ type: "text", text: deliveredContent }] }),
+      ]));
+      const journalMessages = f.session.sessionManager.getBranch().filter((entry) => entry.type === "custom_message" && entry.customType === "session.message");
+      expect(journalMessages).toMatchObject([
+        legacyMessage,
+        { customType: "session.message", content: deliveredContent, display: true, details },
+      ]);
+      expect(journalMessages[0]).toHaveProperty("details", legacyMessage.details);
 
       finishMessage.resolve();
       await f.settled();

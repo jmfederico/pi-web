@@ -194,7 +194,10 @@ export interface PiWebConfigValues {
   quietMode?: boolean;
   host?: string;
   port?: number;
+  /** Legacy Vite-only fallback, ignored when hostAccess is supplied. */
   allowedHosts?: string[] | true;
+  /** Shared gateway/Vite Host policy; omission leaves the decision unset. */
+  hostAccess?: PiWebHostAccess;
   shortcuts?: PiWebShortcutConfig;
   plugins?: PiWebPluginConfigMap;
   /** Deployment base roots; combined with independently configurable path additions. */
@@ -386,11 +389,15 @@ export interface PiWebConfigEnvOverrides {
   askUser: boolean;
 }
 
+export type PiWebHostAccess = { mode: "restricted"; hosts: string[] } | { mode: "any" };
+
 export interface PiWebConfigResponse {
   path: string;
   exists: boolean;
   config: PiWebConfigValues;
   effectiveConfig: PiWebConfigValues;
+  /** Gateway startup snapshot: null is undecided; omitted by older servers and selected-machine views. */
+  activeHostAccess?: PiWebHostAccess | null;
   envOverrides: PiWebConfigEnvOverrides;
   /** JSON-pointer setting identifiers mapped to controlling environment variable names. */
   enforcedSettings?: Record<string, string>;
@@ -1123,10 +1130,12 @@ export interface SessionModelCatalogEntry {
  */
 export interface SessionModelCatalogResponse {
   models: SessionModelCatalogEntry[];
+  /** Canonical selection mode, independent of row membership. Optional for compatibility with older servers. */
+  scope?: "all" | "manual";
 }
 
-/** Canonical model-scope presets exposed by the model picker's bulk toggle. */
-export type SessionModelScopeMode = "all" | "current";
+/** All removes the selection; manual snapshots available models; current selects only the current model. */
+export type SessionModelScopeMode = "all" | "manual" | "current";
 
 // Domain type is owned by pi and re-exported from the shared thinking-levels
 // module. Wire/data fields below intentionally use `string` so an unknown level

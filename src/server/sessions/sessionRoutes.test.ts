@@ -15,7 +15,8 @@ import type {
   SessionCleanupExecuteResponse,
   SessionCleanupPreviewResponse,
   SessionInfo,
-  SessionModelCatalogEntry,
+  SessionModelCatalogResponse,
+  SessionModelScopeMode,
   SessionNotificationDismissAllRequest,
   SessionNotificationDismissRequest,
   SessionNotificationInboxSnapshot,
@@ -785,10 +786,13 @@ describe("session routes", () => {
     await routeApp.register(fastifyWebsocket);
     const eventHub = new SessionEventHub();
     const routeService = new CapturingRouteSessionService();
-    routeService.modelCatalogResponse = [
-      { provider: "anthropic", id: "claude-opus-4-6", name: "Claude Opus", contextWindow: 200_000, enabled: true },
-      { provider: "anthropic", id: "claude-sonnet-4-5", enabled: false },
-    ];
+    routeService.modelCatalogResponse = {
+      scope: "manual",
+      models: [
+        { provider: "anthropic", id: "claude-opus-4-6", name: "Claude Opus", contextWindow: 200_000, enabled: true },
+        { provider: "anthropic", id: "claude-sonnet-4-5", enabled: false },
+      ],
+    };
     registerSessionRoutes(routeApp, routeService, eventHub);
 
     try {
@@ -797,7 +801,7 @@ describe("session routes", () => {
       const missing = await routeApp.inject({ method: "GET", url: "/sessions/session-1/models/catalog" });
 
       expect(response.statusCode).toBe(200);
-      expect(response.json()).toEqual({ models: routeService.modelCatalogResponse });
+      expect(response.json()).toEqual(routeService.modelCatalogResponse);
       expect(routeService.modelCatalogCalls).toEqual([{ id: "session-1", cwd: requestCwd }]);
       expect(missing.statusCode).toBe(400);
       expect(missing.json()).toEqual({ error: "cwd query parameter is required" });
@@ -831,7 +835,7 @@ describe("session routes", () => {
     await routeApp.register(fastifyWebsocket);
     const eventHub = new SessionEventHub();
     const routeService = new CapturingRouteSessionService();
-    routeService.setModelEnabledResponse = [{ provider: "anthropic", id: "claude-opus-4-6", enabled: false }];
+    routeService.setModelEnabledResponse = { scope: "manual", models: [{ provider: "anthropic", id: "claude-opus-4-6", enabled: false }] };
     registerSessionRoutes(routeApp, routeService, eventHub);
 
     try {
@@ -843,7 +847,7 @@ describe("session routes", () => {
       });
 
       expect(response.statusCode).toBe(200);
-      expect(response.json()).toEqual({ models: routeService.setModelEnabledResponse });
+      expect(response.json()).toEqual(routeService.setModelEnabledResponse);
       expect(routeService.setModelEnabledCalls).toEqual([{ lookup: { id: "session-1", cwd: requestCwd }, provider: "anthropic", modelId: "claude-opus-4-6", enabled: false }]);
     } finally {
       await routeService.dispose();
@@ -851,12 +855,12 @@ describe("session routes", () => {
     }
   });
 
-  it("forwards atomic model-scope presets and returns the updated catalog", async () => {
+  it.each(["all", "manual", "current"] as const)("forwards the %s model-scope preset and returns the updated catalog", async (mode) => {
     const routeApp = Fastify({ logger: false });
     await routeApp.register(fastifyWebsocket);
     const eventHub = new SessionEventHub();
     const routeService = new CapturingRouteSessionService();
-    routeService.setModelScopeResponse = [{ provider: "anthropic", id: "claude-opus-4-6", enabled: true }];
+    routeService.setModelScopeResponse = { scope: mode === "all" ? "all" : "manual", models: [{ provider: "anthropic", id: "claude-opus-4-6", enabled: true }] };
     registerSessionRoutes(routeApp, routeService, eventHub);
 
     try {
@@ -864,12 +868,12 @@ describe("session routes", () => {
       const response = await routeApp.inject({
         method: "POST",
         url: "/sessions/session-1/models/scope",
-        payload: { cwd: requestCwd, mode: "current" },
+        payload: { cwd: requestCwd, mode },
       });
 
       expect(response.statusCode).toBe(200);
-      expect(response.json()).toEqual({ models: routeService.setModelScopeResponse });
-      expect(routeService.setModelScopeCalls).toEqual([{ lookup: { id: "session-1", cwd: requestCwd }, mode: "current" }]);
+      expect(response.json()).toEqual(routeService.setModelScopeResponse);
+      expect(routeService.setModelScopeCalls).toEqual([{ lookup: { id: "session-1", cwd: requestCwd }, mode }]);
     } finally {
       await routeService.dispose();
       await routeApp.close();
@@ -889,9 +893,9 @@ describe("session routes", () => {
       const invalid = await routeApp.inject({ method: "POST", url: "/sessions/session-1/models/scope", payload: { cwd: requestCwd, mode: "none" } });
 
       expect(missing.statusCode).toBe(400);
-      expect(missing.json()).toEqual({ error: "mode field must be all or current" });
+      expect(missing.json()).toEqual({ error: "mode field must be all, manual, or current" });
       expect(invalid.statusCode).toBe(400);
-      expect(invalid.json()).toEqual({ error: "mode field must be all or current" });
+      expect(invalid.json()).toEqual({ error: "mode field must be all, manual, or current" });
       expect(routeService.setModelScopeCalls).toEqual([]);
     } finally {
       await routeService.dispose();
@@ -1665,25 +1669,25 @@ class CapturingRouteSessionService implements SessionRouteService {
 
   availableModels(): Promise<[]> { return Promise.resolve([]); }
   modelCatalogCalls: SessionRouteRef[] = [];
-  modelCatalogResponse: SessionModelCatalogEntry[] = [];
+  modelCatalogResponse: SessionModelCatalogResponse = { scope: "all", models: [] };
   modelCatalogError: Error | undefined;
-  modelCatalog(lookup: SessionRouteRef): Promise<SessionModelCatalogEntry[]> {
+  modelCatalog(lookup: SessionRouteRef): Promise<SessionModelCatalogResponse> {
     this.modelCatalogCalls.push(lookup);
     if (this.modelCatalogError !== undefined) return Promise.reject(this.modelCatalogError);
     return Promise.resolve(this.modelCatalogResponse);
   }
   setModelEnabledCalls: { lookup: SessionRouteRef; provider: string; modelId: string; enabled: boolean }[] = [];
-  setModelEnabledResponse: SessionModelCatalogEntry[] = [];
+  setModelEnabledResponse: SessionModelCatalogResponse = { scope: "all", models: [] };
   setModelEnabledError: Error | undefined;
-  setModelEnabled(lookup: SessionRouteRef, provider: string, modelId: string, enabled: boolean): Promise<SessionModelCatalogEntry[]> {
+  setModelEnabled(lookup: SessionRouteRef, provider: string, modelId: string, enabled: boolean): Promise<SessionModelCatalogResponse> {
     this.setModelEnabledCalls.push({ lookup, provider, modelId, enabled });
     if (this.setModelEnabledError !== undefined) return Promise.reject(this.setModelEnabledError);
     return Promise.resolve(this.setModelEnabledResponse);
   }
-  setModelScopeCalls: { lookup: SessionRouteRef; mode: "all" | "current" }[] = [];
-  setModelScopeResponse: SessionModelCatalogEntry[] = [];
+  setModelScopeCalls: { lookup: SessionRouteRef; mode: SessionModelScopeMode }[] = [];
+  setModelScopeResponse: SessionModelCatalogResponse = { scope: "all", models: [] };
   setModelScopeError: Error | undefined;
-  setModelScope(lookup: SessionRouteRef, mode: "all" | "current"): Promise<SessionModelCatalogEntry[]> {
+  setModelScope(lookup: SessionRouteRef, mode: SessionModelScopeMode): Promise<SessionModelCatalogResponse> {
     this.setModelScopeCalls.push({ lookup, mode });
     if (this.setModelScopeError !== undefined) return Promise.reject(this.setModelScopeError);
     return Promise.resolve(this.setModelScopeResponse);

@@ -1,4 +1,4 @@
-import type { AuthProviderOption, CommandOption, CommandResult, ExtensionDialogAnswer, ExtensionDialogCloseReason, Machine, MachineHealth, MachineRuntime, OAuthFlowState, PendingExtensionDialog, PiWebStatusResponse, Project, QueuedSessionMessage, SessionActivity, SessionInfo, SessionModelCatalogEntry, SessionStatus, SessionTreeSnapshot, TerminalCommandRun, Workspace, WorkspaceProviderResolution } from "./api";
+import type { AuthProviderOption, CommandOption, CommandResult, ExtensionDialogAnswer, ExtensionDialogCloseReason, Machine, MachineHealth, MachineRuntime, OAuthFlowState, PendingExtensionDialog, PiWebStatusResponse, Project, QueuedSessionMessage, SessionActivity, SessionInfo, SessionModelCatalogEntry, SessionModelCatalogResponse, SessionStatus, SessionTreeSnapshot, TerminalCommandRun, Workspace, WorkspaceProviderResolution } from "./api";
 import type { ChatLine } from "./chatTypes";
 import type { MachineStatusSnapshot } from "../../shared/machineStatus";
 import type { QualifiedContributionId } from "./plugins/ids";
@@ -68,7 +68,7 @@ export interface AppState {
   workspaceDeletionRuns: Record<string, TerminalCommandRun>;
   commandDialog: Extract<CommandResult, { type: "select" }> | undefined;
   treeDialog: SessionTreeSnapshot | undefined;
-  modelDialog: { instanceId: number; origin: ModelDialogOrigin; title: string; options: CommandOption[]; catalog: SessionModelCatalogEntry[]; selectedValue?: string; defaultValue?: string; defaultsLoading?: boolean } | undefined;
+  modelDialog: { instanceId: number; origin: ModelDialogOrigin; title: string; options: CommandOption[]; catalog: SessionModelCatalogEntry[]; scope?: SessionModelCatalogResponse["scope"]; selectedValue?: string; defaultValue?: string; defaultsLoading?: boolean } | undefined;
   thinkingDialog: { title: string; options: CommandOption[]; selectedValue?: string; origin?: ModelDialogOrigin; defaultValue?: string; defaultsLoading?: boolean } | undefined;
   authDialog: AuthDialogState | undefined;
   actionPaletteOpen: boolean;

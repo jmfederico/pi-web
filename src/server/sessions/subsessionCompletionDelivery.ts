@@ -8,7 +8,8 @@ export interface SubsessionCompletionDeliveryDeps {
 export function createSubsessionCompletionDelivery(deps: SubsessionCompletionDeliveryDeps): ExtensionFactory {
   return (pi) => {
     const deliver = async (event: BoundaryState, ctx: ExtensionContext) => {
-      // A manual stop or failed parent run must not be resumed by this hook.
+      // Let an interrupted or failed run settle before the host starts a new
+      // run for unread notices; do not continue it inside the failed boundary.
       if (event.outcome !== "completed") return;
       const message = await deps.prepare(ctx.sessionManager.getSessionId(), ctx.sessionManager.getSessionFile());
       if (message === undefined) return;

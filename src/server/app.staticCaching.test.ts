@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "./app.js";
+import { createFilePiWebConfigService } from "./configRoutes.js";
 
 let clientDist: string;
 
@@ -19,6 +20,24 @@ afterEach(async () => {
 });
 
 describe("client static caching", () => {
+  it("guards actual static files and the SPA fallback with the effective startup host policy", async () => {
+    const app = await buildApp({
+      clientDist, logger: false,
+      config: createFilePiWebConfigService({ env: { PI_WEB_CONFIG: join(clientDist, "absent-config.json"), PI_WEB_HOST_ACCESS: JSON.stringify({ mode: "restricted", hosts: ["public.example.test"] }) } }),
+    });
+    try {
+      for (const url of ["/", "/assets/index-Abc123_x.js", "/robots.txt", "/sessions/example"]) {
+        const accepted = await app.inject({ url, headers: { host: "public.example.test" } });
+        expect(accepted.statusCode).toBe(200);
+        const rejected = await app.inject({ url, headers: { host: "evil.example" } });
+        expect(rejected.statusCode).toBe(403);
+        expect(rejected.headers["content-type"]).toContain("application/json");
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
   it("marks content-hashed assets immutable", async () => {
     const app = await buildApp({ clientDist, logger: false });
     try {

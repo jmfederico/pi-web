@@ -56,19 +56,29 @@
       html, body { margin: 0; height: 100%; overflow: hidden; background: var(--pi-bg); color: var(--pi-text); }
       body { min-height: 100dvh; }
       html[data-pi-web-loading] pi-web-app { visibility: hidden; }
-      #pi-web-startup { position: fixed; inset: 0; display: grid; place-content: center; justify-items: center; color-scheme: light dark; background: Canvas; color: CanvasText; font: 16px system-ui, sans-serif; }
-      /* Match the PI WEB mark in favicon.svg; the surrounding loader uses system colours. */
-      #pi-web-startup svg { width: 96px; height: 16px; overflow: visible; color: #00f0d8; fill: currentColor; filter: drop-shadow(0 0 4px color-mix(in srgb, currentColor 25%, transparent)); animation: pi-web-startup-glow 2400ms ease-in-out infinite alternate; }
-      @media (prefers-color-scheme: light) { #pi-web-startup svg { color: #008c82; } }
-      html[data-pi-web-deployment="dev"] #pi-web-startup svg { color: #a371f7; }
-      @keyframes pi-web-startup-glow { to { filter: drop-shadow(0 0 8px color-mix(in srgb, currentColor 45%, transparent)); } }
-      @media (prefers-reduced-motion: reduce) { #pi-web-startup svg { animation: none; } }
+      #pi-web-startup { --pi-startup-default-logo: #00f0d8; position: fixed; inset: 0; display: grid; place-content: center; justify-items: center; color-scheme: var(--pi-startup-scheme, light dark); background: var(--pi-startup-background, Canvas); color: var(--pi-startup-foreground, CanvasText); font: 16px system-ui, sans-serif; }
+      /* Keep the mark steady; only the small activity line moves. */
+      #pi-web-startup svg { width: 96px; height: 16px; color: var(--pi-startup-logo, var(--pi-startup-default-logo)); fill: currentColor; }
+      @media (prefers-color-scheme: light) { #pi-web-startup { --pi-startup-default-logo: #008c82; } }
+      /* Deployment identity takes precedence over contributed logo colours. */
+      html[data-pi-web-deployment="dev"] #pi-web-startup { --pi-startup-logo: #a371f7; }
+      .pi-web-startup-activity { width: 96px; height: 2px; margin-top: 20px; overflow: hidden; color: var(--pi-startup-logo, var(--pi-startup-default-logo)); }
+      .pi-web-startup-activity::after { content: ""; display: block; width: 24px; height: 100%; background: currentColor; animation: pi-web-startup-sweep 1400ms ease-in-out infinite; }
+      @keyframes pi-web-startup-sweep { from { transform: translateX(-24px); } to { transform: translateX(96px); } }
+      @media (prefers-reduced-motion: reduce) { .pi-web-startup-activity::after { animation: none; transform: translateX(36px); } }
+      @media (forced-colors: active) {
+        #pi-web-startup { background: Canvas; color: CanvasText; }
+        #pi-web-startup svg, .pi-web-startup-activity { color: CanvasText; }
+        .pi-web-startup-activity::after { background: CanvasText; }
+      }
       html:not([data-pi-web-loading]) #pi-web-startup { display: none; }
     </style>
+    <style id="pi-web-startup-theme"></style>
   </head>
   <body>
     <div id="pi-web-startup" role="status" aria-label="Loading PI WEB">
       <svg viewBox="0 0 768 128" aria-hidden="true"><rect width="768" height="128" /></svg>
+      <span class="pi-web-startup-activity" aria-hidden="true"></span>
     </div>
     <pi-web-app></pi-web-app>
     <script type="module" src="/src/startup.ts"></script>

@@ -1,6 +1,8 @@
 // @vitest-environment happy-dom
+// @vitest-environment-options {"settings":{"enableIframePageLoading":true,"navigation":{"disableChildFrameNavigation":true}}}
+// Create inert frame contexts, but block child navigation so fixtures cannot fetch pages.
 
-import type { ContentRenderingCapability, FileContentResponse, FilePreviewerInput, WorkspaceFilesCapabilityV1 } from "@jmfederico/pi-web/plugin-api";
+import type { MarkdownRenderingCapability, FileContentResponse, FilePreviewerInput, WorkspaceFilesCapabilityV1 } from "@jmfederico/pi-web/plugin-api";
 import { html } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FilesDocumentPreview } from "./FilesDocumentPreview";
@@ -101,33 +103,47 @@ describe("Files document preview", () => {
     expect(element.shadowRoot?.querySelector("img")).toBeNull();
   });
 
-  it("sanitizes Markdown and shows truncation without executing source", async () => {
-    const { element } = fixture("markdown", { binary: false, truncated: true, content: '# Heading\n<script>alert(1)</script>\n[unsafe](javascript:alert(1))' });
+  it("keeps source readable without a host capability and shows truncation without parsing", async () => {
+    const { element, input } = fixture("markdown", { binary: false, truncated: true, content: '# Heading\n<script>alert(1)</script>\n[unsafe](javascript:alert(1))' });
     await mount(element);
-    expect(element.shadowRoot?.querySelector("h1")?.textContent).toBe("Heading");
+    expect(element.shadowRoot?.querySelector("pre")?.textContent).toBe(input.file.content);
+    expect(element.shadowRoot?.querySelector("h1")).toBeNull();
     expect(element.shadowRoot?.querySelector("script")).toBeNull();
     expect(element.shadowRoot?.querySelector('[href^="javascript:"]')).toBeNull();
     expect(element.shadowRoot?.querySelector(".preview-note")?.textContent).toContain("truncated");
   });
 
-  it("passes Markdown through the host renderer for fenced plugin previews", async () => {
-    const { element, input } = fixture("markdown", { binary: false, content: '```diagram\nA-->B\n```' });
-    const renderMarkdown = vi.fn<ContentRenderingCapability["renderMarkdown"]>(() => html`<b>Diagram preview</b>`);
-    element.contentRendering = { listRenderers: vi.fn(), renderText: vi.fn(), renderMarkdown };
+  it("delegates unchanged Markdown and localized labels to the host without supplying a parser", async () => {
+    const { element, input } = fixture("markdown", { binary: false, content: '# Heading\n```diagram\nA-->B\n```' });
+    const localization = filesLocalizationFixture();
+    element.content = localization.content;
+    localization.service.registerCatalog({
+      id: "files-test", namespace: "plugin:files:files", locale: "fr",
+      load: () => Promise.resolve({ table: "Tableau", imageOmitted: "Image omise{hasAlt, select, yes { : {alt}} other {}}" }),
+    });
+    await localization.service.setPreferences({ ...localization.service.preferences, language: "fr" });
+    const renderMarkdown = vi.fn<MarkdownRenderingCapability["render"]>(() => html`<b>Diagram preview</b>`);
+    element.markdownRendering = { render: renderMarkdown };
     await mount(element);
-    expect(renderMarkdown).toHaveBeenCalledWith(expect.objectContaining({ machineId: "remote", text: input.file.content, truncated: false, allowManualPreview: true }));
+    expect(renderMarkdown).toHaveBeenCalledOnce();
     const request = required(renderMarkdown.mock.calls[0]?.[0]);
-    expect(request.toSafeHtml("<script>bad()</script>")).not.toContain("<script>");
+    expect(request).toEqual({
+      machineId: "remote", text: input.file.content, truncated: false, allowManualPreview: true,
+      labels: { imageOmitted: request.labels?.imageOmitted, table: "Tableau" },
+    });
+    expect(request.labels?.imageOmitted("diagram")).toBe("Image omise : diagram");
+    expect(request.labels?.imageOmitted("")).toBe("Image omise");
     expect(element.shadowRoot?.querySelector("b")?.textContent).toBe("Diagram preview");
+    expect(element.shadowRoot?.querySelector("h1, pre")).toBeNull();
   });
 
   it("keeps Markdown renderer failures recoverable inside the preview", async () => {
     const { element, input } = fixture("markdown", { binary: false });
     const warning = vi.spyOn(console, "warn").mockImplementation(() => { /* Failure logging is asserted below. */ });
-    const renderMarkdown = vi.fn<ContentRenderingCapability["renderMarkdown"]>()
+    const renderMarkdown = vi.fn<MarkdownRenderingCapability["render"]>()
       .mockImplementationOnce(() => { throw new Error("Renderer failed"); })
       .mockReturnValue(html`<b>Recovered</b>`);
-    element.contentRendering = { listRenderers: vi.fn(), renderText: vi.fn(), renderMarkdown };
+    element.markdownRendering = { render: renderMarkdown };
     await mount(element);
     expect(element.shadowRoot?.querySelector('[role="alert"]')).not.toBeNull();
     expect(element.shadowRoot?.querySelector("a[download]")).not.toBeNull();
@@ -141,8 +157,8 @@ describe("Files document preview", () => {
 
   it("does not restart rendering from a queued update after disconnect", async () => {
     const { element } = fixture("markdown", { binary: false });
-    const renderMarkdown = vi.fn<ContentRenderingCapability["renderMarkdown"]>(() => html`<b>Preview</b>`);
-    element.contentRendering = { listRenderers: vi.fn(), renderText: vi.fn(), renderMarkdown };
+    const renderMarkdown = vi.fn<MarkdownRenderingCapability["render"]>(() => html`<b>Preview</b>`);
+    element.markdownRendering = { render: renderMarkdown };
     await mount(element);
     element.requestUpdate();
     element.remove();

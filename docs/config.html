@@ -483,6 +483,11 @@
 <p>Agent-created tracked subsessions are collapsed under their parent. Use <strong>Agent subsessions</strong> to expand them. User-created forks and clones, unknown-origin sessions, children without an available parent, and independent sessions remain visible.</p>
 <p>New sessions inherit the parent’s model and thinking level unless another model is requested, for example with a <code>#provider/model-id</code> prompt reference. Thinking levels are limited to what the chosen model supports.</p>
 </details>
+<details class="config-details"><summary>Agent self-archival</summary>
+<p>Agents can call <code>archive_self</code> with no arguments to end their run and archive their own session. The transcript is preserved and can be restored through normal archive controls. Other sessions, descendants, and scheduled task definitions are unchanged. The tool is available independently of spawning, messaging, and question-form settings.</p>
+<p>Put archival conditions in your instructions: the tool does not check task outcomes or decide whether a result needs review. Agents should finish reports and any final summary before calling it, alone and last.</p>
+<p>The result acknowledges a request, not completed archival. PI WEB waits for the saved tool result and an idle session. New conversation work, queued work, interruption, or a branch change cancels the request; reopening a session does not replay it. Failures appear in session notifications and daemon logs without an automatic retry. Restart the session daemon after upgrading to activate the tool.</p>
+</details>
 <details class="config-details"><summary>Human intervention and the Needs input indicator</summary>
 <p>An agent can call <code>request_human_intervention</code> with a short, self-contained <code>reason</code> to mark the session <strong>Needs input</strong> and end its run. The reason appears in the transcript as an <strong>Input requested</strong> card, so the request is visible even when the agent wrote nothing else. This tool is always available, independently of the spawning, messaging, and question-form settings. It also covers approvals and actions outside PI WEB; questions in text alone do not set the indicator.</p>
 <p>The static hollow ring appears on the session and rolls up to its workspace, project, and machine, including collapsed agent-subsession groups. Unread activity remains separate. Any new agent run clears the agent-requested state, whether started by you, another agent, or a system message. Merely queueing a message, reading the session, or navigating its transcript does not clear it. If the agent still needs help after resuming, it requests intervention again.</p>
@@ -640,14 +645,63 @@
 <td>Web/API restart</td>
 </tr>
 <tr>
-<th scope="row">Development hosts<br><code>allowedHosts</code></th>
-<td>Gateway dev server</td>
-<td><code>[]</code> (Vite built-ins)</td>
-<td>Additional trusted hostnames accepted by the development UI server.</td>
-<td>Dev web/UI restart</td>
+<th scope="row">Allowed hostnames<br><code>hostAccess</code></th>
+<td>Gateway web/API + development UI</td>
+<td>Absent: decision required</td>
+<td>One policy for both servers: <code>{"mode":"restricted","hosts":["pi.example.com"]}</code> or <code>{"mode":"any"}</code>.</td>
+<td>Restart web/API and development UI if running. UI compares the full policy with the web/API startup snapshot. No sessiond restart.</td>
+</tr>
+<tr>
+<th scope="row">Legacy development hostnames<br><code>allowedHosts</code></th>
+<td>Development UI only</td>
+<td><code>[]</code> (localhost, .localhost subdomains, literal IPv4/IPv6)</td>
+<td>Legacy development-only fallback. Ignored when <code>hostAccess</code> is supplied.</td>
+<td>Development UI restart. No sessiond restart.</td>
 </tr>
 </tbody></table></div>
 <p id="deployment-paths"><strong>Serving at a URL prefix?</strong> No config key is needed. The proxy must redirect to a trailing slash and strip the prefix before forwarding HTTP and WebSocket traffic. <a href="install#reverse-proxy-prefix">Reverse-proxy example →</a></p>
+<h3 id="restart-services">Restarting from PI WEB</h3>
+<p>Open <strong>Restart…</strong> from the actions menu, choose <strong>Web service</strong>, <strong>Session daemon</strong>, or <strong>Both services</strong>, and select <strong>Run in terminal</strong>. This opens the displayed command in the gateway's maintenance terminal, like the Updates panel. Confirmation switches to the gateway if a remote machine is selected. A missing targeted command disables that choice rather than restarting additional services.</p>
+<p>Web-only restart preserves agent sessions. Restarting the daemon interrupts agent work and terminals; the dialog shows a simple activity hint. Check terminal output for errors. The command owns the restart: the dialog does not track completion or retry it. If the daemon restart closes the terminal or web does not return, use your installation's service controls to inspect and recover it. After hostname-policy changes, reconnect using an allowed address and refresh the page.</p>
+<h3 id="browser-request-security">Browser request security</h3>
+<p>Choose one gateway <code>hostAccess</code> policy for both production and development in <strong>Settings → General → Allowed hostnames</strong>:</p>
+<ul>
+<li>No effective <code>hostAccess</code> (default): web/API hostname restrictions remain off, and the development UI keeps its legacy <code>allowedHosts</code> behavior. A persistent notice asks you to choose a policy.</li>
+<li><code>{"mode":"restricted","hosts":["pi.example.com"]}</code>: both servers allow local addresses and listed hostnames.</li>
+<li><code>{"mode":"any"}</code>: both servers accept any hostname, by explicit choice.</li>
+</ul>
+<p><strong>The decision warning applies to new and existing installations.</strong> Example configs leave <code>hostAccess</code> absent. A missing saved value inherits deployment defaults or environment policy; without either, no decision has been made. The Notices panel keeps the warning visible even without a selected workspace or session and opens the hostname control directly. Opening Settings, changing an unrelated setting, or retaining legacy <code>allowedHosts</code> does not dismiss it. Either explicit policy, including an environment policy, resolves the decision.</p>
+<p>To restrict access, include every public DNS name you use:</p>
+<pre><code>{ "hostAccess": { "mode": "restricted", "hosts": ["pi.example.com"] } }</code></pre>
+<p>Unlisted hostnames receive <code>403</code>. Matching rules are:</p>
+<ul>
+<li>Localhost, subdomains of <code>.localhost</code>, and literal IPv4/IPv6 addresses remain allowed, including with an empty <code>hosts</code> list.</li>
+<li>An exact hostname such as <code>pi.example.com</code> allows only that hostname. A leading-dot entry such as <code>.example.com</code> allows both <code>example.com</code> and its subdomains. Use hostnames, not URLs or host:port pairs.</li>
+<li>To accept any hostname explicitly, use <code>{ "hostAccess": { "mode": "any" } }</code>. This disables hostname restrictions and application-level DNS-rebinding protection.</li>
+</ul>
+<p>The web/API also lacks that protection while no policy is chosen. Malformed <code>Host</code> headers are rejected and the Origin guard stays active regardless of policy. These checks are not authentication.</p>
+<p><code>hostAccess</code> is gateway-only, not project-local or selected-remote-machine configuration. Its mode and list are one atomic setting, replacing lower-priority policy together. <code>PI_WEB_HOST_ACCESS</code> accepts the policy object as JSON, overrides saved config and deployment defaults, and makes the entire control read-only. Invalid policies fail validation rather than disabling protection. Reset removes the saved policy; the decision warning returns if no lower-priority policy remains.</p>
+<p>Before saving or resetting a hostname policy in Settings, PI WEB checks the hostname in your browser’s URL against the resulting policy. If it would be blocked, choose <strong>Cancel</strong> to keep editing or <strong>Save anyway</strong> to accept the loss of access after restart. Confirmation does not add hostnames, change the policy, or restart services; direct API and file edits do not show it.</p>
+<p>Both servers read their policy at startup. Restart web/API and, if running, the development UI server after changing <code>hostAccess</code>. A separate restart notice compares the effective policy with the running web/API snapshot, including host-list-only changes. It remains until they match; choosing <code>any</code> resolves the decision warning but does not erase a pending restart. The snapshot does not confirm the development server's running policy. No session-daemon restart is needed.</p>
+<h4 id="host-access-migration">Migration from the development-only setting</h4>
+<p>Stable releases before <code>hostAccess</code> used <code>allowedHosts</code> only for the development UI; production did not enforce that list. Until you choose <code>hostAccess</code>, that behavior is preserved without rewriting configuration or locking out production DNS access:</p>
+<ul>
+<li>Missing <code>allowedHosts</code> or <code>[]</code>: development allows local addresses.</li>
+<li>An <code>allowedHosts</code> array: development also allows those hostnames.</li>
+<li><code>allowedHosts: true</code>: development accepts any hostname.</li>
+</ul>
+<p>The new list editor starts from an existing legacy list but requires an explicit policy choice. Once <code>hostAccess</code> is supplied, both servers follow it and ignore legacy <code>allowedHosts</code>, including <code>PI_WEB_ALLOWED_HOSTS</code>. The legacy value remains available if the new policy is later removed. It is no longer a separate editable control in Settings.</p>
+<p>For environment-managed deployments, replace <code>PI_WEB_ALLOWED_HOSTS</code> with an explicit JSON <code>PI_WEB_HOST_ACCESS</code> policy and restart both relevant services. The old variable remains supported as a development-only fallback; by itself it never resolves the decision warning.</p>
+<h4 id="origin-checks">Origin checks</h4>
+<p>Regardless of the hostname policy, all WebSocket upgrades and HTTP methods other than <code>GET</code>, <code>HEAD</code>, and <code>OPTIONS</code> pass an Origin guard:</p>
+<ul>
+<li>A missing <code>Origin</code> is allowed for CLI and Fleet clients; Host syntax checks and any enabled hostname allowlist still apply.</li>
+<li>A present <code>Origin</code> must be a single well-formed HTTP(S) origin, not a URL with credentials, a path, query, or fragment. <code>null</code>, malformed origins, and origins with a different hostname or port are rejected with <code>403</code>.</li>
+<li>The origin's hostname and effective port must match the raw preserved <code>Host</code> header. An explicit Host port must equal the Origin port (including its scheme default when omitted). If Host omits a port, it is interpreted using the Origin scheme's default: <code>80</code> for HTTP or <code>443</code> for HTTPS. Thus <code>Origin: https://pi.example.com:8443</code> requires <code>Host: pi.example.com:8443</code>.</li>
+</ul>
+<p>Scheme comparison is intentionally omitted so a TLS-terminating proxy can forward to HTTP. These checks use neither <code>Forwarded</code> nor <code>X-Forwarded-*</code> headers. There is no <code>allowedOrigins</code> setting or added CORS permission; listing two hosts does not permit cross-origin requests between them.</p>
+<h4>Proxy responsibilities</h4>
+<p>Preserve the public <code>Host</code>, including any nonstandard port, and the browser's <code>Origin</code> unchanged. For Nginx, use <code>$http_host</code>, not <code>$host</code>. The proxy owns TLS and must authenticate both HTTP and WebSocket traffic, reject unrecognized public hosts, and restrict direct backend access. Host/Origin checks are not authentication. See the <a href="install#reverse-proxy-prefix">reverse proxy installation guide</a>.</p>
 <h3>Daemon transport (environment only)</h3>
 <div class="table-scroll" role="region" aria-label="Web/API ↔ session daemon connection" tabindex="0">
 <table class="reference-table settings-table">
@@ -890,9 +944,14 @@ PI_WEB_PLUGINS='{"git":{"settings":{"workspaceDiscoveryHooks":false}}}'</code></
 <td>Port number</td>
 </tr>
 <tr>
+<th scope="row"><code>hostAccess</code></th>
+<td><code>PI_WEB_HOST_ACCESS</code></td>
+<td>Atomic JSON policy: <code>{"mode":"restricted","hosts":["pi.example.com"]}</code> or <code>{"mode":"any"}</code>. Absent until an explicit decision.</td>
+</tr>
+<tr>
 <th scope="row"><code>allowedHosts</code></th>
 <td><code>PI_WEB_ALLOWED_HOSTS</code></td>
-<td>JSON <code>true</code> or string array; legacy <code>true</code>/comma-separated hosts also accepted. Prefer explicit hosts; allowing all is unsafe on an exposed dev server.</td>
+<td>Legacy development-only fallback when <code>hostAccess</code> is absent. JSON <code>true</code> or string array; legacy <code>true</code>/comma-separated hosts also accepted. See <a href="#host-access-migration">migration to the shared policy</a>. The <a href="#origin-checks">Origin guard</a> remains active regardless of policy.</td>
 </tr>
 <tr>
 <th scope="row"><code>maxUploadBytes</code></th>

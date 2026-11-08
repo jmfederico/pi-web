@@ -39,6 +39,7 @@ const namespaces = [
   "core.machines",
   "core.pickers",
   "core.pluginRecovery",
+  "core.restart",
   "core.actions",
   "core.messageActions",
   "plugin:themes:themes",
