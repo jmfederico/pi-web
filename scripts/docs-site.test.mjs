@@ -1,26 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { Window } from "happy-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 const siteScript = readFileSync(new URL("../docs/site.js", import.meta.url), "utf8");
 
-function createAnimatedHomePage(initialScrollY = 0) {
-  const window = new Window({ url: "https://pi-web.dev/" });
-  window.document.body.className = "home-page";
-  window.document.body.innerHTML = `
-    <header class="site-header"></header>
-    <main>
-      <section class="hero"><span class="intro-word">Pi</span></section>
-      <section class="section">More PI WEB content</section>
-    </main>
-  `;
-  window.scrollTo(0, initialScrollY);
-  window.eval(siteScript);
-  return window;
-}
-
-describe("configuration documentation navigation", () => {
-  it.each(["config.html", "plugins.html", "community-plugins.html", "faq.html"])("keeps local links and copy targets valid in %s", (page) => {
+describe("documentation navigation", () => {
+  it.each(["index.html", "config.html", "plugins.html", "community-plugins.html", "faq.html"])("keeps local links and copy targets valid in %s", (page) => {
     const window = new Window({ url: `https://pi-web.dev/${page}` });
     try {
       window.document.write(readFileSync(new URL(`../docs/${page}`, import.meta.url), "utf8"));
@@ -93,266 +78,85 @@ describe("compact documentation contents menu", () => {
   });
 });
 
-describe("homepage screenshot themes", () => {
-  let window;
-  let motion;
-  let colorScheme;
-  const query = (selector) => window.document.querySelector(selector);
-  const selected = () => query("[data-demo-theme-caption]").textContent;
-  const click = (selector) => query(selector).click();
-  const advance = () => vi.advanceTimersByTime(3000);
+describe("website theme toggle", () => {
+  const windows = [];
 
-  function openPage({ reducedMotion = false, runScript = true, pageTheme = "dark", systemLight = false } = {}) {
-    vi.useFakeTimers();
-    window = new Window({ url: "https://pi-web.dev/" });
-    window.document.write(readFileSync(new URL("../docs/index.html", import.meta.url), "utf8"));
-    // Only clock and browser preference/visibility boundaries are controlled.
-    window.setTimeout = setTimeout;
-    window.clearTimeout = clearTimeout;
-    window.queueMicrotask = (callback) => Promise.resolve().then(callback);
-    Object.defineProperty(window.document, "hidden", { configurable: true, value: false });
-    motion = new window.EventTarget();
-    motion.matches = reducedMotion;
-    colorScheme = new window.EventTarget();
+  function openPage({ storedTheme = null, systemLight = false } = {}) {
+    const window = new Window({ url: "https://pi-web.dev/" });
+    windows.push(window);
+    if (storedTheme !== null) window.localStorage.setItem("pi-web-theme", storedTheme);
+    const colorScheme = new window.EventTarget();
     colorScheme.matches = systemLight;
-    if (pageTheme === "auto") delete window.document.documentElement.dataset.theme;
-    else window.document.documentElement.dataset.theme = pageTheme;
-    window.localStorage.setItem("pi-web-theme", pageTheme);
     const matchMedia = window.matchMedia.bind(window);
-    window.matchMedia = (query) => query === "(prefers-reduced-motion: reduce)" ? motion
-      : query === "(prefers-color-scheme: light)" ? colorScheme : matchMedia(query);
-    if (runScript) window.eval(siteScript);
+    window.matchMedia = (query) => query === "(prefers-color-scheme: light)" ? colorScheme : matchMedia(query);
+    window.document.write(readFileSync(new URL("../docs/index.html", import.meta.url), "utf8"));
+    // Run the real early theme initializer as well as site.js, without fetching external assets.
+    for (const script of window.document.querySelectorAll("script:not([src]):not([type])")) {
+      window.eval(script.textContent);
+    }
+    window.eval(siteScript);
+    return {
+      window,
+      root: window.document.documentElement,
+      button: window.document.querySelector("[data-theme-toggle]"),
+      setSystemLight(matches) {
+        colorScheme.matches = matches;
+        colorScheme.dispatchEvent(new window.Event("change"));
+      },
+    };
   }
 
   afterEach(() => {
-    window?.close();
-    vi.useRealTimers();
+    for (const window of windows.splice(0)) window.close();
   });
 
-  it("keeps one dimensioned static desktop image available without JavaScript", () => {
-    openPage({ runScript: false });
-    const image = query("[data-demo-gallery] img");
-    expect(image.getAttribute("src")).toBe("assets/pi-web-desktop-pi-web-dark.png");
-    expect([image.width, image.height]).toEqual([1440, 900]);
-    expect(image.alt).toContain("PI WEB Dark");
-    expect(query("[data-demo-controls]").hidden).toBe(true);
-    expect(query("[data-demo-gallery]").querySelectorAll("img")).toHaveLength(1);
+  it.each([null, "unknown"])("defaults to automatic mode for stored preference %s", (storedTheme) => {
+    const { root, button } = openPage({ storedTheme });
+    expect(root.hasAttribute("data-theme")).toBe(false);
+    expect(button.dataset.theme).toBe("auto");
+    expect(button.dataset.activeTheme).toBe("dark");
   });
 
-  it.each([
-    ["dark", "PI WEB Dark", "Graphite", "graphite"],
-    ["light", "PI WEB Light", "Paper", "paper"],
-  ])("rotates only the %s pair every three seconds", (pageTheme, first, second, asset) => {
-    openPage({ pageTheme });
-    expect(selected()).toBe(first);
-    expect(query("[data-demo-controls]").hidden).toBe(false);
-    expect([...window.document.querySelectorAll("[data-demo-dot]:not([hidden])")].map(dot => dot.dataset.demoTheme)).toEqual([first, second]);
-    vi.advanceTimersByTime(2999);
-    expect(selected()).toBe(first);
-    vi.advanceTimersByTime(1);
-    expect(selected()).toBe(second);
-    expect(query("[data-demo-gallery] img").getAttribute("src")).toBe(`assets/pi-web-desktop-${asset}.png`);
-    advance();
-    expect(selected()).toBe(first);
-    click("[data-demo-prev]");
-    expect(selected()).toBe(second);
-    click("[data-demo-next]");
-    expect(selected()).toBe(first);
+  it("follows system changes in automatic mode without saving a fixed theme", () => {
+    const { window, root, button, setSystemLight } = openPage({ storedTheme: "auto", systemLight: true });
+    expect(button.dataset.activeTheme).toBe("light");
+    setSystemLight(false);
+    expect(button.dataset.activeTheme).toBe("dark");
+    setSystemLight(true);
+    expect(button.dataset.activeTheme).toBe("light");
+    expect(button.dataset.theme).toBe("auto");
+    expect(root.hasAttribute("data-theme")).toBe(false);
+    expect(window.localStorage.getItem("pi-web-theme")).toBe("auto");
   });
 
-  it.each([
-    ["desktop", 1440, 900],
-    ["tablet", 1024, 768],
-    ["mobile", 390, 844],
-  ])("selects %s screenshots and keeps rotating the matching pair", (device, width, height) => {
-    openPage();
-    query(`[data-demo-device="${device}"]`).focus();
-    click(`[data-demo-device="${device}"]`);
-    const image = query("[data-demo-gallery] img");
-    const deviceButton = query('[data-demo-device][aria-pressed="true"]');
-    expect(deviceButton.dataset.demoDevice).toBe(device);
-    expect(deviceButton.getAttribute("aria-label").toLowerCase()).toBe(device);
-    expect(deviceButton.title).toBe(deviceButton.getAttribute("aria-label"));
-    expect(deviceButton.querySelector("svg").getAttribute("aria-hidden")).toBe("true");
-    expect([image.width, image.height]).toEqual([width, height]);
-    expect(image.getAttribute("src")).toBe(`assets/pi-web-${device}-pi-web-dark.png`);
-    expect(image.alt).toContain(`PI WEB ${device} workspace`);
-    expect(query("[data-demo-device-caption]").textContent.toLowerCase()).toContain(device);
-    advance();
-    expect(image.getAttribute("src")).toBe(`assets/pi-web-${device}-graphite.png`);
-    click("[data-demo-colors]");
-    expect(image.getAttribute("src")).toBe(`assets/pi-web-${device}-paper.png`);
-    advance();
-    expect(image.getAttribute("src")).toBe(`assets/pi-web-${device}-pi-web-light.png`);
+  it.each(["dark", "light"])("restores explicit %s mode and ignores system changes", (mode) => {
+    const { window, root, button, setSystemLight } = openPage({ storedTheme: mode, systemLight: mode === "dark" });
+    expect(root.dataset.theme).toBe(mode);
+    expect(button.dataset.theme).toBe(mode);
+    expect(button.dataset.activeTheme).toBe(mode);
+    setSystemLight(false);
+    setSystemLight(true);
+    expect(root.dataset.theme).toBe(mode);
+    expect(button.dataset.activeTheme).toBe(mode);
+    expect(window.localStorage.getItem("pi-web-theme")).toBe(mode);
   });
 
-  it("preserves theme selection and explicit pause when switching devices", () => {
-    openPage();
-    click('[data-demo-dot="graphite"]');
-    click("[data-demo-rotation]");
-    click('[data-demo-device="mobile"]');
-    advance();
-    expect(query("[data-demo-gallery] img").getAttribute("src")).toBe("assets/pi-web-mobile-graphite.png");
-    click('[data-demo-device="tablet"]');
-    advance();
-    expect(query("[data-demo-gallery] img").getAttribute("src")).toBe("assets/pi-web-tablet-graphite.png");
-    click("[data-demo-lightbox-trigger]");
-    expect(query("[data-demo-lightbox-image]").getAttribute("src")).toContain("pi-web-tablet-graphite.png");
-    expect(query("[data-demo-lightbox-caption]").textContent).toContain("Tablet");
-  });
-
-  it("inverts screenshot colors without changing the page, selected variant, or pause", () => {
-    openPage();
-    click("[data-demo-rotation]");
-    click('[data-demo-dot="graphite"]');
-    click("[data-demo-colors]");
-    expect(selected()).toBe("Paper");
-    expect(query("[data-demo-colors]").getAttribute("aria-label")).toBe("Show dark screenshots");
-    expect(window.document.documentElement.dataset.theme).toBe("dark");
-    advance();
-    expect(selected()).toBe("Paper");
-    click("[data-demo-colors]");
-    expect(selected()).toBe("Graphite");
-    expect(query("[data-demo-colors]").getAttribute("aria-label")).toBe("Show light screenshots");
-  });
-
-  it("follows system and page theme changes while preserving inversion", async () => {
-    openPage({ pageTheme: "auto", systemLight: true });
-    expect(selected()).toBe("PI WEB Light");
-    colorScheme.matches = false;
-    colorScheme.dispatchEvent(new window.Event("change"));
-    expect(selected()).toBe("PI WEB Dark");
-    click("[data-demo-colors]");
-    expect(selected()).toBe("PI WEB Light");
-    window.document.documentElement.dataset.theme = "light";
-    await window.happyDOM.whenAsyncComplete();
-    expect(selected()).toBe("PI WEB Dark");
-    colorScheme.matches = true;
-    colorScheme.dispatchEvent(new window.Event("change"));
-    expect(selected()).toBe("PI WEB Dark");
-  });
-
-  it("preserves explicit pause through hover and visibility changes until resumed", () => {
-    openPage();
-    click("[data-demo-rotation]");
-    expect(query("[data-demo-rotation]").getAttribute("aria-label")).toBe("Resume rotation");
-    expect(query("[data-demo-rotation]").dataset.paused).toBe("true");
-    query("[data-demo-gallery]").dispatchEvent(new window.Event("mouseenter"));
-    query("[data-demo-gallery]").dispatchEvent(new window.Event("mouseleave"));
-    window.document.dispatchEvent(new window.Event("visibilitychange"));
-    advance();
-    expect(selected()).toBe("PI WEB Dark");
-    click("[data-demo-rotation]");
-    expect(query("[data-demo-rotation]").getAttribute("aria-label")).toBe("Pause rotation");
-    expect(query("[data-demo-rotation]").dataset.paused).toBe("false");
-    advance();
-    expect(selected()).toBe("Graphite");
-  });
-
-  it("pauses while the image is hovered or focused, or the page is hidden and restarts with a full interval", async () => {
-    openPage();
-    const gallery = query("[data-demo-gallery]");
-    gallery.dispatchEvent(new window.Event("mouseenter"));
-    advance();
-    expect(selected()).toBe("PI WEB Dark");
-    gallery.dispatchEvent(new window.Event("mouseleave"));
-    query("[data-demo-lightbox-trigger]").focus();
-    advance();
-    expect(selected()).toBe("PI WEB Dark");
-    query("[data-demo-lightbox-trigger]").blur();
-    await Promise.resolve();
-    advance();
-    expect(selected()).toBe("Graphite");
-    Object.defineProperty(window.document, "hidden", { configurable: true, value: true });
-    window.document.dispatchEvent(new window.Event("visibilitychange"));
-    advance();
-    expect(selected()).toBe("Graphite");
-    Object.defineProperty(window.document, "hidden", { configurable: true, value: false });
-    window.document.dispatchEvent(new window.Event("visibilitychange"));
-    vi.advanceTimersByTime(2999);
-    expect(selected()).toBe("Graphite");
-    vi.advanceTimersByTime(1);
-    expect(selected()).toBe("PI WEB Dark");
-  });
-
-  it("keeps rotating while the color toggle is hovered and focused, including after resume", () => {
-    openPage();
-    query("[data-demo-colors]").dispatchEvent(new window.Event("mouseenter"));
-    query("[data-demo-colors]").focus();
-    click("[data-demo-colors]");
-    expect(selected()).toBe("PI WEB Light");
-    advance();
-    expect(selected()).toBe("Paper");
-    click("[data-demo-rotation]");
-    advance();
-    expect(selected()).toBe("Paper");
-    query("[data-demo-rotation]").focus();
-    click("[data-demo-rotation]");
-    advance();
-    expect(selected()).toBe("PI WEB Light");
-  });
-
-  it("defaults to paused for reduced motion and allows an explicit resume", () => {
-    openPage({ reducedMotion: true });
-    expect(query("[data-demo-rotation]").getAttribute("aria-label")).toBe("Resume rotation");
-    advance();
-    expect(selected()).toBe("PI WEB Dark");
-    click("[data-demo-colors]");
-    click('[data-demo-dot="paper"]');
-    expect(selected()).toBe("Paper");
-    click("[data-demo-rotation]");
-    advance();
-    expect(selected()).toBe("PI WEB Light");
-    motion.dispatchEvent(new window.Event("change"));
-    advance();
-    expect(selected()).toBe("PI WEB Light");
-    expect(query("[data-demo-rotation]").getAttribute("aria-label")).toBe("Resume rotation");
-  });
-
-  it("keeps the lightbox on the opened theme and returns focus on close", () => {
-    openPage();
-    click("[data-demo-colors]");
-    click('[data-demo-dot="paper"]');
-    click("[data-demo-lightbox-trigger]");
-    const dialog = query("[data-demo-lightbox]");
-    const preview = query("[data-demo-lightbox-image]");
-    const source = preview.src;
-    expect(dialog.open).toBe(true);
-    expect(preview.alt).toContain("Paper theme");
-    expect(query("[data-demo-lightbox-caption]").textContent).toContain("Paper");
-    // Even if focus leaves the carousel, an open lightbox blocks rotation.
-    window.document.activeElement.blur();
-    advance();
-    expect(selected()).toBe("Paper");
-    expect(preview.src).toBe(source);
-    click("[data-demo-lightbox-close]");
-    expect(dialog.open).toBe(false);
-    expect(window.document.activeElement).toBe(query("[data-demo-lightbox-trigger]"));
-    advance();
-    expect(selected()).toBe("Paper");
-  });
-});
-
-describe("PI WEB docs homepage intro", () => {
-  it("finishes every intro animation as soon as the page scrolls", () => {
-    const window = createAnimatedHomePage();
-    try {
-      expect(window.document.body.classList.contains("intro-skipped")).toBe(false);
-
-      window.dispatchEvent(new window.Event("scroll"));
-
-      expect(window.document.body.classList.contains("intro-skipped")).toBe(true);
-    } finally {
-      window.close();
+  it("cycles auto → dark → light → auto and retains each choice on the next page load", () => {
+    let page = openPage({ systemLight: true });
+    for (const mode of ["dark", "light", "auto"]) {
+      page.button.click();
+      const active = mode === "auto" ? "light" : mode;
+      expect(page.root.dataset.theme).toBe(mode === "auto" ? undefined : mode);
+      expect(page.button.dataset.theme).toBe(mode);
+      expect(page.button.dataset.activeTheme).toBe(active);
+      const storedTheme = page.window.localStorage.getItem("pi-web-theme");
+      expect(storedTheme).toBe(mode);
+      page = openPage({ storedTheme, systemLight: true });
+      expect(page.root.dataset.theme).toBe(mode === "auto" ? undefined : mode);
+      expect(page.button.dataset.theme).toBe(mode);
+      expect(page.button.dataset.activeTheme).toBe(active);
     }
-  });
-
-  it("shows the full page immediately when the browser restores a scroll position", () => {
-    const window = createAnimatedHomePage(120);
-    try {
-      expect(window.document.body.classList.contains("intro-skipped")).toBe(true);
-    } finally {
-      window.close();
-    }
+    page.setSystemLight(false);
+    expect(page.button.dataset.activeTheme).toBe("dark");
   });
 });
