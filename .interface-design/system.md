@@ -12,6 +12,8 @@ Scope: the public website under `docs/`. The application has separate primitives
 
 Use **“One ongoing session. Any device.”** as the product tagline. On the homepage it closes the opening paragraph, once, with emphasis; do not repeat it below the device flow. Keep **“A web interface for your AI agents.”** as the category headline, with Pi Coding Agent named nearby.
 
+Use both category phrases naturally: **“Web UI for Pi Coding Agent”** in the homepage title and social titles, **“web UI”** in supporting copy, and **“web interface”** in the visible headline. Do not repeat keywords throughout the page or assume search demand has been measured.
+
 ## Foundations and hierarchy
 
 - **Type:** IBM Plex Sans for prose and controls; IBM Plex Mono for brand, code, and technical identifiers. Keep system fallbacks.
