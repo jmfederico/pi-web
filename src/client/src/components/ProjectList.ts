@@ -4,7 +4,7 @@ import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, html, nothing, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
-import type { Project } from "../api";
+import { trustApi, workspacesApi, type Project } from "../api";
 import { CORE_STATUS_FLAGS, type MachineStatusSnapshot } from "../../../shared/machineStatus";
 import { renderCopyIdAction } from "./copyIdAction";
 import { createActionMenuController } from "./actionMenu";
@@ -13,6 +13,11 @@ import type { KeyboardNavigableSection } from "./navigationFocus";
 import { activateSelectableRow, focusSelectedOrFirstSelectableRow, handleSelectableRowKeyboard } from "./selectableRow";
 import { listStyles } from "./shared";
 import { sidebarListStyles } from "./sidebarListStyles";
+import { renderTrustMenuControl, type TrustMenuState } from "./trustMenuControl";
+
+interface RootTrustState extends TrustMenuState {
+  workspaceId?: string;
+}
 
 @customElement("project-list")
 export class ProjectList extends LitElement implements KeyboardNavigableSection {
@@ -23,6 +28,7 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
   }
 
   @property({ attribute: false }) projects: Project[] = [];
+  @property({ attribute: false }) machineId = "local";
   @property({ attribute: false }) selected?: Project;
   @property({ type: Boolean }) selectionLoading = false;
   /** Status tree of the machine these projects belong to; absent means no indicators. */
@@ -37,6 +43,7 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
   @property({ attribute: false }) onFocusNextSection?: () => void | Promise<void>;
   @property({ attribute: false }) onCancelKeyboardNavigation?: () => void | Promise<void>;
   @state() private openMenuProjectId: string | undefined;
+  @state() private rootTrustByScope: Record<string, RootTrustState> = {};
   readonly actionMenu = createActionMenuController(this, () => {
     if (this.openMenuProjectId === undefined) return undefined;
     const row = [...this.renderRoot.querySelectorAll<HTMLElement>("[data-project-id]")].find((item) => item.dataset["projectId"] === this.openMenuProjectId);
@@ -48,6 +55,7 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
 
   protected override willUpdate(changed: PropertyValues<this>): void {
     if (changed.has("projects")) this.focusAfterReorder = this.focusedControl;
+    if (changed.has("machineId")) this.openMenuProjectId = undefined;
   }
 
   protected override updated(changed: PropertyValues<this>): void {
@@ -100,13 +108,14 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
                     ${this.renderActivity(kind, unread)}
                   </div>
                   <div class="action-menu ui-nav-row-actions">
-                    <button class="ui-button ui-button--icon action-menu-toggle ui-nav-row-action ui-popup-trigger" aria-expanded=${String(this.openMenuProjectId === project.id)} aria-controls=${`project-menu-${encodeURIComponent(project.id)}`} title=${messages.t("projectActions")} aria-label=${messages.t("actionsFor", { name: project.name })} @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleMenu(project.id); }}>⋯</button>
+                    <button class="ui-button ui-button--icon action-menu-toggle ui-nav-row-action ui-popup-trigger" aria-expanded=${String(this.openMenuProjectId === project.id)} aria-controls=${`project-menu-${encodeURIComponent(project.id)}`} title=${messages.t("projectActions")} aria-label=${messages.t("actionsFor", { name: project.name })} @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleMenu(project); }}>⋯</button>
                     ${this.openMenuProjectId === project.id ? html`
                       <div popover="auto" class="action-menu-panel ui-menu ui-nav-row-menu ui-popup-panel" data-ui-context="project-actions" id=${`project-menu-${encodeURIComponent(project.id)}`} @click=${(event: MouseEvent) => { event.stopPropagation(); }}>
                         ${this.onMove === undefined ? null : html`
                           <button class="ui-button ui-menu-item" data-move ?disabled=${index === 0} @click=${() => { this.onMove?.(project, -1); }}>${messages.t("moveUp")}</button>
                           <button class="ui-button ui-menu-item" data-move ?disabled=${index === this.projects.length - 1} @click=${() => { this.onMove?.(project, 1); }}>${messages.t("moveDown")}</button>
                         `}
+                        ${this.renderRootTrust(project)}
                         <button class="ui-button ui-menu-item" title=${messages.t("closeProject")} @click=${() => { this.close(project); }}>${messages.t("close")}</button>
                         ${renderCopyIdAction("project", project.id, () => { this.openMenuProjectId = undefined; })}
                       </div>
@@ -142,12 +151,67 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
     return renderActionActivityIndicator(kind, kind === "terminal" ? messages.t("projectTerminal") : messages.t("projectActive"), unreadLabel);
   }
 
-  private toggleMenu(projectId: string) {
-    if (this.openMenuProjectId === projectId) {
+  private toggleMenu(project: Project) {
+    if (this.openMenuProjectId === project.id) {
       this.openMenuProjectId = undefined;
       return;
     }
-    this.openMenuProjectId = projectId;
+    this.openMenuProjectId = project.id;
+    void this.loadRootTrust(project);
+  }
+
+  private renderRootTrust(project: Project) {
+    return html`<div class="project-menu-trust">
+      ${renderTrustMenuControl({
+        id: `project-menu-${encodeURIComponent(project.id)}-trusted`,
+        state: this.rootTrustByScope[this.trustScope(project, this.machineId)],
+        label: messages.t("trustRoot"),
+        busyLabel: messages.t("trustRootBusy"),
+        description: html`<div><bdi dir="ltr">${project.path}</bdi></div>`,
+        onChange: (trusted) => { void this.setRootTrust(project, trusted); },
+      })}
+    </div>`;
+  }
+
+  private trustScope(project: Project, machineId: string): string {
+    return JSON.stringify([machineId, project.id, project.path]);
+  }
+
+  private setRootTrustState(scope: string, state: RootTrustState): void {
+    this.rootTrustByScope = { ...this.rootTrustByScope, [scope]: state };
+  }
+
+  private async loadRootTrust(project: Project): Promise<void> {
+    const machineId = this.machineId;
+    const scope = this.trustScope(project, machineId);
+    const existing = this.rootTrustByScope[scope];
+    if (existing?.loading === true || existing?.saving === true) return;
+    this.setRootTrustState(scope, { loading: true });
+    try {
+      const workspaces = await workspacesApi.workspaces(project.id, machineId);
+      // A provider's main workspace need not be the root. Never trust a
+      // different folder merely because it is selected or marked as main.
+      const root = workspaces.find((workspace) => workspace.projectId === project.id && workspace.path === project.path);
+      if (root === undefined) throw new Error(messages.t("trustRootUnavailable"));
+      const result = await trustApi.workspaceTrust(project.id, root.id, machineId);
+      this.setRootTrustState(scope, { workspaceId: root.id, trusted: result.trusted });
+    } catch (error) {
+      this.setRootTrustState(scope, { error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  private async setRootTrust(project: Project, trusted: boolean): Promise<void> {
+    const machineId = this.machineId;
+    const scope = this.trustScope(project, machineId);
+    const existing = this.rootTrustByScope[scope];
+    if (existing?.workspaceId === undefined || existing.trusted === undefined || existing.loading === true || existing.saving === true) return;
+    this.setRootTrustState(scope, { workspaceId: existing.workspaceId, trusted, saving: true });
+    try {
+      const result = await trustApi.setWorkspaceTrust(project.id, existing.workspaceId, trusted, machineId);
+      this.setRootTrustState(scope, { workspaceId: existing.workspaceId, trusted: result.trusted });
+    } catch (error) {
+      this.setRootTrustState(scope, { ...existing, error: error instanceof Error ? error.message : String(error) });
+    }
   }
 
   private close(project: Project) {

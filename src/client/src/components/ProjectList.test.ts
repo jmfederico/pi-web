@@ -1,16 +1,21 @@
 // @vitest-environment happy-dom
 
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Project } from "../api";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { workspacesApi, type Project } from "../api";
 import type { MachineStatusSnapshot } from "../../../shared/machineStatus";
 import { machineStatusSnapshot } from "../machineStatus.testSupport";
 import { installPopoverFake } from "./anchoredPopup.testSupport";
 installPopoverFake();
 import { ProjectList } from "./ProjectList";
 
+beforeEach(() => {
+  vi.spyOn(workspacesApi, "workspaces").mockResolvedValue([]);
+});
+
 afterEach(() => {
   document.body.replaceChildren();
   localStorage.clear();
+  vi.restoreAllMocks();
 });
 
 describe("project sidebar styling contract", () => {

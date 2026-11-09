@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installPopoverFake } from "./anchoredPopup.testSupport";
 installPopoverFake();
 
-import { trustApi } from "../api";
+import { trustApi, workspacesApi } from "../api";
 import { ProjectList } from "./ProjectList";
 import { WorkspaceList } from "./WorkspaceList";
 import { SessionList } from "./SessionList";
@@ -15,6 +15,7 @@ let viewport: EventTarget;
 const resizeCallbacks = new Set<() => void>();
 
 beforeEach(() => {
+  vi.spyOn(workspacesApi, "workspaces").mockResolvedValue([]);
   viewport = Object.assign(new EventTarget(), { offsetLeft: 0, offsetTop: 0, width: window.innerWidth, height: window.innerHeight });
   vi.stubGlobal("visualViewport", viewport);
   vi.stubGlobal("ResizeObserver", class implements ResizeObserver {
