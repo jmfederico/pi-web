@@ -35,8 +35,6 @@
 .step-number { flex-shrink: 0; color: var(--brand-2); font-family: "IBM Plex Mono", monospace; font-size: 0.7rem; }
 .landing-page .flow-step h3 { font-size: 1.15rem; letter-spacing: -0.025em; line-height: 1.4; }
 .flow-stage > p { margin: 12px 0 0 30px; color: var(--muted); font-size: 0.95rem; }
-.flow-caption { display: flex; gap: 12px; justify-content: center; margin: 40px 0 0; padding-top: 24px; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.85rem; }
-.flow-caption > span { color: var(--brand-2); }
 
 .continuity-section { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr); gap: 100px; align-items: center; padding-block: 96px; }
 .benefit-copy > p:not(.overline) { margin: 24px 0 0; color: var(--muted); font-size: 1.05rem; }
@@ -98,7 +96,6 @@
   .flow-step { align-self: end; }
   .landing-page .flow-step h3 { font-size: 1.05rem; margin-top: 4px; }
   .flow-stage > p { align-self: start; margin-top: 8px; font-size: 0.85rem; }
-  .flow-caption { margin-top: 32px; font-size: 0.78rem; justify-content: flex-start; }
   .continuity-section { grid-template-columns: 1fr; gap: 24px; padding-block: 56px; }
   .benefit-copy > p:not(.overline) { font-size: 1rem; margin-top: 20px; }
   .benefit-copy > p.benefit-note { font-size: 0.82rem; }
