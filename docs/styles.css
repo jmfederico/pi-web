@@ -635,8 +635,8 @@ code .comment,
   gap: 14px 18px;
   padding: 15px 18px;
   border-bottom: 1px solid var(--line);
-  background: #0c1020;
-  color: var(--muted);
+  background: var(--panel-strong);
+  color: var(--text);
 }
 
 .demo-caption-copy {
@@ -646,7 +646,7 @@ code .comment,
 }
 
 .demo-caption-copy span {
-  color: var(--muted-2);
+  color: var(--muted);
 }
 
 .demo-controls {
@@ -667,19 +667,24 @@ code .comment,
   margin-right: 8px;
 }
 
-.demo-device[aria-pressed="true"] {
-  color: var(--text);
-  border-bottom-color: currentColor;
-}
-
 .demo-control,
 .demo-device,
 .demo-dot {
   appearance: none;
   border: 1px solid transparent;
   background: transparent;
-  color: var(--muted-2);
+  color: var(--muted);
   cursor: pointer;
+}
+
+.demo-device {
+  border-bottom-width: 2px;
+}
+
+.demo-device[aria-pressed="true"] {
+  background: var(--panel);
+  color: var(--text);
+  border-bottom-color: currentColor;
 }
 
 .demo-control {
@@ -696,7 +701,7 @@ code .comment,
 .demo-control:hover:not(:disabled),
 .demo-device:hover,
 .demo-dot:hover {
-  background: var(--panel-strong);
+  background: var(--panel);
   color: var(--text);
 }
 
@@ -830,7 +835,7 @@ code .comment,
   align-content: start;
   min-height: 4.5em;
   gap: 4px;
-  color: var(--muted-2);
+  color: var(--muted);
   font-size: 0.9rem;
   line-height: 1.45;
 }
@@ -1747,8 +1752,7 @@ html:has(.docs-toc-dialog[open]) {
     background: #15131b;
   }
 
-  .terminal-top,
-  .demo-caption {
+  .terminal-top {
     background: #201c2a;
   }
 
@@ -1842,13 +1846,11 @@ html[data-theme="light"] .kbd {
   background: #15131b;
 }
 
-html[data-theme="dark"] .terminal-top,
-html[data-theme="dark"] .demo-caption {
+html[data-theme="dark"] .terminal-top {
   background: #0c1020;
 }
 
-html[data-theme="light"] .terminal-top,
-html[data-theme="light"] .demo-caption {
+html[data-theme="light"] .terminal-top {
   background: #201c2a;
 }
 
