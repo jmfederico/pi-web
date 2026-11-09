@@ -7,7 +7,6 @@ export const DEFAULT_WORKSPACE_UPLOADS_FOLDER = ".pi-web/uploads";
 export interface WorkspaceUploadFileInput {
   path: string;
   file: Blob;
-  contentType?: string;
 }
 
 export interface WorkspaceFileUploadProgress {
@@ -97,7 +96,8 @@ export function uploadWorkspaceFile(
 
     xhr.open("PUT", workspaceFileWriteUrl(projectId, workspaceId, input.path, uploadWriteUrlOptions(options)), true);
     xhr.responseType = "json";
-    xhr.setRequestHeader("Content-Type", (input.contentType ?? input.file.type) || "application/octet-stream");
+    // File writes carry opaque bytes; JSON MIME types would trigger API body parsing.
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
     xhr.upload.onprogress = (event) => {
       options.onProgress?.(progressFromEvent(event, input.file.size));
     };
