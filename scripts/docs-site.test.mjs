@@ -1,11 +1,33 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { extname } from "node:path";
+import { setImmediate } from "node:timers/promises";
 import { Window } from "happy-dom";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-const siteScript = readFileSync(new URL("../docs/site.js", import.meta.url), "utf8");
+const docsRoot = new URL("../docs/", import.meta.url);
+const siteOrigin = "https://pi-web.dev";
+const siteScript = readFileSync(new URL("site.js", docsRoot), "utf8");
+// Discover pages rather than maintaining a list that can miss new documentation.
+const pages = readdirSync(docsRoot, { recursive: true })
+  .filter((path) => path.endsWith(".html") && !path.split(/[\\/]/).some((part) => part.startsWith(".")))
+  .sort();
+
+function localTarget(reference, page, { navigation = false } = {}) {
+  // Absolute published URLs (including the separately built dev site) are not local source files.
+  if (/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(reference)) return null;
+  const url = new URL(reference, `${siteOrigin}/${page}`);
+  if (url.origin !== siteOrigin) return null;
+  // Root-relative 404 links are relative to the published docs root, not the repository.
+  let path = decodeURIComponent(url.pathname).slice(1);
+  if (navigation) {
+    if (path.endsWith("/") || path === "") path += "index.html";
+    else if (!extname(path)) path += ".html";
+  }
+  return { file: new URL(path, docsRoot), fragment: decodeURIComponent(url.hash.slice(1)) };
+}
 
 describe("documentation navigation", () => {
-  it.each(["index.html", "config.html", "plugins.html", "community-plugins.html", "faq.html"])("keeps local links and copy targets valid in %s", (page) => {
+  it.each(pages)("keeps local links, assets, IDs and copy targets valid in %s", (page) => {
     const window = new Window({ url: `https://pi-web.dev/${page}` });
     try {
       window.document.write(readFileSync(new URL(`../docs/${page}`, import.meta.url), "utf8"));
@@ -13,14 +35,14 @@ describe("documentation navigation", () => {
       expect(new Set(ids).size).toBe(ids.length);
       for (const link of window.document.querySelectorAll("a[href]")) {
         const href = link.getAttribute("href");
-        if (/^https?:/.test(href)) continue;
-        const [path, fragment] = href.split("#");
-        const filename = !path ? page : path === "./" ? "index.html" : path.includes(".") ? path : `${path}.html`;
-        const target = new URL(`../docs/${filename}`, import.meta.url);
-        expect(existsSync(target), href).toBe(true);
+        const target = localTarget(href, page, { navigation: true });
+        if (target === null) continue;
+        expect(existsSync(target.file), `${page}: ${href}`).toBe(true);
+        expect(statSync(target.file).isFile(), `${page}: ${href}`).toBe(true);
+        const { fragment } = target;
         if (fragment) {
-          const content = readFileSync(target, "utf8");
-          if (filename.endsWith(".md")) {
+          const content = readFileSync(target.file, "utf8");
+          if (target.file.pathname.endsWith(".md")) {
             const headings = [...content.matchAll(/^#{1,6} (.+)$/gm)].map((match) =>
               match[1].toLowerCase().replace(/[^\w\s-]/g, "").replace(/\s/g, "-"),
             );
@@ -31,12 +53,119 @@ describe("documentation navigation", () => {
           }
         }
       }
+      for (const element of window.document.querySelectorAll('script[src], link[rel~="stylesheet"][href], link[rel~="icon"][href], img[src]')) {
+        const reference = element.getAttribute("src") ?? element.getAttribute("href");
+        const target = localTarget(reference, page);
+        if (target === null) continue;
+        expect(existsSync(target.file), `${page}: ${reference}`).toBe(true);
+        expect(statSync(target.file).isFile(), `${page}: ${reference}`).toBe(true);
+      }
       for (const button of window.document.querySelectorAll("[data-copy]")) {
-        expect(window.document.querySelector(button.getAttribute("data-copy"))).not.toBeNull();
+        const selector = button.getAttribute("data-copy");
+        const targets = window.document.querySelectorAll(selector);
+        expect(targets.length, `${page}: ${selector}`).toBe(1);
+        expect(targets[0].textContent.trim(), `${page}: ${selector}`).not.toBe("");
       }
     } finally {
       window.close();
     }
+  });
+});
+
+describe("documentation clipboard controls", () => {
+  const windows = [];
+
+  function openCopyControl(page, selector) {
+    const window = new Window({ url: `${siteOrigin}/${page}` });
+    windows.push(window);
+    window.document.write(readFileSync(new URL(page, docsRoot), "utf8"));
+    const button = window.document.querySelector(`[data-copy="${selector}"]`);
+    const target = window.document.querySelector(selector);
+    expect(button).not.toBeNull();
+    expect(target).not.toBeNull();
+    const writeText = vi.spyOn(window.navigator.clipboard, "writeText").mockResolvedValue(undefined);
+    // Control only the browser timer boundary; exercise the actual click handler.
+    const timers = [];
+    window.setTimeout = (callback) => timers.push(callback);
+    window.eval(siteScript);
+    return { window, button, target, writeText, restoreFeedback: () => timers.splice(0).forEach((callback) => callback()) };
+  }
+
+  afterEach(() => {
+    for (const window of windows.splice(0)) window.close();
+    vi.restoreAllMocks();
+  });
+
+  it("copies installation commands without shell prompts and restores the button after success", async () => {
+    const { button, writeText, restoreFeedback } = openCopyControl("install.html", "#linux-install");
+    const original = button.textContent;
+    let resolveWrite;
+    writeText.mockReturnValue(new Promise((resolve) => { resolveWrite = resolve; }));
+    button.click();
+    expect(writeText).toHaveBeenCalledExactlyOnceWith([
+      "npm install -g @jmfederico/pi-web --allow-scripts=node-pty",
+      "pi-web install",
+      "pi-web doctor",
+    ].join("\n"));
+    expect(button.textContent).toBe(original);
+    resolveWrite();
+    // The evaluated handler and the clipboard mock use different promise realms.
+    await setImmediate();
+    expect(button.textContent.trim()).not.toBe("");
+    expect(button.textContent).not.toBe(original);
+    restoreFeedback();
+    expect(button.textContent).toBe(original);
+  });
+
+  it.each([
+    ["install.html", "#nginx-prefix-proxy"],
+    ["config.html", "#project-config-example"],
+    ["plugins.html", "#plugin-prompt"],
+  ])("copies %s %s without changing non-shell content", async (page, selector) => {
+    const { button, target, writeText } = openCopyControl(page, selector);
+    button.click();
+    await setImmediate();
+    expect(writeText).toHaveBeenCalledExactlyOnceWith(target.textContent.trim());
+  });
+
+  it("strips only leading shell prompts, retaining variables, quoted dollars and continuation indentation", async () => {
+    const { button, target, writeText } = openCopyControl("install.html", "#linux-install");
+    // Supply edge-case command content through a real page target, not a replacement handler.
+    target.textContent = [
+      '  $ printf "%s\\n" "$HOME" "cost: $ 5"',
+      "$ pi-web install \\",
+      '    --config "$HOME/pi web/config.json"',
+      "# Keep this command comment",
+      '$ echo "$(whoami)"',
+    ].join("\n");
+    button.click();
+    await setImmediate();
+    expect(writeText).toHaveBeenCalledExactlyOnceWith([
+      'printf "%s\\n" "$HOME" "cost: $ 5"',
+      "pi-web install \\",
+      '    --config "$HOME/pi web/config.json"',
+      "# Keep this command comment",
+      'echo "$(whoami)"',
+    ].join("\n"));
+  });
+
+  it("handles clipboard denial without reporting success and permits retry", async () => {
+    const { button, writeText, restoreFeedback } = openCopyControl("install.html", "#linux-install");
+    writeText.mockRejectedValueOnce(new Error("Clipboard permission denied"));
+    const original = button.textContent;
+    button.click();
+    await setImmediate();
+    expect(writeText).toHaveBeenCalledTimes(1);
+    const failureFeedback = button.textContent;
+    expect(failureFeedback.trim()).not.toBe("");
+    expect(failureFeedback).not.toBe(original);
+    restoreFeedback();
+    expect(button.textContent).toBe(failureFeedback);
+    button.click();
+    await setImmediate();
+    expect(writeText).toHaveBeenCalledTimes(2);
+    expect(writeText.mock.calls[1]).toEqual(writeText.mock.calls[0]);
+    expect(button.textContent).not.toBe(failureFeedback);
   });
 });
 

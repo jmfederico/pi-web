@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Design reference — PI WEB</title>
+    <meta name="description" content="A working reference for PI WEB website typography, controls, documentation, and inert sign-in patterns." />
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
+    <script>
+      (() => {
+        const theme = window.localStorage.getItem("pi-web-theme");
+        if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+      })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <nav class="container nav" aria-label="Main navigation">
+        <a class="brand" href="./" aria-label="PI WEB home">PI WEB</a>
+        <div class="nav-links">
+          <div class="nav-pages">
+            <a href="./#how-it-works">How it works</a>
+            <a href="install">Docs</a>
+            <a href="community-plugins">Plugins</a>
+            <a href="https://github.com/jmfederico/pi-web">GitHub</a>
+          </div>
+          <div class="nav-actions">
+            <button class="theme-toggle" type="button" data-theme-toggle aria-label="Change theme">
+              <span data-theme-icon aria-hidden="true">◐</span>
+              <span data-theme-label>Theme</span>
+            </button>
+            <a class="button primary nav-start" href="install">Get started <span aria-hidden="true">↗</span></a>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main id="main">
+      <header class="page-hero container">
+        <p class="overline">Website patterns</p>
+        <h1>Design reference</h1>
+        <p>Shared foundations, real controls, and compact examples. Use the theme control to inspect light, dark, and automatic modes.</p>
+      </header>
+
+      <div class="container doc-layout section compact">
+        <nav class="toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a href="#foundations">Foundations</a>
+          <a href="#controls">Buttons and links</a>
+          <a href="#fields">Fields and feedback</a>
+          <a href="#documentation">Code and disclosure</a>
+          <a href="#sign-in-pattern">Sign-in specimen</a>
+          <a href="#accessibility">Accessibility checks</a>
+        </nav>
+
+        <div class="doc-content">
+          <section id="foundations" aria-labelledby="foundations-title">
+            <h2 id="foundations-title">Foundations</h2>
+            <p>Calm, technical, and readable. Use whitespace and type weight to establish hierarchy; reserve accent color for actions, orientation, and meaningful state.</p>
+            <div class="pattern-preview">
+              <p class="overline">Overline · context, not a heading</p>
+              <h3>A section within the task</h3>
+              <p>Body text explains the next decision. <strong>Emphasis highlights the important part.</strong> Use <code>monospace</code> for commands and identifiers, not ordinary prose.</p>
+              <p class="field-help">Supporting text stays readable. A lower visual priority must not make essential guidance disappear.</p>
+            </div>
+            <ul>
+              <li><strong>Page title:</strong> one <code>h1</code>, scaling from 2.2rem to 2.9rem on documentation pages. The larger homepage hero is a separate composition.</li>
+              <li><strong>Reading rhythm:</strong> 1rem body text, 1.65 line height, and a reading measure around 68ch.</li>
+              <li><strong>Type:</strong> IBM Plex Sans for reading; IBM Plex Mono for the brand, code, and technical labels.</li>
+              <li><strong>Surfaces:</strong> the page canvas, a quiet inset surface, and a restrained panel. Avoid nested decorative cards.</li>
+            </ul>
+            <p>Use semantic theme tokens from <code>styles.css</code> rather than page-specific colors. Layout belongs to the page; reusable control styling belongs to the shared stylesheet.</p>
+          </section>
+
+          <section id="controls" aria-labelledby="controls-title">
+            <h2 id="controls-title">Buttons and links</h2>
+            <p>Links go somewhere. Buttons do something. Give one action priority within each task, and keep labels specific.</p>
+            <div class="pattern-preview">
+              <div class="form-actions">
+                <a class="button primary" href="install">Read installation guide</a>
+                <button class="button" type="button" data-copy="#reference-command">Copy example command</button>
+                <a class="text-link" href="faq">Read the FAQ <span aria-hidden="true">↗</span></a>
+              </div>
+              <div class="form-actions">
+                <button class="button primary" type="button" disabled>Unavailable action</button>
+                <button class="button" type="button" disabled>Unavailable option</button>
+                <span class="text-link" role="link" aria-disabled="true">Unavailable destination</span>
+              </div>
+            </div>
+            <p>Hover or press an enabled control to inspect its feedback. Use Tab to inspect the actual focus ring; it is not painted onto a static example. Disabled controls above are intentionally unavailable.</p>
+            <p>Ordinary buttons and fields use 48px targets. Compact navigation and utility actions retain at least 44px targets. Inline prose links keep the reading rhythm.</p>
+          </section>
+
+          <section id="fields" aria-labelledby="fields-title">
+            <h2 id="fields-title">Fields and feedback</h2>
+            <p>Keep labels visible. Connect help and error text to the field; color alone cannot explain a problem. These example values are read-only.</p>
+            <div class="pattern-grid">
+              <div class="pattern-preview">
+                <div class="field">
+                  <label for="reference-project">Project name</label>
+                  <input id="reference-project" type="text" value="Website refresh" readonly aria-describedby="reference-project-help" />
+                  <p class="field-help" id="reference-project-help">A short name helps you recognize the project.</p>
+                </div>
+              </div>
+              <div class="pattern-preview">
+                <div class="field">
+                  <label for="reference-project-error">Project name · error example</label>
+                  <input id="reference-project-error" type="text" value="" readonly aria-invalid="true" aria-describedby="reference-project-error-help" />
+                  <p class="field-error" id="reference-project-error-help">Enter a project name.</p>
+                </div>
+              </div>
+            </div>
+            <div class="status-notice"><strong>Information example.</strong> This reference uses fixed example values.</div>
+            <div class="status-notice status-notice--error"><strong>Error example.</strong> Changes could not be saved. Check your connection and try again.</div>
+            <div class="status-notice status-notice--success"><strong>Success example.</strong> Changes saved.</div>
+            <p>These notices are static specimens, not reports of actual operations. In a live flow, use <code>role="status"</code> for nonurgent updates and <code>role="alert"</code> for errors that need immediate attention.</p>
+          </section>
+
+          <section id="documentation" aria-labelledby="documentation-title">
+            <h2 id="documentation-title">Code and disclosure</h2>
+            <p>Keep commands selectable and copyable. This button uses the same clipboard behavior as the installation guide.</p>
+            <div class="code-card">
+              <div class="copy-row">
+                <strong>Inspect installed and running versions</strong>
+                <button class="copy-button" type="button" data-copy="#reference-command" aria-live="polite">Copy</button>
+              </div>
+              <pre><code id="reference-command">pi-web version</code></pre>
+            </div>
+            <p class="field-help">Copy needs clipboard permission in a secure browser context. If it is unavailable, select the command above and copy it manually.</p>
+            <details class="config-details">
+              <summary>How to use this disclosure</summary>
+              <p>Put optional detail here, after the essential instruction. This is a native disclosure: activate the summary with Enter or Space, even without JavaScript.</p>
+            </details>
+            <div class="callout warning"><strong>Warning pattern.</strong> Explain a risk before the action, not inside a collapsed disclosure.</div>
+            <div class="callout danger"><strong>Danger pattern.</strong> State what will be lost before offering a destructive action. No destructive action is available here.</div>
+          </section>
+
+          <section id="sign-in-pattern" aria-labelledby="sign-in-title">
+            <h2 id="sign-in-title">Sign-in pattern specimen</h2>
+            <p><strong>Design example — not a sign-in page</strong></p>
+            <p>There is no website account login in this repository. Separate Safe Tunnels services own their sign-in experience. This specimen collects nothing and makes no authentication requests.</p>
+            <div class="form-panel" role="group" aria-labelledby="sign-in-example-title" aria-describedby="sign-in-example-note">
+              <p class="overline">Idle example</p>
+              <h3 id="sign-in-example-title">Sign in</h3>
+              <p id="sign-in-example-note">Fixed example values. Fields cannot be edited and the button is disabled.</p>
+              <div class="form-stack">
+                <div class="field">
+                  <label for="example-email">Email address</label>
+                  <input id="example-email" type="email" value="reader@example.com" readonly autocomplete="off" aria-describedby="example-email-help" />
+                  <p class="field-help" id="example-email-help">Example only. Do not enter account details here.</p>
+                </div>
+                <div class="field">
+                  <label for="example-password">Password</label>
+                  <input id="example-password" type="password" value="example-only" disabled autocomplete="off" aria-describedby="example-password-help" />
+                  <p class="field-help" id="example-password-help">Disabled specimen, not a credential field.</p>
+                </div>
+                <div class="form-actions">
+                  <button class="button primary" type="button" disabled>Sign in</button>
+                </div>
+              </div>
+            </div>
+            <div class="pattern-grid">
+              <div class="pattern-preview">
+                <h3>Error state</h3>
+                <p class="field-help">Example message after a rejected sign-in attempt:</p>
+                <div class="status-notice status-notice--error">Could not sign in. Check your details and try again.</div>
+              </div>
+              <div class="pattern-preview">
+                <h3>Busy state</h3>
+                <p class="field-help">Example only. No request is running.</p>
+                <button class="button primary" type="button" disabled aria-busy="true">Signing in…</button>
+              </div>
+            </div>
+            <p>Transfer the visual pattern, not authentication behavior. The owning service must supply validation, recovery links, password-manager support, request handling, and security controls. PI WEB’s in-app provider authorization dialog is a different workflow.</p>
+          </section>
+
+          <section id="accessibility" aria-labelledby="accessibility-title">
+            <h2 id="accessibility-title">Accessibility checks</h2>
+            <ul>
+              <li>Use Tab and Shift+Tab to reach navigation, copy, the read-only fields, and the disclosure. Focus must remain visible and unobscured.</li>
+              <li>Disabled buttons and inputs stay out of the tab order. An unavailable link has no destination, not a pretend <code>href="#"</code>.</li>
+              <li>Inspect both themes, narrow screens, and zoom. Text must wrap; code may scroll within its own container.</li>
+              <li>Keep section links and native details usable without JavaScript. Clipboard and theme switching are enhancements.</li>
+              <li>Use screenshots only when they explain something text or a small semantic diagram cannot.</li>
+            </ul>
+          </section>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <div><a class="brand" href="./">PI WEB</a><p>A web interface for Pi Coding Agent.</p></div>
+        <div class="footer-links">
+          <a href="install">Documentation</a>
+          <a href="community-plugins">Plugins</a>
+          <a href="faq">FAQ</a>
+          <a href="https://github.com/jmfederico/pi-web">GitHub</a>
+          <span class="version-switcher" role="group" aria-label="Documentation version">
+            <a class="version-switcher-option" data-version-option="stable" href="https://pi-web.dev/design-system" aria-current="true">Stable</a>
+            <a class="version-switcher-option" data-version-option="dev" href="https://pi-web.dev/dev/design-system">Dev</a>
+          </span>
+        </div>
+      </div>
+    </footer>
+    <script src="site.js"></script>
+  </body>
+</html>

@@ -1,35 +1,10 @@
-/* Homepage composition; shared colours and controls remain in styles.css. */
-html body.landing-page {
-  background: var(--bg);
-  line-height: 1.6;
-}
-
-.landing-page::after { display: none; }
-.landing-page .container { width: min(1120px, calc(100% - 64px)); }
-.landing-page .site-header { position: relative; background: var(--bg); backdrop-filter: none; }
-.landing-page .nav { min-height: 88px; }
-.landing-page .brand { font-size: 1rem; }
-.landing-page .nav-links { gap: 24px; }
-.landing-page .nav-actions { gap: 12px; }
-.landing-page .nav-start { padding: 0 16px; }
-.landing-page .button { min-height: 48px; font-family: inherit; font-weight: 500; border-radius: 4px; }
-html .landing-page .button.primary { box-shadow: none; }
-.landing-page .button:hover { transform: none; }
-.landing-page :is(a, button):focus-visible { outline: 2px solid var(--brand-2); outline-offset: 5px; }
-.landing-page :is(h1, h2, h3) { font-weight: 500; letter-spacing: -0.045em; text-wrap: balance; }
+/* Homepage composition and process illustrations. Shared foundations live in styles.css. */
+.landing-page :is(h1, h2, h3) { letter-spacing: -0.045em; }
 .landing-page h1 { max-width: 900px; font-size: clamp(3rem, 6.8vw, 5.5rem); line-height: 1.06; }
 .landing-page h2 { font-size: clamp(2rem, 3.7vw, 3rem); line-height: 1.15; }
-.landing-page p { text-wrap: pretty; }
-.landing-page figure { margin: 0; }
-.landing-page .overline { margin: 0 0 24px; color: var(--brand-2); font-size: 0.82rem; font-weight: 500; letter-spacing: 0.09em; text-transform: uppercase; }
-
-.skip-link { position: absolute; top: 8px; left: 16px; z-index: 20; padding: 12px 18px; background: var(--panel); transform: translateY(-160%); }
-.skip-link:focus { transform: none; }
 .welcome { padding-block: 76px 64px; }
 .welcome-copy { max-width: 610px; margin: 28px 0; color: var(--muted); font-size: 1.2rem; line-height: 1.65; }
 .welcome-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 32px; }
-.text-link { display: inline-flex; gap: 12px; align-items: center; min-height: 44px; font-size: 0.95rem; font-weight: 500; }
-.text-link:hover { text-decoration: underline; text-underline-offset: 5px; }
 .welcome-note { margin: 24px 0 0; color: var(--muted); font-size: 0.85rem; }
 
 /* A single session shown across three devices, rather than simulated chat UI. */
@@ -86,38 +61,17 @@ html .landing-page .button.primary { box-shadow: none; }
 .closing { display: flex; justify-content: space-between; gap: 32px; align-items: center; padding-block: 100px; }
 .closing .button { flex-shrink: 0; }
 .closing h2 { font-size: clamp(1.9rem, 3.3vw, 2.65rem); }
-.landing-page .site-footer { padding-block: 36px; font-size: 0.85rem; }
-.landing-page .footer-inner { align-items: flex-start; }
-.landing-page .footer-inner p { margin: 12px 0 0; color: var(--muted); }
-.landing-page .footer-links { gap: 8px 20px; }
-.landing-page .footer-links > a { display: inline-flex; align-items: center; min-height: 44px; }
-.landing-page .version-switcher-option { min-height: 36px; align-items: center; }
-
 @media (max-width: 900px) {
-  .landing-page .nav-links { gap: 8px; }
-  .landing-page .nav-links a { padding-inline: 10px; }
-  .landing-page .theme-toggle { width: 44px; padding: 0; }
-  .landing-page .theme-toggle [data-theme-label] { display: none; }
   .continuity-section, .ownership-grid { gap: 48px; }
   .flow-stages { gap: 24px; }
   .flow-stage:not(:last-child)::after { right: -22px; font-size: 1.1rem; }
   .flow-step { display: block; }
   .flow-stage > p { margin-left: 0; }
   .persistence-diagram { padding-inline: 0; }
-  .landing-page .footer-inner { flex-direction: column; gap: 20px; }
 }
 
 @media (max-width: 640px) {
-  .landing-page .container { width: calc(100% - 40px); }
-  .landing-page .nav { display: flex; flex-wrap: wrap; gap: 0; padding-block: 12px; min-height: auto; }
-  .landing-page .nav > .brand { min-height: 44px; }
-  .landing-page .nav-links { display: contents; white-space: normal; }
-  .landing-page .nav-pages { order: 3; flex: 1 0 100%; justify-content: flex-start; gap: 16px; }
-  .landing-page .nav-pages a { padding-inline: 0; }
-  .landing-page .nav-actions { margin-left: auto; gap: 8px; }
-  .landing-page .nav-actions .nav-start { min-height: 44px; }
   .welcome { padding-block: 48px 40px; }
-  .landing-page .overline { font-size: 0.72rem; margin-bottom: 20px; }
   .landing-page h1 { font-size: clamp(2.65rem, 9.5vw, 3.8rem); }
   .welcome-copy { font-size: 1.05rem; margin-block: 24px; }
   .welcome-actions { gap: 12px 24px; }
@@ -153,9 +107,4 @@ html .landing-page .button.primary { box-shadow: none; }
   .ownership-section { padding-block: 48px; }
   .ownership-grid { grid-template-columns: 1fr; gap: 28px; }
   .closing { flex-direction: column; align-items: flex-start; gap: 28px; padding-block: 64px; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  html { scroll-behavior: auto; }
-  .landing-page .button { transition: none; }
 }
