@@ -1,5 +1,8 @@
-import { LitElement, html, nothing } from "lit";
-import { customElement, property } from "lit/decorators.js";
+import { LitElement, html, nothing, type PropertyValues } from "lit";
+import { customElement, property, state } from "lit/decorators.js";
+import { questionActionStyles, type QuestionActions } from "./questionActions";
+import { uiButtonStyles } from "./ui/controlStyles";
+import { askUserMessages } from "./AskUserCard";
 import type { SessionActivity, SessionStatus } from "../api";
 import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { conversationLayoutStyles } from "../theme/base/conversationLayoutStyles";
@@ -55,13 +58,41 @@ export class ConversationLayout extends LitElement {
   @property({ attribute: false }) activity: SessionActivity | undefined;
   @property({ type: Boolean }) sending = false;
   @property({ type: Boolean }) visualEffects = true;
+  @property({ attribute: false }) questionActions: QuestionActions | undefined;
+  @property({ attribute: false }) onChatMode: (() => void) | undefined;
+  @state() private chatMode = false;
+
+  protected override willUpdate(changed: PropertyValues<this>): void {
+    if (!changed.has("questionActions")) return;
+    const previous = changed.get("questionActions");
+    if (previous?.key !== this.questionActions?.key || previous?.editVersion !== this.questionActions?.editVersion) {
+      this.chatMode = false;
+    }
+  }
+
+  private async switchMode(): Promise<void> {
+    this.chatMode = !this.chatMode;
+    await this.updateComplete;
+    if (this.chatMode) this.onChatMode?.();
+    else this.questionActions?.focus();
+  }
 
   override render() {
     const activity = conversationActivityText(this.status, this.activity, this.sending);
+    const answering = this.questionActions !== undefined && !this.chatMode;
     return html`
       <div class="transcript"><slot></slot></div>
       <div class="composer-boundary">
-        <slot name="composer"></slot>
+        ${this.questionActions === undefined ? nothing : html`
+          <div class="question-mode">
+            <span role="status">${askUserMessages.t(this.chatMode ? "pending" : "answerMode")}</span>
+            <button type="button" class="ui-button ui-button--compact" @click=${() => { void this.switchMode(); }}>
+              ${askUserMessages.t(this.chatMode ? "backToAnswers" : "chatInstead")}
+            </button>
+          </div>
+        `}
+        <div class="question-actions" ?hidden=${!answering}>${this.questionActions?.content ?? nothing}</div>
+        <div class="chat-composer" ?hidden=${answering} ?inert=${answering}><slot name="composer"></slot></div>
         <div class=${this.visualEffects ? "activity-region" : "activity-region plain"} aria-live="polite">${activity === undefined ? nothing : html`
           <div class="activity-dock"><span class="dot"></span><span class="activity-text">${activity}</span></div>
         `}</div>
@@ -70,5 +101,5 @@ export class ConversationLayout extends LitElement {
     `;
   }
 
-  static override styles = conversationLayoutStyles;
+  static override styles = [conversationLayoutStyles, uiButtonStyles, questionActionStyles];
 }

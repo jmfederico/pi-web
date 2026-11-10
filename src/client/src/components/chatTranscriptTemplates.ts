@@ -13,6 +13,7 @@ import { interventionRequestText } from "../chatInterventions";
 import { chatMessageHasHeader, summarizeChatGroup, type ChatDisplayGroup, type ChatGroup } from "../chatGroups";
 import type { ChatBehaviors } from "../chatBehaviors";
 import type { AskUserSubmission, SessionRef } from "../api";
+import type { QuestionActionsCallback } from "./questionActions";
 import type { AskUserOutcome } from "../../../shared/apiTypes";
 import type { ChatContentRendering } from "../formatting/contentRendering";
 import type { MarkdownWorkspaceContext } from "../formatting/workspaceLinks";
@@ -58,6 +59,7 @@ export interface TranscriptRenderContext {
   questionOutcomes: ReadonlyMap<string, AskUserOutcome[]>;
   questionIds: ReadonlySet<string>;
   askDraftSessionId: string;
+  onQuestionActionsChange?: QuestionActionsCallback | undefined;
   onSubmitAsk: ((askId: string, submission: AskUserSubmission) => void | Promise<void>) | undefined;
   openImageGallery: (images: readonly { part: Extract<ChatPart, { type: "image" }>; description: () => string }[], selectedIndex: number) => void;
 }
@@ -281,6 +283,7 @@ export function renderPart(context: TranscriptRenderContext, part: ChatPart, mes
         .outcomes=${context.questionOutcomes.get(part.ask.askId) ?? []}
         .draftSessionId=${context.askDraftSessionId}
         .onSubmit=${open ? context.onSubmitAsk : undefined}
+        .onActionsChange=${open ? context.onQuestionActionsChange : undefined}
       ></ask-user-card>`;
     }
     if (part.type === "askUserRecord") return html`

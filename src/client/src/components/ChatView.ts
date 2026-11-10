@@ -9,6 +9,7 @@ import { keyed } from "lit/directives/keyed.js";
 import { ChatMessageActionController } from "./ChatMessageActionController";
 import * as transcript from "./chatTranscriptTemplates";
 import type { TranscriptRenderContext } from "./chatTranscriptTemplates";
+import type { QuestionActionsCallback } from "./questionActions";
 import { ChatDisclosureController } from "../chatDisclosure";
 import { writeClipboardText } from "../clipboard";
 import { type QueuedMessageAction, type QueuedMessageActionTarget } from "../queuedMessageActions";
@@ -149,6 +150,12 @@ export class ChatView extends LitElement {
   @property({ attribute: false }) status?: SessionStatus;
   @property({ attribute: false }) activity?: SessionActivity;
   @property({ attribute: false }) askDraftSessionId = "";
+  @property({ attribute: false }) onQuestionActionsChange: QuestionActionsCallback | undefined;
+  private readonly handleQuestionActionsChange: QuestionActionsCallback = (actions) => {
+    if (actions?.key === JSON.stringify([this.askDraftSessionId, this.openQuestion()?.askId])) {
+      this.onQuestionActionsChange?.(actions);
+    }
+  };
   @property({ attribute: false }) onSubmitAsk: ((askId: string, submission: AskUserSubmission) => void | Promise<void>) | undefined;
   @property({ attribute: false }) pendingDialogs: PendingExtensionDialog[] = [];
   @property({ attribute: false }) closedDialogs: ClosedExtensionDialog[] = [];
@@ -326,6 +333,9 @@ export class ChatView extends LitElement {
     if (changed.has("loadingMore") && !this.loadingMore) this.loadMoreRequested = false;
     if (changed.has("hasMore") && !this.hasMore) this.loadMoreRequested = false;
     const openQuestionId = this.openQuestion()?.askId;
+    if (openQuestionId === undefined || openQuestionId !== this.lastOpenQuestionId || changed.has("askDraftSessionId")) {
+      this.onQuestionActionsChange?.(undefined);
+    }
     this.scrollFlows.afterRender({
       sessionChanged: changed.has("sessionId") || changed.has("machineId"),
       contentChanged: this.scrollContentChanged(changed),
@@ -568,6 +578,7 @@ export class ChatView extends LitElement {
       questionIds: this.questionIds,
       askDraftSessionId: this.askDraftSessionId,
       onSubmitAsk: this.onSubmitAsk,
+      onQuestionActionsChange: this.onQuestionActionsChange === undefined ? undefined : this.handleQuestionActionsChange,
       openImageGallery: (images, index) => { this.openToolImageGallery(images, index); },
     };
   }

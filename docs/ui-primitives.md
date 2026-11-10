@@ -166,6 +166,8 @@ The chat consumer owns these layout classes and message separators; `uiTranscrip
 
 `uiTranscriptCardStyles` from `ui/transcriptCardStyles.ts` provides sticky header and status treatments for inline question forms and extension dialogs. Use `ui-transcript-card-header` and `ui-transcript-card-status`, with optional success or warning modifiers. Compose disclosure headings with a native `summary.ui-transcript-disclosure`; the disclosure primitive owns its indicator. Consumers retain heading semantics, form state, validation, draft persistence, countdowns, and submission behavior. Inline forms do not acquire modal focus trapping or Escape dismissal.
 
+For pending `ask_user` questions, `ConversationLayout` replaces the normal composer with the form's Send answers and Discard questions actions. Questions remain editable in the transcript; the action bar stays outside its scroller. Chat instead hides those actions and restores the existing composer without clearing either draft. Answer questions or an answer edit returns to answering mode. Discard questions sends an empty response; sending a normal chat message also continues the conversation and closes the question set. `AskUserCard` retains draft, validation, partial-confirmation, and submission ownership, passing its action template through `ChatView`; the layout owns only the mode and placement. Standalone cards keep their inline footer.
+
 ## Ownership and hierarchy
 
 ### Control sizing policy
