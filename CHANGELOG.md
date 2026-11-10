@@ -1,5 +1,14 @@
 # @jmfederico/pi-web
 
+## 1.202611.2
+
+### Patch Changes
+
+- 3660d97: Keep question actions visible at the bottom of the conversation instead of showing competing chat and answer send buttons. Switch to chat without discarding draft answers, and return to answering by editing an answer or choosing Answer questions.
+- 74c97de: Fix JSON file uploads failing by sending files as raw bytes instead of parsing them as API requests.
+- f0d5f9b: Allow changing trust from each project's menu, including projects without Git. Clearly scope the setting to the root folder; other worktrees keep their own trust settings.
+- 91a7a38: Allow dragging image previews in both directions after pinch zoom without switching gallery images. Preserve browser zoom and gallery swipes at normal zoom.
+
 ## 1.202611.1
 
 ### Patch Changes
