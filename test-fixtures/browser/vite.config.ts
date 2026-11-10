@@ -9,6 +9,8 @@ export default defineConfig({
   build: {
     outDir: fileURLToPath(new URL("../../node_modules/.cache/pi-web/browser-fixture", import.meta.url)),
     emptyOutDir: true,
+    // Fixtures are not shipped; their chunk sizes are not a production budget.
+    chunkSizeWarningLimit: Infinity,
     rollupOptions: {
       input: {
         overlays: fileURLToPath(new URL("overlays.html", import.meta.url)),
