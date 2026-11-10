@@ -65,10 +65,12 @@
 .benefit-copy > p:not(.overline) { margin: 24px 0 0; color: var(--muted); font-size: 1.05rem; }
 .benefit-copy > p.benefit-note { font-size: 0.82rem; }
 .benefit-copy > .text-link { margin-top: 16px; }
-.persistence-diagram { display: flex; flex-direction: column; align-items: center; padding: 40px 24px; }
-.disconnected-browser { display: flex; align-items: center; gap: 16px; color: var(--muted); font-size: 0.85rem; }
-.disconnected-browser svg { width: 32px; height: 26px; }
-.connection-line { height: 56px; border-left: 1px dashed var(--line-bright); margin-block: 16px; }
+.access-diagram { display: flex; flex-direction: column; align-items: center; padding: 40px 24px; }
+.access-devices { display: flex; justify-content: space-between; width: 100%; max-width: 330px; gap: 16px; color: var(--muted); font-size: 0.8rem; }
+.access-devices > div { display: flex; flex: 1; flex-direction: column; align-items: center; gap: 12px; }
+.access-devices svg { width: 32px; height: 32px; color: var(--brand-2); }
+.connection-line { width: 72%; max-width: 240px; height: 48px; border-top: 1px solid var(--line-bright); margin-block: 16px; position: relative; }
+.connection-line::after { content: ""; position: absolute; top: 0; left: 50%; height: 100%; border-left: 1px solid var(--line-bright); }
 .session-host { display: flex; flex-direction: column; align-items: center; gap: 16px; width: 100%; max-width: 330px; border: 1px solid var(--line); padding: 28px 20px; border-radius: 6px; background: var(--bg-soft); }
 .host-label { font-family: "IBM Plex Mono", monospace; font-size: 0.75rem; letter-spacing: 0.08em; }
 .session-host strong { display: flex; align-items: center; gap: 10px; font-weight: 500; }
@@ -89,7 +91,7 @@
   .flow-stage:not(:last-child)::after { right: -22px; font-size: 1.1rem; }
   .flow-step { display: block; }
   .flow-stage > p { margin-left: 0; }
-  .persistence-diagram { padding-inline: 0; }
+  .access-diagram { padding-inline: 0; }
 }
 
 @media (max-width: 640px) {
@@ -131,7 +133,7 @@
   .continuity-section { grid-template-columns: 1fr; gap: 24px; padding-block: 56px; }
   .benefit-copy > p:not(.overline) { font-size: 1rem; margin-top: 20px; }
   .benefit-copy > p.benefit-note { font-size: 0.82rem; }
-  .persistence-diagram { padding-block: 16px; }
+  .access-diagram { padding-block: 16px; }
   .ownership-section { padding-block: 48px; }
   .ownership-grid { grid-template-columns: 1fr; gap: 28px; }
   .quick-install { flex-wrap: wrap; gap: 8px; padding-block: 0 32px; }

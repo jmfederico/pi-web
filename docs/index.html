@@ -4,18 +4,18 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>PI WEB — Web UI for Pi Coding Agent</title>
-    <meta name="description" content="Run and manage Pi Coding Agent sessions from your browser. Work on multiple tasks, review results, and continue from your computer, tablet, or phone." />
+    <meta name="description" content="Your agents. Any device. Run Pi Coding Agent on your computer or server, then manage sessions and review work from your laptop, tablet, or phone." />
     <link rel="canonical" href="https://pi-web.dev/" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="PI WEB" />
     <meta property="og:title" content="PI WEB — Web UI for Pi Coding Agent" />
-    <meta property="og:description" content="Give AI agents tasks, follow their progress, and review their work—all from your browser." />
+    <meta property="og:description" content="Your agents. Any device. Keep your agents and projects on your computer or server, and access them from your laptop, tablet, or phone." />
     <meta property="og:url" content="https://pi-web.dev/" />
     <meta property="og:image" content="https://pi-web.dev/assets/pi-web-banner.png" />
     <meta property="og:image:alt" content="PI WEB, a web interface for Pi Coding Agent" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="PI WEB — Web UI for Pi Coding Agent" />
-    <meta name="twitter:description" content="Give AI agents tasks, follow their progress, and review their work—all from your browser." />
+    <meta name="twitter:description" content="Your agents. Any device. Keep your agents and projects on your computer or server, and access them from your laptop, tablet, or phone." />
     <meta name="twitter:image" content="https://pi-web.dev/assets/pi-web-banner.png" />
     <script type="application/ld+json">
       {
@@ -28,7 +28,7 @@
         "url": "https://pi-web.dev/",
         "downloadUrl": "https://www.npmjs.com/package/@jmfederico/pi-web",
         "codeRepository": "https://github.com/jmfederico/pi-web",
-        "description": "PI WEB is a web interface for Pi Coding Agent. Give agents tasks, follow their progress, and review their work from your browser, on your own computer or server.",
+        "description": "PI WEB is a web interface for Pi Coding Agent. Run agents on your computer or server and manage their sessions, projects, and work from any device with a browser.",
         "license": "https://github.com/jmfederico/pi-web/blob/main/LICENSE"
       }
     </script>
@@ -71,7 +71,7 @@
       <section class="welcome container" aria-labelledby="welcome-title">
         <p class="overline">For Pi Coding Agent</p>
         <h1 id="welcome-title">A web interface<br />for your AI agents.</h1>
-        <p class="welcome-copy">Send a task from your computer. Read the response on your tablet. Reply from your phone. <strong>One ongoing session. Any device.</strong></p>
+        <p class="welcome-copy">Manage your agents from your computer, tablet, or phone. Switch devices and pick up any session. <strong>Your agents. Any device.</strong></p>
         <div class="welcome-actions">
           <a class="button primary" href="install">Get started <span aria-hidden="true">↗</span></a>
         </div>
@@ -121,7 +121,7 @@
 
       <section id="how-it-works" class="container device-flow" aria-labelledby="flow-title">
         <div class="flow-heading">
-          <h2 id="flow-title">Change screens.<br />Keep the conversation.</h2>
+          <h2 id="flow-title">Change devices.<br />Keep the conversation.</h2>
           <p>No copying messages. No starting over.<br />Just open PI WEB in the next browser.</p>
         </div>
         <ol class="flow-stages">
@@ -137,7 +137,7 @@
               </div>
             </div>
             <div class="flow-step"><span class="step-number" aria-hidden="true">01</span><h3>Send from your computer.</h3></div>
-            <p>Start a task in your browser, then get on with your day.</p>
+            <p>Give an agent a task from the computer you’re using.</p>
           </li>
           <li class="flow-stage">
             <div class="device-scene" aria-hidden="true">
@@ -170,16 +170,20 @@
 
       <section class="container continuity-section" aria-labelledby="continuity-title">
         <div class="benefit-copy">
-          <p class="overline">The work stays put</p>
-          <h2 id="continuity-title">Your browser can leave.<br />Your agents don’t have to.</h2>
-          <p>PI WEB runs on your computer or server, separate from the browser you use to reach it. Close the tab or switch devices without stopping the work.</p>
+          <p class="overline">Choose your device</p>
+          <h2 id="continuity-title">Your work isn’t tied<br />to one device.</h2>
+          <p>Keep your agents, projects, and tools on your computer or server. Access them through a browser on any of your devices—without moving your setup or installing PI WEB on each one.</p>
           <p class="benefit-note">The machine running PI WEB needs to stay on. Connect your devices through private remote access.</p>
           <a class="text-link" href="install#remote-access">Set up remote access <span aria-hidden="true">↗</span></a>
         </div>
-        <figure class="persistence-diagram" aria-label="Closing the browser leaves the agent session running on your computer or server.">
-          <div class="disconnected-browser" aria-hidden="true"><svg viewBox="0 0 32 26" fill="none" stroke="currentColor" stroke-width="1.25"><rect x="1" y="1" width="30" height="24" rx="3" /><path d="M1 7h30m-12 6 7 7m0-7-7 7" /></svg><span>Browser closed</span></div>
+        <figure class="access-diagram" aria-label="A computer, tablet, and phone access the same agents and projects running on your computer or server.">
+          <div class="access-devices" aria-hidden="true">
+            <div><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.25"><rect x="4" y="5" width="24" height="17" rx="2" /><path d="M1 26h30M13 22v4m6-4v4" /></svg><span>Computer</span></div>
+            <div><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.25"><rect x="5" y="2" width="22" height="28" rx="3" /><path d="M13 26h6" /></svg><span>Tablet</span></div>
+            <div><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.25"><rect x="8" y="2" width="16" height="28" rx="3" /><path d="M13 6h6m-5 20h4" /></svg><span>Phone</span></div>
+          </div>
           <div class="connection-line" aria-hidden="true"></div>
-          <div class="session-host" aria-hidden="true"><span class="host-label">PI WEB</span><strong><span class="session-dot"></span> Session still running</strong><span>On your computer or server</span></div>
+          <div class="session-host" aria-hidden="true"><span class="host-label">PI WEB</span><strong><span class="session-dot"></span> Your agents and projects</strong><span>On your computer or server</span></div>
         </figure>
       </section>
 

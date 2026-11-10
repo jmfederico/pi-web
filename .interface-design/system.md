@@ -2,7 +2,7 @@
 
 ## Direction and scope
 
-A calm reading surface for people setting up PI WEB, finding a command, or understanding where their agent work runs. Lead with the task and its next useful action. The approved homepage’s signature is continuity: one conversation across devices, with work staying on the host machine. Explain that process with semantic diagrams rather than simulated product screenshots. Complement the diagrams with real desktop and phone screenshots that show the workspace and conversation; example session data is acceptable and should be identified as such.
+A calm reading surface for people setting up PI WEB, finding a command, or understanding where their agent work runs. Lead with the task and its next useful action. The homepage’s signature is device-independent access: agents, projects, and sessions stay on the host machine while people use whichever device suits them. Lead with access across devices, not browser disconnection, and never imply a single-session limit. Explain that process with semantic diagrams rather than simulated product screenshots. Complement the diagrams with real desktop and phone screenshots that show the workspace and conversation; example session data is acceptable and should be identified as such.
 
 The visual world is the existing ink/navy canvas, pale reading text, muted supporting text, teal orientation/action accents, violet brand accents, and amber/red caution states. Preserve the palette across automatic, light, and dark themes; adjust contrast through shared tokens. Reject decorative gradients, animated introductions, card grids for ordinary prose, and oversized documentation heroes.
 
@@ -10,7 +10,7 @@ Scope: the public website under `docs/`. The application has separate primitives
 
 ## Tagline
 
-Use **“One ongoing session. Any device.”** as the product tagline. On the homepage it closes the opening paragraph, once, with emphasis; do not repeat it below the device flow. Keep **“A web interface for your AI agents.”** as the category headline, with Pi Coding Agent named nearby.
+Use **“Your agents. Any device.”** as the product tagline. On the homepage it closes the opening paragraph, once, with emphasis; do not repeat it below the device flow. Supporting copy distinguishes where agents run from the devices used to access them: no need to move the working environment or install PI WEB on every device. Keep the host-must-stay-on and private-access qualifications. Keep **“A web interface for your AI agents.”** as the category headline, with Pi Coding Agent named nearby.
 
 Use both category phrases naturally: **“Web UI for Pi Coding Agent”** in the homepage title and social titles, **“web UI”** in supporting copy, and **“web interface”** in the visible headline. Do not repeat keywords throughout the page or assume search demand has been measured.
 
