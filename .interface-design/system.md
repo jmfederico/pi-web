@@ -2,7 +2,7 @@
 
 ## Direction and scope
 
-A calm reading surface for people setting up PI WEB, finding a command, or understanding where their agent work runs. Lead with the task and its next useful action. The approved homepage’s signature is continuity: one conversation across devices, with work staying on the host machine. Explain that process with semantic diagrams rather than simulated product screenshots.
+A calm reading surface for people setting up PI WEB, finding a command, or understanding where their agent work runs. Lead with the task and its next useful action. The approved homepage’s signature is continuity: one conversation across devices, with work staying on the host machine. Explain that process with semantic diagrams rather than simulated product screenshots. Complement the diagrams with real desktop and phone screenshots that show the workspace and conversation; example session data is acceptable and should be identified as such.
 
 The visual world is the existing ink/navy canvas, pale reading text, muted supporting text, teal orientation/action accents, violet brand accents, and amber/red caution states. Preserve the palette across automatic, light, and dark themes; adjust contrast through shared tokens. Reject decorative gradients, animated introductions, card grids for ordinary prose, and oversized documentation heroes.
 
@@ -97,6 +97,6 @@ An external service adopting the pattern owns validation, accessible error focus
 2. Preserve technical commands, security warnings, anchors, clipboard targets, and deployment routing while changing presentation.
 3. Use `docs/design-system.html` to inspect shared controls in both themes. Verify actual keyboard focus, disabled states, copy success/failure, and native disclosure behavior.
 4. Review desktop and narrow widths, zoom, long code, and no-JavaScript content in a browser. Check the nested dev build and version switching as well as source pages.
-5. Do not add screenshot assets by default. Prefer text and small semantic diagrams; add a screenshot only when it materially explains a task. Browser screenshots may still be used for visual verification without shipping them on the site.
+5. Use real screenshots to demonstrate the interface, and small semantic diagrams to explain processes. Homepage screenshots use PI WEB Light or PI WEB Dark to match the page's effective theme, including OS changes in Auto mode; full-size links must open the matching image. Keep the preview static, without autoplay or separate screenshot theme controls. Use named demo models, never an unresolved model label. Browser screenshots may also be used for visual verification without shipping them on the site.
 
 Follow `docs/testing.md` and `docs/development-checks.md` for verification. Record results separately from this durable contract; a design guideline is not evidence that a browser check passed.

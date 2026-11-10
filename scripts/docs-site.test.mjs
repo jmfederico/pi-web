@@ -128,6 +128,17 @@ describe("documentation clipboard controls", () => {
     expect(writeText).toHaveBeenCalledExactlyOnceWith(target.textContent.trim());
   });
 
+  it("copies the homepage installer unchanged from the installation guide", async () => {
+    const home = openCopyControl("index.html", "#home-install");
+    const guide = openCopyControl("install.html", "#one-line-install");
+    home.button.click();
+    guide.button.click();
+    await setImmediate();
+    const command = "curl -fsSL https://raw.githubusercontent.com/jmfederico/pi-web/main/install.sh | sh";
+    expect(home.writeText).toHaveBeenCalledExactlyOnceWith(command);
+    expect(guide.writeText).toHaveBeenCalledExactlyOnceWith(command);
+  });
+
   it("strips only leading shell prompts, retaining variables, quoted dollars and continuation indentation", async () => {
     const { button, target, writeText } = openCopyControl("install.html", "#linux-install");
     // Supply edge-case command content through a real page target, not a replacement handler.

@@ -7,6 +7,31 @@
 .welcome-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 32px; }
 .welcome-note { margin: 24px 0 0; color: var(--muted); font-size: 0.85rem; }
 
+/* Real product views complement the process diagrams below. */
+.product-section { padding-block: 32px 80px; }
+.product-heading { display: grid; grid-template-columns: 1fr 1fr; align-items: end; gap: 64px; }
+.product-heading > p { max-width: 480px; margin: 0; color: var(--muted); font-size: 1.05rem; }
+/* Columns follow the images' aspect ratios (1440/900 and 390/844) for equal heights.
+   Paint the boundary outside the image so border widths do not alter those ratios. */
+.product-screenshots { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 0.4620853fr); align-items: start; gap: 24px; margin-top: 40px; }
+.screenshot-link { display: block; box-shadow: 0 0 0 1px var(--line-bright); border-radius: var(--radius-panel); overflow: hidden; cursor: zoom-in; }
+.screenshot-link:hover { box-shadow: 0 0 0 1px var(--brand-2); }
+.screenshot-link img { width: 100%; }
+.product-screenshots figcaption { margin-top: 12px; color: var(--muted); font-size: 0.82rem; }
+.screenshot-hint { margin: 16px 0 0; color: var(--muted); font-size: 0.82rem; }
+/* Match the page's explicit preference, falling back to the OS even without JS.
+   Keep full-size links paired with their images so enlargement uses the same theme. */
+.screenshot-light { display: none; }
+:root[data-theme="light"] .screenshot-light { display: block; }
+:root[data-theme="light"] .screenshot-dark { display: none; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .screenshot-light { display: block; }
+  :root:not([data-theme="dark"]) .screenshot-dark { display: none; }
+}
+.product-capabilities { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px; margin: 32px 0 0; padding-top: 24px; border-top: 1px solid var(--line); }
+.product-capabilities dt { font-weight: 500; }
+.product-capabilities dd { margin: 8px 0 0; color: var(--muted); font-size: 0.95rem; }
+
 /* A single session shown across three devices, rather than simulated chat UI. */
 .device-flow { padding-block: 48px 40px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); scroll-margin-top: 24px; }
 .flow-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 32px; }
@@ -49,16 +74,15 @@
 .session-host strong { display: flex; align-items: center; gap: 10px; font-weight: 500; }
 .session-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--brand-2); }
 .session-host > span:last-child { color: var(--muted); font-size: 0.8rem; }
-.parallel-section { padding-block: 0 80px; }
-.parallel-section > p:last-child { max-width: 560px; margin: 24px 0 0; color: var(--muted); font-size: 1.05rem; }
 
 .ownership-section { padding-block: 72px; background: var(--bg-soft); }
 .ownership-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 100px; align-items: center; }
 .ownership-copy > p { margin: 0 0 24px; max-width: 460px; color: var(--muted); font-size: 1.05rem; }
 .ownership-links { display: flex; flex-wrap: wrap; gap: 8px 28px; }
-.closing { display: flex; justify-content: space-between; gap: 32px; align-items: center; padding-block: 100px; }
-.closing .button { flex-shrink: 0; }
-.closing h2 { font-size: clamp(1.9rem, 3.3vw, 2.65rem); }
+.quick-install { display: flex; align-items: center; gap: 24px; padding-block: 0 48px; }
+.install-command { display: flex; align-items: center; flex: 1; min-width: 0; gap: 12px; padding: 8px 12px 8px 0; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--bg-soft); }
+.install-command pre { flex: 1; min-width: 0; padding-block: 12px; }
+.install-command .copy-button, .quick-install > .text-link { flex-shrink: 0; }
 @media (max-width: 900px) {
   .continuity-section, .ownership-grid { gap: 48px; }
   .flow-stages { gap: 24px; }
@@ -74,6 +98,14 @@
   .welcome-copy { font-size: 1.05rem; margin-block: 24px; }
   .welcome-actions { gap: 12px 24px; }
   .welcome-note { max-width: 280px; font-size: 0.78rem; }
+  .product-section { padding-block: 16px 48px; }
+  .product-heading { grid-template-columns: 1fr; gap: 20px; }
+  .product-heading > p { font-size: 1rem; }
+  .product-screenshots { grid-template-columns: 1fr; gap: 24px; margin-top: 28px; }
+  .product-mobile { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 0.8fr); align-items: center; gap: 20px; }
+  .product-mobile .screenshot-link { max-width: 200px; }
+  .product-mobile figcaption { margin: 0; }
+  .product-capabilities { grid-template-columns: 1fr; gap: 20px; }
   .device-flow { padding-block: 32px; }
   .flow-heading { flex-direction: column; align-items: flex-start; gap: 16px; }
   .flow-heading > p { font-size: 0.9rem; }
@@ -100,8 +132,8 @@
   .benefit-copy > p:not(.overline) { font-size: 1rem; margin-top: 20px; }
   .benefit-copy > p.benefit-note { font-size: 0.82rem; }
   .persistence-diagram { padding-block: 16px; }
-  .parallel-section { padding-bottom: 56px; }
   .ownership-section { padding-block: 48px; }
   .ownership-grid { grid-template-columns: 1fr; gap: 28px; }
-  .closing { flex-direction: column; align-items: flex-start; gap: 28px; padding-block: 64px; }
+  .quick-install { flex-wrap: wrap; gap: 8px; padding-block: 0 32px; }
+  .install-command { flex-basis: 100%; }
 }

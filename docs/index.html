@@ -52,7 +52,6 @@
         <a class="brand" href="./" aria-label="PI WEB home">PI WEB</a>
         <div class="nav-links">
           <div class="nav-pages">
-            <a href="#how-it-works">How it works</a>
             <a href="install">Docs</a>
             <a href="community-plugins">Plugins</a>
             <a href="https://github.com/jmfederico/pi-web">GitHub</a>
@@ -75,9 +74,49 @@
         <p class="welcome-copy">Send a task from your computer. Read the response on your tablet. Reply from your phone. <strong>One ongoing session. Any device.</strong></p>
         <div class="welcome-actions">
           <a class="button primary" href="install">Get started <span aria-hidden="true">↗</span></a>
-          <a class="text-link" href="#how-it-works">See how it works <span aria-hidden="true">↓</span></a>
         </div>
         <p class="welcome-note">Your computer or server. Your projects. Any browser.</p>
+      </section>
+
+      <section id="quick-install" class="container quick-install" aria-label="Install PI WEB">
+        <div class="install-command">
+          <pre id="home-install"><code>curl -fsSL https://raw.githubusercontent.com/jmfederico/pi-web/main/install.sh | sh</code></pre>
+          <button class="copy-button" type="button" data-copy="#home-install">Copy</button>
+        </div>
+        <a class="text-link" href="install#one-line" aria-label="More installation details">More <span aria-hidden="true">↗</span></a>
+      </section>
+
+      <section id="interface" class="container product-section" aria-labelledby="product-title">
+        <div class="product-heading">
+          <div><p class="overline">A workspace for agent work</p><h2 id="product-title">Several sessions.<br />One place to work.</h2></div>
+          <p>Let one agent fix a bug while another updates the docs in a separate worktree. Switch sessions to review progress and give the next instruction.</p>
+        </div>
+        <div class="product-screenshots">
+          <figure class="product-desktop">
+            <a class="screenshot-link screenshot-dark" href="assets/pi-web-desktop-pi-web-dark.png" target="_blank" rel="noopener" aria-label="Open desktop screenshot at full size (new tab)">
+              <img src="assets/pi-web-desktop-pi-web-dark.png" width="1440" height="900" loading="lazy" alt="PI WEB desktop with projects and sessions beside the conversation and workspace file preview" />
+            </a>
+            <a class="screenshot-link screenshot-light" href="assets/pi-web-desktop-pi-web-light.png" target="_blank" rel="noopener" aria-label="Open desktop screenshot at full size (new tab)">
+              <img src="assets/pi-web-desktop-pi-web-light.png" width="1440" height="900" loading="lazy" alt="PI WEB desktop with projects and sessions beside the conversation and workspace file preview" />
+            </a>
+            <figcaption>Desktop · Conversation and files, side by side.</figcaption>
+          </figure>
+          <figure class="product-mobile">
+            <a class="screenshot-link screenshot-dark" href="assets/pi-web-mobile-pi-web-dark.png" target="_blank" rel="noopener" aria-label="Open phone screenshot at full size (new tab)">
+              <img src="assets/pi-web-mobile-pi-web-dark.png" width="390" height="844" loading="lazy" alt="The same PI WEB session on a phone, with its conversation and message controls" />
+            </a>
+            <a class="screenshot-link screenshot-light" href="assets/pi-web-mobile-pi-web-light.png" target="_blank" rel="noopener" aria-label="Open phone screenshot at full size (new tab)">
+              <img src="assets/pi-web-mobile-pi-web-light.png" width="390" height="844" loading="lazy" alt="The same PI WEB session on a phone, with its conversation and message controls" />
+            </a>
+            <figcaption>Phone · The same session, ready for your next instruction.</figcaption>
+          </figure>
+        </div>
+        <p class="screenshot-hint">Select a screenshot to open it at full size in a new tab. Screenshots show an example session.</p>
+        <dl class="product-capabilities">
+          <div><dt>Projects and worktrees</dt><dd>Choose where each agent works. Keep independent tasks in separate Git worktrees.</dd></div>
+          <div><dt>Sessions and instructions</dt><dd>Read the conversation, follow tool activity, and send the next instruction without switching apps.</dd></div>
+          <div><dt>Files and tools</dt><dd>Preview workspace files alongside the chat. Open a terminal, inspect changes, and check context usage and costs.</dd></div>
+        </dl>
       </section>
 
       <section id="how-it-works" class="container device-flow" aria-labelledby="flow-title">
@@ -111,7 +150,7 @@
               </div>
             </div>
             <div class="flow-step"><span class="step-number" aria-hidden="true">02</span><h3>Read on your tablet.</h3></div>
-            <p>Pick up your iPad and read the agent’s response in the same conversation.</p>
+            <p>Pick up your tablet and read the agent’s response in the same conversation.</p>
           </li>
           <li class="flow-stage">
             <div class="device-scene" aria-hidden="true">
@@ -124,7 +163,7 @@
               </div>
             </div>
             <div class="flow-step"><span class="step-number" aria-hidden="true">03</span><h3>Reply from your phone.</h3></div>
-            <p>Send the next instruction from your iPhone. The conversation carries on.</p>
+            <p>Send the next instruction from your phone. The conversation carries on.</p>
           </li>
         </ol>
       </section>
@@ -135,19 +174,13 @@
           <h2 id="continuity-title">Your browser can leave.<br />Your agents don’t have to.</h2>
           <p>PI WEB runs on your computer or server, separate from the browser you use to reach it. Close the tab or switch devices without stopping the work.</p>
           <p class="benefit-note">The machine running PI WEB needs to stay on. Connect your devices through private remote access.</p>
-          <a class="text-link" href="remote-first">How remote access works <span aria-hidden="true">↗</span></a>
+          <a class="text-link" href="install#remote-access">Set up remote access <span aria-hidden="true">↗</span></a>
         </div>
         <figure class="persistence-diagram" aria-label="Closing the browser leaves the agent session running on your computer or server.">
           <div class="disconnected-browser" aria-hidden="true"><svg viewBox="0 0 32 26" fill="none" stroke="currentColor" stroke-width="1.25"><rect x="1" y="1" width="30" height="24" rx="3" /><path d="M1 7h30m-12 6 7 7m0-7-7 7" /></svg><span>Browser closed</span></div>
           <div class="connection-line" aria-hidden="true"></div>
           <div class="session-host" aria-hidden="true"><span class="host-label">PI WEB</span><strong><span class="session-dot"></span> Session still running</strong><span>On your computer or server</span></div>
         </figure>
-      </section>
-
-      <section class="container parallel-section" aria-labelledby="parallel-title">
-        <p class="overline">Across your projects, too</p>
-        <h2 id="parallel-title">Several sessions.<br />One place to check in.</h2>
-        <p>Keep conversations organized by project. Move between agents, see where things stand, and pick up any session from whichever device you’re using.</p>
       </section>
 
       <section class="ownership-section" aria-labelledby="ownership-title">
@@ -158,11 +191,6 @@
             <div class="ownership-links"><a class="text-link" href="community-plugins">Explore plugins <span aria-hidden="true">↗</span></a><a class="text-link" href="https://github.com/earendil-works/pi/tree/main/packages/coding-agent">Learn about Pi <span aria-hidden="true">↗</span></a></div>
           </div>
         </div>
-      </section>
-
-      <section class="container closing" aria-labelledby="closing-title">
-        <div><p class="overline">Ready when you are</p><h2 id="closing-title">Take your agents beyond one screen.</h2></div>
-        <a class="button primary" href="install">Get started <span aria-hidden="true">↗</span></a>
       </section>
     </main>
 

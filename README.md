@@ -17,7 +17,7 @@ Run agents where your code, tools, credentials, and build caches live. Supervise
   <img src="docs/assets/pi-web-mobile-pi-web-dark.png" alt="PI WEB on phone, with chat and message controls" width="139" />
 </p>
 
-[Explore devices and themes](https://pi-web.dev/)
+[See the desktop and phone interfaces](https://pi-web.dev/#interface)
 
 ## Quick start
 

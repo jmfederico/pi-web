@@ -2,7 +2,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -12,8 +12,10 @@ const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(SCRIPT_DIR, "..");
 const DEFAULT_OUTPUT_DIR = join(REPO_ROOT, "docs", "assets");
 const SESSION_ID = "019ef4c0-0000-7000-8000-000000000001";
-const DEMO_FILE = "docs/assets/pi-web-dev-screenshot.png";
-const DEFAULT_SITE_URL = "https://pi-web.dev/";
+const DEMO_CODE_FILE = "src/shared/installationName.ts";
+const DEMO_IMAGE_FILE = "docs/assets/pi-web-dev-screenshot.png";
+const DEMO_MODEL = "claude-sonnet-4-6";
+const DEMO_TIMESTAMP = "2026-11-09T10:00:00.000Z";
 const SCREENSHOT_THEMES = ["pi-web-dark", "pi-web-light", "paper", "graphite"];
 const VIEWPORTS = {
   desktop: { width: 1440, height: 900, mobile: false },
@@ -24,7 +26,11 @@ const VIEWPORTS = {
 const args = parseArgs(process.argv.slice(2));
 const outputDir = resolve(args.outputDir ?? DEFAULT_OUTPUT_DIR);
 const keepTemp = args.keepTemp === true;
-const siteUrl = args.siteUrl ?? DEFAULT_SITE_URL;
+// No external website is needed for the default, source-code preview scene.
+const siteUrl = args.siteUrl;
+const demoFile = siteUrl === undefined ? DEMO_CODE_FILE : DEMO_IMAGE_FILE;
+const viewports = args.homepageOnly ? { desktop: VIEWPORTS.desktop, mobile: VIEWPORTS.mobile } : VIEWPORTS;
+const themes = args.homepageOnly ? ["pi-web-dark", "pi-web-light"] : SCREENSHOT_THEMES;
 const chromeBin = args.chromeBin ?? process.env["CHROME_BIN"] ?? findChrome();
 
 if (chromeBin === undefined) {
@@ -43,14 +49,18 @@ process.once("SIGTERM", () => {
 });
 
 async function main() {
-  const pillow = spawnSync("python3", ["-c", "from PIL import Image"], { encoding: "utf8" });
-  if (pillow.status !== 0) fail("Screenshot capture requires Python 3 and Pillow (python3 -m pip install Pillow).");
+  if (!args.homepageOnly) {
+    const pillow = spawnSync("python3", ["-c", "from PIL import Image"], { encoding: "utf8" });
+    if (pillow.status !== 0) throw new Error("Theme animations require Python 3 and Pillow (python3 -m pip install Pillow).");
+  }
   const logsDir = join(tempRoot, "logs");
   const dataDir = join(tempRoot, "pi-web-data");
   const configPath = join(tempRoot, "config.json");
   const sessionDir = join(tempRoot, "sessions");
   const agentDir = join(tempRoot, "pi-agent");
   const demoProject = join(tempRoot, "pi-web");
+  const runtimeRoot = join(tempRoot, "runtime");
+  const homeDir = join(tempRoot, "home");
   const projectsFile = join(dataDir, "projects.json");
   const socketPath = join(dataDir, "sessiond.sock");
   await Promise.all([
@@ -59,16 +69,41 @@ async function main() {
     mkdir(agentDir, { recursive: true }),
     mkdir(dataDir, { recursive: true }),
     mkdir(outputDir, { recursive: true }),
+    mkdir(homeDir, { recursive: true }),
   ]);
 
   console.log(`Temporary workspace: ${tempRoot}`);
+  // Build and run a disposable checkout, never the installed/live application.
+  // Overlay tracked working files so captures include uncommitted app changes.
+  await cloneDemoProject(runtimeRoot);
+  const tracked = spawnSync("git", ["ls-files", "-z"], { cwd: REPO_ROOT, encoding: "utf8" });
+  if (tracked.status !== 0) throw new Error(`Unable to list working files: ${tracked.stderr}`);
+  for (const path of tracked.stdout.split("\0").filter(Boolean)) {
+    const source = join(REPO_ROOT, path);
+    const target = join(runtimeRoot, path);
+    if (!existsSync(source)) { await rm(target, { force: true }); continue; }
+    await mkdir(dirname(target), { recursive: true });
+    await copyFile(source, target);
+  }
+  const dependencies = join(REPO_ROOT, "node_modules");
+  const runtimeDependencies = join(runtimeRoot, "node_modules");
+  await mkdir(runtimeDependencies);
+  // Share installed packages, not Vite/build caches with the working checkout.
+  for (const name of await readdir(dependencies)) {
+    if (name.startsWith(".") && name !== ".bin") continue;
+    await symlink(join(dependencies, name), join(runtimeDependencies, name));
+  }
   await cloneDemoProject(demoProject);
+  const branch = spawnSync("git", ["checkout", "--quiet", "-B", "main"], { cwd: demoProject, encoding: "utf8" });
+  if (branch.status !== 0) throw new Error(`Unable to prepare demo branch: ${branch.stderr}`);
+  await copyFile(join(REPO_ROOT, DEMO_CODE_FILE), join(demoProject, DEMO_CODE_FILE));
   await removeLegacyDemoMedia(demoProject);
+  await writeDemoProfile(agentDir);
 
   const projectId = "pi-web-demo";
   const workspaceId = createWorkspaceId(projectId, demoProject);
   await writeJson(projectsFile, {
-    projects: [{ id: projectId, name: "pi-web", path: demoProject, createdAt: new Date().toISOString() }],
+    projects: [{ id: projectId, name: "pi-web", path: demoProject, createdAt: DEMO_TIMESTAMP }],
   });
   await writeJson(configPath, { host: "127.0.0.1", allowedHosts: true });
   await writeDemoSession(sessionDir, demoProject);
@@ -77,7 +112,16 @@ async function main() {
   const clientPort = await getFreePort();
   const debugPort = await getFreePort();
   const env = {
-    ...process.env,
+    // Deliberate allowlist: no inherited live sockets, Docker build paths,
+    // provider credentials, extension settings, or session identity.
+    PATH: process.env.PATH,
+    HOME: homeDir,
+    XDG_CONFIG_HOME: join(homeDir, ".config"),
+    XDG_CACHE_HOME: join(homeDir, ".cache"),
+    LANG: "en_US.UTF-8",
+    TZ: "UTC",
+    ...(process.env.PI_WEB_PI_PACKAGE_DIR ? { PI_WEB_PI_PACKAGE_DIR: process.env.PI_WEB_PI_PACKAGE_DIR } : {}),
+    PI_WEB_DEV_SUPERVISED: "1",
     PI_WEB_DATA_DIR: dataDir,
     PI_WEB_CONFIG: configPath,
     PI_WEB_PROJECTS_FILE: projectsFile,
@@ -91,18 +135,16 @@ async function main() {
     NO_COLOR: "1",
   };
 
-  const tsxBin = join(REPO_ROOT, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
-  const viteBin = join(REPO_ROOT, "node_modules", ".bin", process.platform === "win32" ? "vite.cmd" : "vite");
-  assertExecutable(tsxBin, "Run npm install before capturing screenshots.");
-  assertExecutable(viteBin, "Run npm install before capturing screenshots.");
-
+  const npmBin = findExecutable(["npm"]);
+  if (npmBin === undefined) throw new Error("npm was not found. Run npm install before capturing screenshots.");
   console.log("Starting isolated PI WEB session daemon, API server, and Vite client…");
-  startChild("sessiond", tsxBin, ["src/server/sessiond.ts"], { env, cwd: REPO_ROOT, logsDir });
-  await waitForFile(socketPath, 10_000);
-  startChild("api", tsxBin, ["src/server/index.ts"], { env, cwd: REPO_ROOT, logsDir });
-  await waitForHttp(`http://127.0.0.1:${apiPort}/api/projects`, 15_000);
-  startChild("vite", viteBin, ["--host", "127.0.0.1", "--port", String(clientPort), "--strictPort", "true"], { env, cwd: REPO_ROOT, logsDir });
-  await waitForHttp(`http://127.0.0.1:${clientPort}/`, 30_000);
+  // npm owns prerequisites; dev:web produces the plugin build sessiond awaits.
+  startChild("api", npmBin, ["run", "dev:web"], { env, cwd: runtimeRoot, logsDir });
+  startChild("sessiond", npmBin, ["run", "start:sessiond"], { env, cwd: runtimeRoot, logsDir });
+  await waitForFile(socketPath, 120_000);
+  await waitForHttp(`http://127.0.0.1:${apiPort}/api/projects`, 120_000);
+  startChild("vite", npmBin, ["run", "dev:client", "--", "--host", "127.0.0.1", "--port", String(clientPort), "--strictPort"], { env, cwd: runtimeRoot, logsDir });
+  await waitForHttp(`http://127.0.0.1:${clientPort}/`, 60_000);
 
   console.log("Starting Chromium and capturing screenshots…");
   const chrome = startChild("chromium", chromeBin, chromeArgs(debugPort, join(tempRoot, "chrome-profile")), { env, cwd: REPO_ROOT, logsDir });
@@ -112,7 +154,9 @@ async function main() {
     await cdp.send("Page.enable");
     await cdp.send("Runtime.enable");
 
-    await captureWebsiteScreenshot(cdp, join(demoProject, DEMO_FILE), siteUrl);
+    await cdp.send("Emulation.setTimezoneOverride", { timezoneId: "UTC" });
+    await cdp.send("Emulation.setLocaleOverride", { locale: "en-US" });
+    if (siteUrl !== undefined) await captureWebsiteScreenshot(cdp, join(demoProject, demoFile), siteUrl);
 
     const appUrl = new URL(`http://127.0.0.1:${clientPort}/`);
     appUrl.searchParams.set("project", projectId);
@@ -120,27 +164,36 @@ async function main() {
     appUrl.searchParams.set("session", SESSION_ID);
     appUrl.searchParams.set("view", "chat");
 
-    for (const [device, viewport] of Object.entries(VIEWPORTS)) {
+    for (const [device, viewport] of Object.entries(viewports)) {
       const legacyPath = join(outputDir, `pi-web-${device}.png`);
       if (device === "desktop") await captureDesktop(cdp, appUrl, legacyPath);
       else await captureDefaultApp(cdp, appUrl, viewport, legacyPath);
       // Prepare each device's scene once so only its theme changes between captures.
-      for (const theme of SCREENSHOT_THEMES) {
+      for (const theme of themes) {
         await selectTheme(cdp, theme);
+        await assertDemoStatus(cdp);
         await capturePng(cdp, join(outputDir, `pi-web-${device}-${theme}.png`));
       }
     }
+  } catch (error) {
+    if (keepTemp) {
+      await capturePng(cdp, join(tempRoot, "capture-failure.png")).catch(() => undefined);
+      console.error(`Capture failed; diagnostic image and logs: ${tempRoot}`);
+    }
+    throw error;
   } finally {
     cdp.close();
     chrome.kill("SIGTERM");
   }
 
-  for (const device of Object.keys(VIEWPORTS)) {
-    const animationPath = join(outputDir, device === "desktop" ? "pi-web-themes.gif" : `pi-web-${device}-themes.gif`);
-    createThemeAnimation(device, animationPath);
-    console.log(`Wrote ${animationPath}`);
-    for (const theme of SCREENSHOT_THEMES) console.log(`Wrote ${join(outputDir, `pi-web-${device}-${theme}.png`)}`);
-    console.log(`Wrote ${join(outputDir, `pi-web-${device}.png`)}`);
+  for (const device of Object.keys(viewports)) {
+    if (!args.homepageOnly) {
+      const animationPath = join(outputDir, device === "desktop" ? "pi-web-themes.gif" : `pi-web-${device}-themes.gif`);
+      createThemeAnimation(device, animationPath);
+      console.log(`Wrote ${animationPath}`);
+      console.log(`Wrote ${join(outputDir, `pi-web-${device}.png`)}`);
+    }
+    for (const theme of themes) console.log(`Wrote ${join(outputDir, `pi-web-${device}-${theme}.png`)}`);
   }
   if (keepTemp) console.log(`Kept temporary workspace: ${tempRoot}`);
 }
@@ -148,28 +201,20 @@ async function main() {
 async function captureWebsiteScreenshot(cdp, outputPath, url) {
   await mkdir(dirname(outputPath), { recursive: true });
   await setViewport(cdp, { width: 1280, height: 720, mobile: false });
-  try {
-    await navigate(cdp, url, 20_000);
-    await waitForDocumentFonts(cdp);
-    await sleep(3500);
-    await capturePng(cdp, outputPath);
-  } catch (error) {
-    console.warn(`Unable to capture ${url}; using a local fallback image. ${error instanceof Error ? error.message : String(error)}`);
-    const fallback = `data:text/html,${encodeURIComponent(fallbackWebsiteHtml(url))}`;
-    await navigate(cdp, fallback, 10_000);
-    await sleep(300);
-    await capturePng(cdp, outputPath);
-  }
+  await navigate(cdp, url, 20_000);
+  await waitForDocumentFonts(cdp);
+  await sleep(3500);
+  await capturePng(cdp, outputPath);
 }
 
 async function captureDesktop(cdp, appUrl, outputPath) {
   await setViewport(cdp, VIEWPORTS.desktop);
   await navigate(cdp, appUrl.href, 15_000);
   await waitForApp(cdp);
-  await selectPreviewImage(cdp);
+  await selectPreviewFile(cdp);
   await selectTheme(cdp, "pi-web-dark");
   await sleep(500);
-  await capturePng(cdp, outputPath);
+  if (!args.homepageOnly) { await assertDemoStatus(cdp); await capturePng(cdp, outputPath); }
 }
 
 async function captureDefaultApp(cdp, appUrl, viewport, outputPath) {
@@ -177,11 +222,11 @@ async function captureDefaultApp(cdp, appUrl, viewport, outputPath) {
   await navigate(cdp, appUrl.href, 15_000);
   await waitForApp(cdp);
   await selectTheme(cdp, "pi-web-dark");
-  await capturePng(cdp, outputPath);
+  if (!args.homepageOnly) { await assertDemoStatus(cdp); await capturePng(cdp, outputPath); }
 }
 
 async function selectTheme(cdp, theme) {
-  const css = await readFile(join(REPO_ROOT, "src/client/src/plugins/themes", `${theme}.css`), "utf8");
+  const css = await readFile(join(REPO_ROOT, "pi-web-plugins/themes/assets", `${theme}.css`), "utf8");
   const background = css.match(/--pi-bg:\s*([^;]+);/)?.[1]?.trim();
   if (background === undefined) throw new Error(`Theme ${theme} has no background token`);
   await evaluate(cdp, `(async () => {
@@ -213,7 +258,7 @@ frames[0].save(sys.argv[1], save_all=True, append_images=frames[1:], duration=30
   }
 }
 
-async function selectPreviewImage(cdp) {
+async function selectPreviewFile(cdp) {
   await evaluate(cdp, `(async () => {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const app = document.querySelector("pi-web-app");
@@ -242,16 +287,23 @@ async function selectPreviewImage(cdp) {
       await sleep(100);
     }
     await panel.runtime.refreshFiles(panel.context);
-    await panel.runtime.expandDir(panel.context, "docs");
-    await panel.runtime.expandDir(panel.context, "docs/assets");
-    await panel.runtime.selectFile(panel.context, ${JSON.stringify(DEMO_FILE)});
+    const path = ${JSON.stringify(demoFile)};
+    const parts = path.split("/");
+    for (let i = 1; i < parts.length; i++) await panel.runtime.expandDir(panel.context, parts.slice(0, i).join("/"));
+    await panel.runtime.selectFile(panel.context, path);
     await panel.updateComplete;
+    queryDeep(panel.shadowRoot, '[aria-current="page"]')?.scrollIntoView({ block: "center" });
     while (Date.now() < deadline) {
-      const image = queryDeep(panel.shadowRoot, ".image-preview img");
-      if (image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0) return true;
+      if (${siteUrl === undefined}) {
+        const code = queryDeep(panel.shadowRoot, "pre code, .cm-content");
+        if (code?.textContent.includes("DEFAULT_INSTALLATION_NAME")) return true;
+      } else {
+        const image = queryDeep(panel.shadowRoot, "img");
+        if (image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0) return true;
+      }
       await sleep(100);
     }
-    throw new Error("Timed out waiting for image preview");
+    throw new Error("Timed out waiting for file preview");
   })()`);
 }
 
@@ -278,6 +330,14 @@ async function waitForApp(cdp) {
     };
     check();
   })`);
+  // Session history can arrive before plugin tabs, icons and renderers. Await
+  // the app's existing startup work so light/dark captures have the same scene.
+  await evaluate(cdp, `(async () => {
+    const app = document.querySelector("pi-web-app");
+    await app.loadPluginsForSelectedMachine();
+    await app.updateComplete;
+    await document.fonts.ready;
+  })()`);
 }
 
 async function waitForDocumentFonts(cdp) {
@@ -326,13 +386,13 @@ async function removeLegacyDemoMedia(projectRoot) {
 }
 
 async function writeDemoSession(sessionDir, cwd) {
-  const now = new Date();
+  const now = new Date(DEMO_TIMESTAMP);
   const timestamp = now.toISOString();
   const file = join(sessionDir, `${timestamp.replaceAll(":", "-")}_${SESSION_ID}.jsonl`);
   const ms = now.getTime();
   const entries = [
     { type: "session", version: 3, id: SESSION_ID, timestamp, cwd },
-    { type: "model_change", id: "10000001", parentId: null, timestamp: iso(ms + 100), provider: "openai-codex", modelId: "gpt-5.5" },
+    { type: "model_change", id: "10000001", parentId: null, timestamp: iso(ms + 100), provider: "anthropic", modelId: DEMO_MODEL },
     { type: "thinking_level_change", id: "10000002", parentId: "10000001", timestamp: iso(ms + 200), thinkingLevel: "off" },
     {
       type: "message",
@@ -341,11 +401,11 @@ async function writeDemoSession(sessionDir, cwd) {
       timestamp: iso(ms + 1000),
       message: {
         role: "user",
-        content: [{ type: "text", text: "Take a screenshot of https://pi-web.dev, save it under docs/assets, and tell me where I can preview it." }],
+        content: [{ type: "text", text: siteUrl === undefined ? "How does PI WEB choose its installation name? Show me the code and explain the fallback." : `Take a screenshot of ${siteUrl}, save it under docs/assets, and tell me where I can preview it.` }],
         timestamp: ms + 1000,
       },
     },
-    { type: "session_info", id: "10000004", parentId: "10000003", timestamp: iso(ms + 1100), name: "Screenshot pi-web.dev" },
+    { type: "session_info", id: "10000004", parentId: "10000003", timestamp: iso(ms + 1100), name: siteUrl === undefined ? "Explain installation names" : "Preview the homepage" },
     {
       type: "message",
       id: "10000005",
@@ -355,14 +415,14 @@ async function writeDemoSession(sessionDir, cwd) {
         role: "assistant",
         content: [{
           type: "toolCall",
-          id: "call_demo_screenshot",
-          name: "bash",
-          arguments: { command: `capture-browser-screenshot https://pi-web.dev ${DEMO_FILE}` },
+          id: "call_demo_preview",
+          name: siteUrl === undefined ? "read" : "bash",
+          arguments: siteUrl === undefined ? { path: demoFile } : { command: `capture-browser-screenshot ${siteUrl} ${demoFile}` },
         }],
-        api: "openai-codex-responses",
-        provider: "openai-codex",
-        model: "gpt-5.5",
-        usage: zeroUsage(),
+        api: "anthropic-messages",
+        provider: "anthropic",
+        model: DEMO_MODEL,
+        usage: demoUsage(),
         stopReason: "toolUse",
         timestamp: ms + 2000,
       },
@@ -374,9 +434,9 @@ async function writeDemoSession(sessionDir, cwd) {
       timestamp: iso(ms + 3000),
       message: {
         role: "toolResult",
-        toolCallId: "call_demo_screenshot",
-        toolName: "bash",
-        content: [{ type: "text", text: `Saved screenshot to ${DEMO_FILE}` }],
+        toolCallId: "call_demo_preview",
+        toolName: siteUrl === undefined ? "read" : "bash",
+        content: [{ type: "text", text: siteUrl === undefined ? await readFile(join(cwd, demoFile), "utf8") : `Saved screenshot to ${demoFile}` }],
         isError: false,
         timestamp: ms + 3000,
       },
@@ -388,11 +448,13 @@ async function writeDemoSession(sessionDir, cwd) {
       timestamp: iso(ms + 4000),
       message: {
         role: "assistant",
-        content: [{ type: "text", text: `Done — I saved the screenshot at \`${DEMO_FILE}\`. Open the Files panel to preview it.` }],
-        api: "openai-codex-responses",
-        provider: "openai-codex",
-        model: "gpt-5.5",
-        usage: zeroUsage(),
+        content: [{ type: "text", text: siteUrl === undefined
+          ? `The fallback is \`PI-WEB\`. In \`${demoFile}\`:\n\n- \`requireInstallationName()\` validates the value, rejects control characters, and trims whitespace.\n- \`installationDisplayName()\` uses the trimmed name when it is non-empty.\n- A missing or blank name falls back to \`DEFAULT_INSTALLATION_NAME\`.\n\nThe file is open in the Files panel. No code changes are needed.`
+          : `Saved to \`${demoFile}\`. Open the Files panel to preview it.` }],
+        api: "anthropic-messages",
+        provider: "anthropic",
+        model: DEMO_MODEL,
+        usage: demoUsage(),
         stopReason: "stop",
         timestamp: ms + 4000,
       },
@@ -401,12 +463,41 @@ async function writeDemoSession(sessionDir, cwd) {
   await writeFile(file, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`, "utf8");
 }
 
-function fallbackWebsiteHtml(url) {
-  return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
-    body{margin:0;min-height:100vh;display:grid;place-items:center;background:linear-gradient(135deg,#07121f,#2b174c);color:#f8fafc;font:24px system-ui,sans-serif}
-    main{width:min(900px,calc(100vw - 80px));padding:56px;border:1px solid rgba(255,255,255,.22);border-radius:28px;background:rgba(10,16,32,.72);box-shadow:0 24px 80px rgba(0,0,0,.35)}
-    h1{margin:0 0 14px;font-size:64px;letter-spacing:-.06em}.eyebrow{color:#c084fc;text-transform:uppercase;letter-spacing:.16em;font-size:14px;font-weight:700}p{line-height:1.5;color:#dbeafe}
-  </style></head><body><main><div class="eyebrow">PI WEB</div><h1>pi-web.dev</h1><p>Fallback screenshot for ${escapeHtml(url)}.</p></main></body></html>`;
+async function writeDemoProfile(agentDir) {
+  // Explicit metadata and dummy auth make restoration independent of catalog
+  // versions and user credentials. Port 1 is deliberately not a model endpoint.
+  await writeJson(join(agentDir, "models.json"), { providers: { anthropic: {
+    api: "anthropic-messages", baseUrl: "http://127.0.0.1:1", apiKey: "screenshot-demo-not-a-real-key",
+    models: [{ id: DEMO_MODEL, name: "Claude Sonnet 4.6", reasoning: true,
+      input: ["text", "image"], contextWindow: 200000, maxTokens: 16384,
+      cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 } }],
+  } } });
+  await writeJson(join(agentDir, "settings.json"), {
+    defaultProvider: "anthropic", defaultModel: DEMO_MODEL,
+    cacheWarming: "off",
+    enableInstallTelemetry: false,
+  });
+}
+
+async function assertDemoStatus(cdp) {
+  const status = await evaluate(cdp, `(() => {
+    const queryDeep = (root, selector) => {
+      const match = root.querySelector(selector);
+      if (match) return match;
+      for (const element of root.querySelectorAll("*")) {
+        const nested = element.shadowRoot && queryDeep(element.shadowRoot, selector);
+        if (nested) return nested;
+      }
+    };
+    const bar = queryDeep(document, "status-bar");
+    return { status: bar?.status, text: bar?.shadowRoot?.textContent };
+  })()`);
+  if (status?.status?.model?.id !== DEMO_MODEL || status.status.model.provider !== "anthropic"
+    || status.status.contextUsage?.contextWindow !== 200000 || status.status.contextUsage?.percent == null
+    || /unknown/i.test(status.text ?? "")) {
+    throw new Error(`Demo model/context did not restore: ${JSON.stringify(status)}`);
+  }
+  console.log(`Verified demo context: ${status.text.trim().replaceAll(/\s+/g, " ")}`);
 }
 
 function chromeArgs(debugPort, userDataDir) {
@@ -433,7 +524,7 @@ function chromeArgs(debugPort, userDataDir) {
 
 function startChild(name, command, childArgs, { env, cwd, logsDir }) {
   const logPath = join(logsDir, `${name}.log`);
-  const child = spawn(command, childArgs, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(command, childArgs, { cwd, env, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"] });
   children.add(child);
   const chunks = [];
   const collect = (chunk) => {
@@ -445,7 +536,7 @@ function startChild(name, command, childArgs, { env, cwd, logsDir }) {
   child.stdout.on("data", (chunk) => appendLog(logPath, chunk));
   child.stderr.on("data", (chunk) => appendLog(logPath, chunk));
   child.once("exit", (code, signal) => {
-    children.delete(child);
+    // Retain the process group even if npm exits before its descendants.
     if (!cleanedUp && code !== 0 && signal === null) {
       const recent = Buffer.concat(chunks).toString("utf8").trim();
       console.error(`${name} exited with code ${code}. Recent log:\n${recent}`);
@@ -468,14 +559,17 @@ async function cleanup() {
 }
 
 async function terminate(child) {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  child.kill("SIGTERM");
-  await Promise.race([
-    new Promise((resolve) => child.once("exit", resolve)),
-    sleep(2500).then(() => {
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-    }),
-  ]);
+  const signal = (value) => {
+    if (child.pid === undefined) return;
+    try {
+      if (process.platform !== "win32") process.kill(-child.pid, value);
+      else child.kill(value);
+    } catch (error) { if (error.code !== "ESRCH") throw error; }
+  };
+  signal("SIGTERM");
+  // npm supervisors and Chromium workers can outlive their group leader.
+  await sleep(3000);
+  signal("SIGKILL");
 }
 
 async function waitForHttp(url, timeoutMs) {
@@ -611,14 +705,11 @@ function iso(ms) {
   return new Date(ms).toISOString();
 }
 
-function zeroUsage() {
+function demoUsage() {
+  // Seeded illustration, not measured usage or a real model completion.
   return {
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    totalTokens: 0,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    input: 2400, output: 180, cacheRead: 0, cacheWrite: 0, totalTokens: 2580,
+    cost: { input: 0.0072, output: 0.0027, cacheRead: 0, cacheWrite: 0, total: 0.0099 },
   };
 }
 
@@ -627,8 +718,12 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--help" || arg === "-h") {
-      console.log(`Usage: node scripts/capture-screenshots.mjs [--output-dir docs/assets] [--site-url https://pi-web.dev/] [--keep-temp] [--chrome-bin /path/to/chrome]\n\nCaptures desktop, tablet, and mobile scenes each in PI WEB Dark, PI WEB Light, Paper, and Graphite, plus legacy dark screenshots and a hard-cut GIF for each device (3 seconds per theme). Requires Chromium, Python 3, and Pillow. Uses an isolated temporary instance.`);
+      console.log(`Usage: node scripts/capture-screenshots.mjs [--output-dir docs/assets] [--homepage-only] [--site-url http://localhost:PORT/site/] [--keep-temp] [--chrome-bin /path/to/chrome]\n\nCaptures desktop, tablet, and mobile scenes each in PI WEB Dark, PI WEB Light, Paper, and Graphite, plus legacy dark screenshots and a hard-cut GIF for each device (3 seconds per theme). Default scene previews source code; --site-url explicitly opts into capturing a website. --homepage-only writes just desktop/mobile PI WEB light/dark PNGs and does not need Python/Pillow. Full theme animations require Python 3 and Pillow. Requires Chromium and installed npm dependencies. Builds and runs a disposable checkout with isolated home, profile, data, socket and ports; seeds demo model/usage without sending prompts.`);
       process.exit(0);
+    }
+    if (arg === "--homepage-only") {
+      parsed.homepageOnly = true;
+      continue;
     }
     if (arg === "--keep-temp") {
       parsed.keepTemp = true;
@@ -685,16 +780,8 @@ function shellQuote(value) {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function assertExecutable(path, message) {
-  if (!existsSync(path)) fail(`${path} was not found. ${message}`);
-}
-
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function escapeHtml(value) {
-  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 
 function fail(message) {
