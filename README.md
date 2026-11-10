@@ -10,14 +10,20 @@
 
 Run agents where your code, tools, credentials, and build caches live. Supervise multiple sessions from any browser, even after disconnecting.
 
-![The same PI WEB workspace in PI WEB Dark, PI WEB Light, Paper, and Graphite themes](docs/assets/pi-web-themes.gif)
-
 <p align="center">
-  <img src="docs/assets/pi-web-tablet-pi-web-dark.png" alt="PI WEB on tablet, with sessions beside chat" width="400" />
-  <img src="docs/assets/pi-web-mobile-pi-web-dark.png" alt="PI WEB on phone, with chat and message controls" width="139" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/pi-web-desktop-pi-web-dark.png" />
+    <img src="docs/assets/pi-web-desktop-pi-web-light.png" alt="PI WEB on desktop, with projects and sessions beside chat and a source-code preview" width="560" />
+  </picture>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/pi-web-mobile-pi-web-dark.png" />
+    <img src="docs/assets/pi-web-mobile-pi-web-light.png" alt="The same example session on a phone, with chat and message controls" width="162" />
+  </picture>
 </p>
 
-[Explore devices and themes](https://pi-web.dev/)
+*Example session shown on desktop and phone.*
+
+[See the desktop and phone interfaces](https://pi-web.dev/#interface)
 
 ## Quick start
 

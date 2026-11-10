@@ -3,42 +3,32 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PI WEB — web UI for Pi Coding Agent</title>
-    <meta
-      name="description"
-      content="PI WEB is a web UI for Pi Coding Agent that keeps agent sessions running in real workspaces on your machine or server."
-    />
+    <title>PI WEB — Web UI for Pi Coding Agent</title>
+    <meta name="description" content="Your agents. Any device. Run Pi Coding Agent on your computer or server, then manage sessions and review work from your laptop, tablet, or phone." />
     <link rel="canonical" href="https://pi-web.dev/" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="PI WEB" />
-    <meta property="og:title" content="PI WEB — web UI for Pi Coding Agent" />
-    <meta
-      property="og:description"
-      content="Run persistent Pi Coding Agent sessions in real workspaces and supervise them from any browser."
-    />
+    <meta property="og:title" content="PI WEB — Web UI for Pi Coding Agent" />
+    <meta property="og:description" content="Your agents. Any device. Keep your agents and projects on your computer or server, and access them from your laptop, tablet, or phone." />
     <meta property="og:url" content="https://pi-web.dev/" />
     <meta property="og:image" content="https://pi-web.dev/assets/pi-web-banner.png" />
-    <meta property="og:image:alt" content="PI WEB browser UI for persistent Pi Coding Agent sessions" />
+    <meta property="og:image:alt" content="PI WEB, a web interface for Pi Coding Agent" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="PI WEB — web UI for Pi Coding Agent" />
-    <meta
-      name="twitter:description"
-      content="Run persistent Pi Coding Agent sessions in real workspaces and supervise them from any browser."
-    />
+    <meta name="twitter:title" content="PI WEB — Web UI for Pi Coding Agent" />
+    <meta name="twitter:description" content="Your agents. Any device. Keep your agents and projects on your computer or server, and access them from your laptop, tablet, or phone." />
     <meta name="twitter:image" content="https://pi-web.dev/assets/pi-web-banner.png" />
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
         "@type": "SoftwareApplication",
         "name": "PI WEB",
-        "alternateName": ["Pi web UI", "Pi Coding Agent web UI"],
+        "alternateName": ["Pi web UI", "Pi Coding Agent web interface"],
         "applicationCategory": "DeveloperApplication",
         "operatingSystem": "Linux, macOS, Windows WSL",
         "url": "https://pi-web.dev/",
         "downloadUrl": "https://www.npmjs.com/package/@jmfederico/pi-web",
         "codeRepository": "https://github.com/jmfederico/pi-web",
-        "description": "PI WEB is a web UI for Pi Coding Agent that keeps persistent agent sessions running in real workspaces on your machine or server.",
-        "softwareRequirements": "Node.js 22.19.0 or newer and Pi Coding Agent 1.x",
+        "description": "PI WEB is a web interface for Pi Coding Agent. Run agents on your computer or server and manage their sessions, projects, and work from any device with a browser.",
         "license": "https://github.com/jmfederico/pi-web/blob/main/LICENSE"
       }
     </script>
@@ -51,346 +41,171 @@
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700;800&display=swap"
-      rel="stylesheet"
-    />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="home.css" />
   </head>
-  <body class="home-page">
+  <body class="landing-page">
+    <a class="skip-link" href="#main">Skip to content</a>
     <header class="site-header">
       <nav class="container nav" aria-label="Main navigation">
         <a class="brand" href="./" aria-label="PI WEB home">PI WEB</a>
         <div class="nav-links">
           <div class="nav-pages">
-            <a href="remote-first">Remote-first</a>
-            <a href="machines">Fleet</a>
-            <a href="install">Install</a>
-            <a href="config">Config</a>
+            <a href="install">Docs</a>
             <a href="community-plugins">Plugins</a>
-            <a href="faq">FAQ</a>
+            <a href="https://github.com/jmfederico/pi-web">GitHub</a>
           </div>
           <div class="nav-actions">
-            <a class="github-link" href="https://github.com/jmfederico/pi-web" aria-label="PI WEB on GitHub">
-              <svg class="github-icon" viewBox="0 0 16 16" aria-hidden="true">
-                <path
-                  fill="currentColor"
-                  d="M8 0C3.58 0 0 3.67 0 8.2c0 3.63 2.29 6.7 5.47 7.79.4.08.55-.18.55-.4 0-.2-.01-.85-.01-1.55-2.01.38-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.16-.28-.16-.68-.56-.01-.57.63-.01 1.08.59 1.23.84.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.04 0-.89.31-1.62.82-2.2-.08-.2-.36-1.03.08-2.16 0 0 .67-.22 2.2.84A7.4 7.4 0 0 1 8 3.94c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.13.16 1.96.08 2.16.51.58.82 1.31.82 2.2 0 3.14-1.87 3.83-3.65 4.04.29.26.54.76.54 1.53 0 1.1-.01 1.99-.01 2.27 0 .22.15.49.55.4A8.12 8.12 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z"
-                />
-              </svg>
-              <span>GitHub</span>
-            </a>
-            <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle light and dark theme">
+            <button class="theme-toggle" type="button" data-theme-toggle aria-label="Change theme">
               <span data-theme-icon aria-hidden="true">◐</span>
               <span data-theme-label>Theme</span>
             </button>
+            <a class="button primary nav-start" href="install">Get started <span aria-hidden="true">↗</span></a>
           </div>
         </div>
       </nav>
     </header>
 
-    <main>
-      <section class="hero">
-        <div class="container hero-grid">
-          <div>
-            <p class="eyebrow"><span class="pulse"></span> Pi Coding Agent web UI</p>
-            <h1>
-              <span class="title-context">The web UI for</span>
-              <span class="gradient-text intro-target" aria-label="Pi Coding Agent sessions that keep working.">
-                <span class="intro-word" style="--i: 0">Pi</span>
-                <span class="intro-word" style="--i: 1">Coding</span>
-                <span class="intro-word" style="--i: 2">Agent</span>
-                <span class="intro-word" style="--i: 3">sessions</span>
-                <span class="intro-word" style="--i: 4">that</span>
-                <span class="intro-word" style="--i: 5">keep</span>
-                <span class="intro-word" style="--i: 6">working.</span>
-              </span>
-            </h1>
-            <p class="hero-lede">
-              PI WEB keeps Pi Coding Agent sessions running in real server-side workspaces, even after your browser
-              leaves, and gives you a fast web UI to supervise, redirect, and review work from any device.
-            </p>
-            <p class="hero-manifesto">
-              Local development made sense when humans drove every keystroke. Agentic development works better when the
-              environment is persistent, remote, and always available.
-            </p>
-            <div class="hero-actions">
-              <a class="button primary" href="#quick-install">Install in minutes</a>
-              <a class="button" href="install">Read the docs</a>
-            </div>
-            <div class="hero-stats" aria-label="Highlights">
-              <div class="stat"><strong>Persistent</strong><span>sessions survive browser disconnects</span></div>
-              <div class="stat"><strong>Parallel</strong><span>projects, worktrees, and agents</span></div>
-              <div class="stat"><strong>Yours</strong><span>runs on your machine or server</span></div>
-            </div>
-          </div>
-
-          <aside class="terminal" aria-label="PI WEB install preview">
-            <div class="terminal-top">
-              <div class="dots"><span></span><span></span><span></span></div>
-              <span>agent-hub.local</span>
-            </div>
-            <pre><code><span class="prompt">$</span> pi-web status
-✓ session daemon running
-✓ web server listening on 127.0.0.1:8504
-
-<span class="prompt">$</span> open http://127.0.0.1:8504
-# laptop, phone, tablet — same live sessions
-
-<span class="prompt">$</span> pi-web doctor
-✓ caller login shell can find node >= 22.19.0
-✓ native-service plan requirements pass in manager context
-✓ ready for persistent agent work</code></pre>
-          </aside>
+    <main id="main">
+      <section class="welcome container" aria-labelledby="welcome-title">
+        <p class="overline">For Pi Coding Agent</p>
+        <h1 id="welcome-title">A web interface<br />for your AI agents.</h1>
+        <p class="welcome-copy">Manage your agents from your computer, tablet, or phone. Switch devices and pick up any session. <strong>Your agents. Any device.</strong></p>
+        <div class="welcome-actions">
+          <a class="button primary" href="install">Get started <span aria-hidden="true">↗</span></a>
         </div>
+        <p class="welcome-note">Your computer or server. Your projects. Any browser.</p>
       </section>
 
-      <section class="section compact">
-        <div class="container">
-          <div class="demo-frame" data-demo-carousel>
-            <div class="demo-caption">
-              <div class="demo-caption-copy">
-                <strong>Workspaces, sessions, transcripts, files — one Pi web UI on every screen.</strong>
-                <span>Choose a screen size, switch screenshot colors, or open the image to enlarge.</span>
-              </div>
-              <div class="demo-controls" data-demo-controls hidden role="group" aria-label="Screenshot controls">
-                <div class="demo-devices" role="group" aria-label="Screenshot screen size">
-                  <button class="demo-control demo-device" type="button" data-demo-device="desktop" aria-label="Desktop" title="Desktop" aria-pressed="true">
-                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="9" rx="1" /><path d="M8 11.5v3M5 14.5h6" /></svg>
-                  </button>
-                  <button class="demo-control demo-device" type="button" data-demo-device="tablet" aria-label="Tablet" title="Tablet" aria-pressed="false">
-                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="1.5" width="10" height="13" rx="1.5" /><path d="M7 12h2" /></svg>
-                  </button>
-                  <button class="demo-control demo-device" type="button" data-demo-device="mobile" aria-label="Mobile" title="Mobile" aria-pressed="false">
-                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4.5" y="1.5" width="7" height="13" rx="1.5" /><path d="M7 12h2" /></svg>
-                  </button>
+      <section id="quick-install" class="container quick-install" aria-label="Install PI WEB">
+        <div class="install-command">
+          <pre id="home-install"><code>curl -fsSL https://raw.githubusercontent.com/jmfederico/pi-web/main/install.sh | sh</code></pre>
+          <button class="copy-button" type="button" data-copy="#home-install">Copy</button>
+        </div>
+        <a class="text-link" href="install#one-line" aria-label="More installation details">More <span aria-hidden="true">↗</span></a>
+      </section>
+
+      <section id="interface" class="container product-section" aria-labelledby="product-title">
+        <div class="product-heading">
+          <div><p class="overline">A workspace for agent work</p><h2 id="product-title">Several sessions.<br />One place to work.</h2></div>
+          <p>Let one agent fix a bug while another updates the docs in a separate worktree. Switch sessions to review progress and give the next instruction.</p>
+        </div>
+        <div class="product-screenshots">
+          <figure class="product-desktop">
+            <a class="screenshot-link screenshot-dark" href="assets/pi-web-desktop-pi-web-dark.png" target="_blank" rel="noopener" aria-label="Open desktop screenshot at full size (new tab)">
+              <img src="assets/pi-web-desktop-pi-web-dark.png" width="1440" height="900" loading="lazy" alt="PI WEB desktop with projects and sessions beside the conversation and workspace file preview" />
+            </a>
+            <a class="screenshot-link screenshot-light" href="assets/pi-web-desktop-pi-web-light.png" target="_blank" rel="noopener" aria-label="Open desktop screenshot at full size (new tab)">
+              <img src="assets/pi-web-desktop-pi-web-light.png" width="1440" height="900" loading="lazy" alt="PI WEB desktop with projects and sessions beside the conversation and workspace file preview" />
+            </a>
+            <figcaption>Desktop · Conversation and files, side by side.</figcaption>
+          </figure>
+          <figure class="product-mobile">
+            <a class="screenshot-link screenshot-dark" href="assets/pi-web-mobile-pi-web-dark.png" target="_blank" rel="noopener" aria-label="Open phone screenshot at full size (new tab)">
+              <img src="assets/pi-web-mobile-pi-web-dark.png" width="390" height="844" loading="lazy" alt="The same PI WEB session on a phone, with its conversation and message controls" />
+            </a>
+            <a class="screenshot-link screenshot-light" href="assets/pi-web-mobile-pi-web-light.png" target="_blank" rel="noopener" aria-label="Open phone screenshot at full size (new tab)">
+              <img src="assets/pi-web-mobile-pi-web-light.png" width="390" height="844" loading="lazy" alt="The same PI WEB session on a phone, with its conversation and message controls" />
+            </a>
+            <figcaption>Phone · The same session, ready for your next instruction.</figcaption>
+          </figure>
+        </div>
+        <p class="screenshot-hint">Select a screenshot to open it at full size in a new tab. Screenshots show an example session.</p>
+        <dl class="product-capabilities">
+          <div><dt>Projects and worktrees</dt><dd>Choose where each agent works. Keep independent tasks in separate Git worktrees.</dd></div>
+          <div><dt>Sessions and instructions</dt><dd>Read the conversation, follow tool activity, and send the next instruction without switching apps.</dd></div>
+          <div><dt>Files and tools</dt><dd>Preview workspace files alongside the chat. Open a terminal, inspect changes, and check context usage and costs.</dd></div>
+        </dl>
+      </section>
+
+      <section id="how-it-works" class="container device-flow" aria-labelledby="flow-title">
+        <div class="flow-heading">
+          <h2 id="flow-title">Change devices.<br />Keep the conversation.</h2>
+          <p>No copying messages. No starting over.<br />Just open PI WEB in the next browser.</p>
+        </div>
+        <ol class="flow-stages">
+          <li class="flow-stage">
+            <div class="device-scene" aria-hidden="true">
+              <div class="mock-device mock-desktop">
+                <div class="mock-browser-bar"><span></span><span></span><span></span><b>PI WEB</b></div>
+                <div class="device-content">
+                  <span class="session-tag">Your session</span>
+                  <svg class="device-action" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m8 22 32-14-14 32-5-13-13-5Z" /><path d="m21 27 19-19" /></svg>
+                  <span class="device-status">Task sent</span>
                 </div>
-                <button class="demo-control demo-rotation" type="button" data-demo-rotation data-paused="false" aria-label="Pause rotation" title="Pause rotation">
-                  <svg viewBox="0 0 16 16" aria-hidden="true"><path class="demo-pause-icon" d="M5 3v10M11 3v10" /><path class="demo-play-icon" d="m5 3 8 5-8 5Z" /></svg>
-                </button>
-                <button class="demo-control" type="button" data-demo-colors aria-label="Show light screenshots" title="Show light screenshots">
-                  <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5" /><path d="M8 2.5a5.5 5.5 0 0 1 0 11Z" fill="currentColor" stroke="none" /></svg>
-                </button>
-                <button class="demo-control" type="button" data-demo-prev aria-label="Previous theme">‹</button>
-                <div class="demo-dots" role="group" aria-label="Choose screenshot theme">
-                  <button class="demo-dot" type="button" data-demo-dot="pi-web-dark" data-demo-scheme="dark" data-demo-theme="PI WEB Dark" aria-label="Show PI WEB Dark theme" aria-current="true"></button>
-                  <button class="demo-dot" type="button" data-demo-dot="pi-web-light" data-demo-scheme="light" data-demo-theme="PI WEB Light" aria-label="Show PI WEB Light theme" aria-current="false"></button>
-                  <button class="demo-dot" type="button" data-demo-dot="paper" data-demo-scheme="light" data-demo-theme="Paper" aria-label="Show Paper theme" aria-current="false"></button>
-                  <button class="demo-dot" type="button" data-demo-dot="graphite" data-demo-scheme="dark" data-demo-theme="Graphite" aria-label="Show Graphite theme" aria-current="false"></button>
+              </div>
+            </div>
+            <div class="flow-step"><span class="step-number" aria-hidden="true">01</span><h3>Send from your computer.</h3></div>
+            <p>Give an agent a task from the computer you’re using.</p>
+          </li>
+          <li class="flow-stage">
+            <div class="device-scene" aria-hidden="true">
+              <div class="mock-device mock-tablet">
+                <div class="device-content">
+                  <span class="session-tag">Your session</span>
+                  <svg class="device-action" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="11" y="6" width="26" height="36" rx="3" /><path d="M18 16h12M18 23h12M18 30h7" /></svg>
+                  <span class="device-status">Response ready</span>
                 </div>
-                <button class="demo-control" type="button" data-demo-next aria-label="Next theme">›</button>
               </div>
             </div>
-            <div class="demo-gallery" data-demo-gallery aria-live="off">
-              <figure class="demo-shot">
-                <div class="demo-shot-media">
-                  <button class="demo-lightbox-trigger" type="button" data-demo-lightbox-trigger aria-label="Open screenshot preview" disabled>
-                    <img
-                      src="assets/pi-web-desktop-pi-web-dark.png"
-                      width="1440" height="900"
-                      alt="PI WEB desktop workspace in PI WEB Dark theme, with chat beside a file preview"
-                    />
-                  </button>
+            <div class="flow-step"><span class="step-number" aria-hidden="true">02</span><h3>Read on your tablet.</h3></div>
+            <p>Pick up your tablet and read the agent’s response in the same conversation.</p>
+          </li>
+          <li class="flow-stage">
+            <div class="device-scene" aria-hidden="true">
+              <div class="mock-device mock-phone">
+                <div class="device-content">
+                  <span class="session-tag">Your session</span>
+                  <svg class="device-action" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m20 12-12 10 12 10M8 22h18c9 0 14 5 14 14" /></svg>
+                  <span class="device-status">Reply sent</span>
                 </div>
-                <figcaption><strong data-demo-theme-caption>PI WEB Dark</strong><span data-demo-device-caption>Desktop — Chat beside workspace file preview.</span></figcaption>
-              </figure>
-            </div>
-            <dialog class="demo-lightbox" data-demo-lightbox aria-label="Screenshot preview">
-              <div class="demo-lightbox-panel">
-                <button class="demo-lightbox-close" type="button" data-demo-lightbox-close aria-label="Close screenshot preview">×</button>
-                <img data-demo-lightbox-image alt="" />
-                <p data-demo-lightbox-caption></p>
               </div>
-            </dialog>
-          </div>
-        </div>
-      </section>
-
-      <section class="section manifesto-section" aria-labelledby="manifesto-title">
-        <div class="container manifesto-panel">
-          <div class="manifesto-copy">
-            <p class="eyebrow"><span class="pulse"></span> The mental shift</p>
-            <h2 id="manifesto-title">Developer tools were built for a world that no longer exists.</h2>
-            <p>
-              Editors and terminals assume the work lives with you, on your device, inside your session. AI agents break
-              that assumption: their work should persist, continue, and evolve independently of your laptop.
-            </p>
-            <p>
-              PI WEB makes persistence first-class. Sessions live outside the browser, agents keep working, and every
-              device becomes a control surface for supervising, redirecting, and reviewing progress.
-            </p>
-          </div>
-          <div class="manifesto-lines" aria-label="PI WEB principles">
-            <p>Persistence should not be something you bolt on after the fact.</p>
-            <p>The work should not disappear the moment your session ends.</p>
-            <p>You do not carry the work. You guide it.</p>
-          </div>
-        </div>
-      </section>
-
-      <section class="section">
-        <div class="container">
-          <div class="section-head">
-            <p class="eyebrow"><span class="pulse"></span> Remote AI-driven development</p>
-            <h2>Your laptop is a window, not the workstation.</h2>
-            <p>
-              Local-only development can become the blocker: one device owns the tools, terminals, build cache, editor,
-              and agent runtime. PI WEB moves the working environment to a machine that stays on, so agents can keep
-              making progress while every browser becomes a control surface.
-            </p>
-          </div>
-          <div class="cards">
-            <article class="card">
-              <div class="card-icon">▣</div>
-              <h3>The workstation becomes remote</h3>
-              <p>
-                Keep repositories, dependencies, secrets, build caches, and long-running agent sessions on the machine
-                designed to run them.
-              </p>
-            </article>
-            <article class="card">
-              <div class="card-icon">⇄</div>
-              <h3>Any browser can supervise the work</h3>
-              <p>
-                Your device is replaceable. The sessions are not. Move between laptop, phone, tablet, and desktop
-                without moving the development environment. Manage sessions, files, terminals, packages, and remote
-                machines from the same UI.
-              </p>
-            </article>
-            <article class="card">
-              <div class="card-icon">↯</div>
-              <h3>Agents become persistent workers</h3>
-              <p>
-                Start work, leave, return later, review progress, and keep multiple streams running in parallel from one
-                stable environment.
-              </p>
-            </article>
-          </div>
-          <div class="doc-actions">
-            <a class="button" href="remote-first">Read the remote-first philosophy</a>
-          </div>
-        </div>
-      </section>
-
-      <section class="section">
-        <div class="container">
-          <div class="section-head">
-            <p class="eyebrow"><span class="pulse"></span> Why it feels different</p>
-            <h2>Not another tab. A persistent place for agent work.</h2>
-          </div>
-          <div class="cards">
-            <article class="card">
-              <div class="card-icon">↻</div>
-              <h3>Come back later</h3>
-              <p>
-                Active sessions live in a long-running daemon, not in your browser tab. Close the lid, reconnect from a
-                phone, and continue supervising the same work.
-              </p>
-            </article>
-            <article class="card">
-              <div class="card-icon">⌘</div>
-              <h3>Use real workspaces</h3>
-              <p>
-                Add projects once, discover git worktrees automatically, and start agents where the code actually lives.
-              </p>
-            </article>
-            <article class="card">
-              <div class="card-icon" aria-hidden="true">
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  focusable="false"
-                >
-                  <circle cx="12" cy="12" r="6.5"></circle>
-                  <path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4"></path>
-                </svg>
-              </div>
-              <h3>Keep control</h3>
-              <p>
-                Watch transcript history, status, shell activity, context usage, and costs while redirecting the agent in
-                realtime.
-              </p>
-            </article>
-          </div>
-        </div>
-      </section>
-
-      <section id="quick-install" class="section">
-        <div class="container install-panel">
-          <div class="install-card">
-            <p class="eyebrow"><span class="pulse"></span> Quick install</p>
-            <h2>Run PI WEB as user services.</h2>
-            <ol>
-              <li>Install the package globally with npm.</li>
-              <li>Run the installer to create native per-user services.</li>
-              <li>Open the local URL, or tunnel it from a remote machine.</li>
-            </ol>
-            <div class="doc-actions">
-              <a class="button primary" href="install">Complete installation guide</a>
-              <a class="button" href="faq">Troubleshooting FAQ</a>
             </div>
-          </div>
-
-          <div class="terminal quick-install">
-            <div class="copy-row">
-              <strong>User service install</strong>
-              <button class="copy-button" data-copy="#home-install">Copy</button>
-            </div>
-            <pre id="home-install"><code><span class="prompt">$</span> npm install -g @jmfederico/pi-web --allow-scripts=node-pty
-<span class="prompt">$</span> pi-web install
-<span class="prompt">$</span> pi-web doctor
-<span class="prompt">$</span> pi-web version
-<span class="comment"># Open http://127.0.0.1:8504</span></code></pre>
-          </div>
-        </div>
+            <div class="flow-step"><span class="step-number" aria-hidden="true">03</span><h3>Reply from your phone.</h3></div>
+            <p>Send the next instruction from your phone. The conversation carries on.</p>
+          </li>
+        </ol>
       </section>
 
-      <section class="section compact">
-        <div class="container doc-grid">
-          <article class="doc-card">
-            <h3>WSL and containers?</h3>
-            <p>
-              Use <code>pi-web install</code> where a supported per-user service manager is available. WSL works with the
-              installer when systemd is enabled; otherwise use the manual run path.
-            </p>
-            <a href="faq#is-this-linux-only">Read compatibility notes →</a>
-          </article>
-          <article class="doc-card">
-            <h3>Make it your own</h3>
-            <p>
-              Build workflows around Pi and your sessions with custom web tools and backend processes.
-              Install a plugin or ask your agent to build one.
-            </p>
-            <a href="community-plugins">Find community plugins →</a>
-            <a href="plugins">Read the plugin guide →</a>
-          </article>
-          <article class="doc-card">
-            <h3>Node or tools not found?</h3>
-            <p>
-              Services run login shells. If tools work in your interactive terminal but not in PI WEB, fix PATH in your
-              login shell startup files and run the doctor command.
-            </p>
-            <a href="faq#tools-are-not-found">Fix PATH issues →</a>
-          </article>
+      <section class="container continuity-section" aria-labelledby="continuity-title">
+        <div class="benefit-copy">
+          <p class="overline">Choose your device</p>
+          <h2 id="continuity-title">Your work isn’t tied<br />to one device.</h2>
+          <p>Keep your agents, projects, and tools on your computer or server. Access them through a browser on any of your devices—without moving your setup or installing PI WEB on each one.</p>
+          <p class="benefit-note">The machine running PI WEB needs to stay on. Connect your devices through private remote access.</p>
+          <a class="text-link" href="install#remote-access">Set up remote access <span aria-hidden="true">↗</span></a>
+        </div>
+        <figure class="access-diagram" aria-label="A computer, tablet, and phone access the same agents and projects running on your computer or server.">
+          <div class="access-devices" aria-hidden="true">
+            <div><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.25"><rect x="4" y="5" width="24" height="17" rx="2" /><path d="M1 26h30M13 22v4m6-4v4" /></svg><span>Computer</span></div>
+            <div><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.25"><rect x="5" y="2" width="22" height="28" rx="3" /><path d="M13 26h6" /></svg><span>Tablet</span></div>
+            <div><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.25"><rect x="8" y="2" width="16" height="28" rx="3" /><path d="M13 6h6m-5 20h4" /></svg><span>Phone</span></div>
+          </div>
+          <div class="connection-line" aria-hidden="true"></div>
+          <div class="session-host" aria-hidden="true"><span class="host-label">PI WEB</span><strong><span class="session-dot"></span> Your agents and projects</strong><span>On your computer or server</span></div>
+        </figure>
+      </section>
+
+      <section class="ownership-section" aria-labelledby="ownership-title">
+        <div class="container ownership-grid">
+          <div><p class="overline">Make it yours</p><h2 id="ownership-title">Your projects.<br />Your tools. Your setup.</h2></div>
+          <div class="ownership-copy">
+            <p>PI WEB is a web UI for Pi Coding Agent, running where your files and tools already live. Add plugins when you need more, without leaving your workspace.</p>
+            <div class="ownership-links"><a class="text-link" href="community-plugins">Explore plugins <span aria-hidden="true">↗</span></a><a class="text-link" href="https://github.com/earendil-works/pi/tree/main/packages/coding-agent">Learn about Pi <span aria-hidden="true">↗</span></a></div>
+          </div>
         </div>
       </section>
     </main>
 
     <footer class="site-footer">
       <div class="container footer-inner">
-        <span>PI WEB · web UI for persistent Pi Coding Agent sessions.</span>
+        <div><a class="brand" href="./">PI WEB</a><p>A web interface for Pi Coding Agent.</p></div>
         <div class="footer-links">
-          <a href="remote-first">Remote-first</a>
-          <a href="machines">Fleet</a>
-          <a href="install">Install</a>
-          <a href="config">Config</a>
+          <a href="install">Documentation</a>
           <a href="community-plugins">Plugins</a>
           <a href="faq">FAQ</a>
-          <a href="https://www.npmjs.com/package/@jmfederico/pi-web">npm</a>
+          <a href="https://github.com/jmfederico/pi-web">GitHub</a>
           <span class="version-switcher" role="group" aria-label="Documentation version">
             <a class="version-switcher-option" data-version-option="stable" href="https://pi-web.dev/" aria-current="true">Stable</a>
             <a class="version-switcher-option" data-version-option="dev" href="https://pi-web.dev/dev/">Dev</a>

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { afterEach, expect, it, vi } from "vitest";
-import { trustApi } from "../api";
+import { trustApi, workspacesApi } from "../api";
 import { writeClipboardText } from "../clipboard";
 import { installPopoverFake } from "./anchoredPopup.testSupport";
 import { MachineList } from "./MachineList";
@@ -29,6 +29,7 @@ async function mount(kind: "machine" | "project" | "workspace" | "session") {
     list = new MachineList();
     list.machines = [{ id, name: "Local machine", kind: "local", createdAt: date, updatedAt: date }];
   } else if (kind === "project") {
+    vi.spyOn(workspacesApi, "workspaces").mockResolvedValue([]);
     list = new ProjectList();
     list.projects = [{ id, name: "Project", path: "/repo", createdAt: date }];
   } else if (kind === "workspace") {

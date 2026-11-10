@@ -19,12 +19,7 @@ import { listStyles } from "./shared";
 import { sidebarListStyles } from "./sidebarListStyles";
 import { renderWorkspaceLabelInlineItems } from "./workspaceLabel";
 
-interface WorkspaceTrustState {
-  loading?: boolean;
-  saving?: boolean;
-  trusted?: boolean;
-  error?: string;
-}
+import { renderTrustMenuControl, type TrustMenuState } from "./trustMenuControl";
 
 @customElement("workspace-list")
 export class WorkspaceList extends LitElement implements KeyboardNavigableSection {
@@ -58,7 +53,7 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
     return row?.querySelector<HTMLElement>(".action-menu-toggle") ?? undefined;
   }, () => { this.openMenuWorkspaceId = undefined; });
   @state() private copiedDetailKey: string | undefined;
-  @state() private trustByWorkspaceId: Record<string, WorkspaceTrustState> = {};
+  @state() private trustByWorkspaceId: Record<string, TrustMenuState> = {};
 
   private focusedControl: HTMLElement | undefined;
   private focusAfterReorder: HTMLElement | undefined;
@@ -209,40 +204,27 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
   }
 
   private renderTrustToggle(workspace: Workspace): TemplateResult {
-    const trust = this.trustByWorkspaceId[workspace.id];
-    const busy = trust?.loading === true || trust?.saving === true;
-    const inputId = `${workspaceMenuId(workspace.id)}-trusted`;
-    const helpId = `${inputId}-help`;
-    const errorId = `${inputId}-error`;
     return html`
       <div class="workspace-menu-trust">
-        <label class="action-menu-checkbox ui-menu-item" data-busy=${busy} for=${inputId}>
-          <span>${busy ? messages.t("trustedBusy") : messages.t("trusted")}</span>
-          <input
-            id=${inputId}
-            type="checkbox"
-            aria-describedby=${trust?.error === undefined ? helpId : `${helpId} ${errorId}`}
-            .checked=${trust?.trusted === true}
-            ?disabled=${busy || trust?.trusted === undefined}
-            @change=${(event: Event) => { if (event.target instanceof HTMLInputElement) void this.setTrust(workspace, event.target.checked); }}
-          />
-        </label>
-        <div class="action-menu-description" id=${helpId}>
-          <a href="https://pi.dev/docs/latest/security" target="_blank" rel="noreferrer">${messages.t("learnTrust")}</a>
-        </div>
-        ${trust?.error === undefined ? null : html`<div class="action-menu-description action-menu-error" id=${errorId} role="alert">${trust.error}</div>`}
+        ${renderTrustMenuControl({
+          id: `${workspaceMenuId(workspace.id)}-trusted`,
+          state: this.trustByWorkspaceId[workspace.id],
+          label: messages.t("trusted"),
+          busyLabel: messages.t("trustedBusy"),
+          onChange: (trusted) => { void this.setTrust(workspace, trusted); },
+        })}
       </div>
     `;
   }
 
   /** Fields worth carrying across a loading/saving transition, minus any prior error. */
-  private trustBase(state: WorkspaceTrustState | undefined): WorkspaceTrustState {
+  private trustBase(state: TrustMenuState | undefined): TrustMenuState {
     return {
       ...(state?.trusted === undefined ? {} : { trusted: state.trusted }),
     };
   }
 
-  private setTrustState(workspaceId: string, state: WorkspaceTrustState): void {
+  private setTrustState(workspaceId: string, state: TrustMenuState): void {
     this.trustByWorkspaceId = { ...this.trustByWorkspaceId, [workspaceId]: state };
   }
 

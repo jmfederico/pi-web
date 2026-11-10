@@ -37,6 +37,8 @@ Put installation variants, troubleshooting, configuration details, operational b
 
 Use `.agents/skills/documentation-guide/SKILL.md` whenever writing, modifying, reviewing, or planning user-facing documentation.
 
+For website design and styling, follow `.interface-design/system.md` and use `docs/design-system.html` as the working reference. Shared website foundations belong in `docs/styles.css`; page-specific homepage composition belongs in `docs/home.css`.
+
 ## Testing guidance
 
 Read and follow [testing policy](docs/testing.md) whenever adding, changing, planning, reviewing, or reassessing tests, triaging failures, or creating test helpers.
