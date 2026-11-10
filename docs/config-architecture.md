@@ -1,6 +1,6 @@
 # Configuration architecture
 
-Target architecture for implementation agents. This is an agreed design, not a statement that all current configuration paths implement it. See [config.md](config.md) for current supported behavior and [config-audit.md](config-audit.md) for the setting inventory and migration assessment.
+Target architecture for implementation agents. This is an agreed design, not a statement that all current configuration paths implement it. See [config.md](config.md) for current supported behavior.
 
 ## Sources and precedence
 

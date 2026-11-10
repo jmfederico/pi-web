@@ -1,15 +1,14 @@
 # Agent Notes
 
-This project is expected to run locally using split systemd user services:
+## Runtime and development environment
 
-- `pi-web-sessiond.service` runs `npm run start:sessiond` in non-autoreload, non-auto-restart mode.
-- `pi-web-ui-dev.service` runs the web/API and Vite UI in dev autoreload mode with `npm run dev:web` and `npm run dev:client`.
+Development may run through Docker, systemd, macOS native services, or directly launched processes. Do not assume the operating system, process manager, service names, or autoreload behavior from the checkout or a previous session. Inspect the current environment and running processes before recommending commands, starting services, or changing runtime state. Distinguish the current container, host, and any remote target.
 
-When working on this project, assume the session runtime owner is long-lived and separate from the autoreloading UI/API process. Browser disconnects and UI/API restarts should not stop active Pi sessions.
+The session daemon owns active Pi sessions separately from the web/API/UI. Browser disconnects and web/API/UI restarts should not stop active Pi sessions. Check which processes an operation affects; a grouped restart may include the daemon.
 
-If you make changes that affect `src/server/sessiond.ts`, session runtime ownership, the session daemon protocol, or any code path only loaded by the session daemon, inform the user that a manual restart of the session daemon is needed.
+If you make changes that affect `src/server/sessiond.ts`, session runtime ownership, the session daemon protocol, or any code path only loaded by the session daemon, inform the user that the target daemon must reload the changed code. Determine whether that setup watches those files or requires a manual restart; do not assume either behavior. Do not restart or stop the daemon hosting this session without explicit user authorization, and warn that doing so interrupts active sessions and terminals.
 
-Changes to the web/API/UI side generally only require the `pi-web-ui-dev.service` autoreload/restart path.
+Web/API/UI-only changes generally need only that layer's reload, rebuild, or restart, depending on the actual setup. Use the commands and activation guidance in [development checks](docs/development-checks.md#development-startup); do not restart the session daemon unnecessarily.
 
 ## Human-facing communication
 
