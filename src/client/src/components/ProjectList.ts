@@ -122,7 +122,7 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
                   @focusout=${() => { this.focusedControl = undefined; }}
                   title=${project.path}
                   @pointerdown=${(event: PointerEvent) => { this.reorder.begin(event, project); }}
-                  @lostpointercapture=${() => { this.reorder.cancel(); }}
+                  @lostpointercapture=${(event: PointerEvent) => { this.reorder.handleLostPointerCapture(event); }}
                   @contextmenu=${(event: MouseEvent) => { if (this.reorder.draggingId !== undefined) event.preventDefault(); }}
                   @click=${(event: MouseEvent) => {
                     if (this.reorder.consumeClick()) { event.preventDefault(); event.stopPropagation(); return; }

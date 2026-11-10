@@ -135,7 +135,7 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
                   data-reorder-id=${this.onReorder === undefined ? nothing : workspace.id}
                   data-reorderable=${String(this.onReorder !== undefined)}
                   @pointerdown=${(event: PointerEvent) => { this.reorder.begin(event, workspace); }}
-                  @lostpointercapture=${() => { this.reorder.cancel(); }}
+                  @lostpointercapture=${(event: PointerEvent) => { this.reorder.handleLostPointerCapture(event); }}
                   @contextmenu=${(event: MouseEvent) => { if (this.reorder.draggingId !== undefined) event.preventDefault(); }}
                   @focusin=${(event: FocusEvent) => { this.focusedControl = event.target instanceof HTMLElement ? event.target : undefined; }}
                   @focusout=${() => { this.focusedControl = undefined; }}

@@ -616,7 +616,7 @@ describe("drag cancellation and ownership", () => {
     ["list membership change", (list: ProjectList) => { list.projects = [project("c")]; }],
     ["disconnect", (list: ProjectList) => { list.remove(); }],
     ["window blur", () => { window.dispatchEvent(new Event("blur")); }],
-    ["lost capture", (list: ProjectList) => { rowFor(list, "b").dispatchEvent(new PointerEvent("lostpointercapture")); }],
+    ["lost capture", (list: ProjectList) => { rowFor(list, "b").dispatchEvent(new PointerEvent("lostpointercapture", { pointerId: 1 })); }],
   ])("cancels an active touch drag on %s and releases scroll ownership", async (_reason, cancel) => {
     vi.useFakeTimers();
     try {
@@ -645,6 +645,24 @@ describe("drag cancellation and ownership", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("ignores descendant capture transfers and other pointers, but cancels loss of the owned row capture", async () => {
+    const list = await mountProjectList([project("a"), project("b")], undefined);
+    list.onReorder = vi.fn();
+    await stubRowRects(list);
+    const row = rowFor(list, "b");
+    pointer(row, "pointerdown", 60);
+    pointer(document.body, "pointermove", 10);
+    row.querySelector(".action-name")?.dispatchEvent(new PointerEvent("lostpointercapture", { pointerId: 1, bubbles: true }));
+    row.dispatchEvent(new PointerEvent("lostpointercapture", { pointerId: 2, bubbles: true }));
+    await list.updateComplete;
+    expect(list.shadowRoot?.querySelector(".list-drag-preview")).not.toBeNull();
+    row.dispatchEvent(new PointerEvent("lostpointercapture", { pointerId: 1, bubbles: true }));
+    await list.updateComplete;
+    expect(list.shadowRoot?.querySelector(".list-drag-preview")).toBeNull();
+    pointer(document.body, "pointerup", 10);
+    expect(list.onReorder).not.toHaveBeenCalled();
   });
 
   it("clears a pending long press when the list is disconnected", async () => {

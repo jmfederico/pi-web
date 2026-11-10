@@ -533,7 +533,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
         data-reorder-group-id=${reorderGroupId ?? nothing}
         data-reorderable=${String(reorderable)}
         @pointerdown=${(event: PointerEvent) => { this.reorder.begin(event, session); }}
-        @lostpointercapture=${() => { this.reorder.cancel(); }}
+        @lostpointercapture=${(event: PointerEvent) => { this.reorder.handleLostPointerCapture(event); }}
         @contextmenu=${(event: MouseEvent) => { if (this.reorder.draggingId !== undefined) event.preventDefault(); }}
         data-current=${this.selected?.id === session.id}
         aria-current=${this.selected?.id === session.id ? "true" : nothing}

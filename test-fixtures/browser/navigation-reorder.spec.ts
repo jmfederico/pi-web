@@ -181,6 +181,34 @@ test("edge autoscroll reaches a hidden final row and keeps the insertion target 
   await expect.poll(async () => (await order(page)).at(-1)).toBe("1");
 });
 
+test("wheel scrolling keeps the insertion marker aligned with the eventual drop", async ({ page }) => {
+  await open(page, "?long");
+  const body = page.locator("project-list .list-body");
+  const start = await point(page.locator('[data-reorder-id="1"]'));
+  const end = await point(page.locator('[data-reorder-id="4"]'), "top");
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(end.x, end.y, { steps: 6 });
+  const marker = page.locator("[data-reorder-id].drop-before");
+  await expect(marker).toHaveAttribute("data-reorder-id", "4");
+  await page.mouse.wheel(0, 180);
+  await expect.poll(() => body.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect(marker).not.toHaveAttribute("data-reorder-id", "4");
+  const neighborId = await marker.getAttribute("data-reorder-id");
+  const markerBox = await marker.boundingBox();
+  const bodyBox = await body.boundingBox();
+  if (!markerBox || !bodyBox) throw new Error("Missing drop marker geometry");
+  expect(markerBox.y).toBeGreaterThanOrEqual(bodyBox.y);
+  expect(markerBox.y).toBeLessThan(bodyBox.y + bodyBox.height);
+  await page.mouse.up();
+  await expect.poll(async () => {
+    const ids = await order(page);
+    return ids[ids.indexOf("1") + 1];
+  }).toBe(neighborId);
+  await expect(page.locator(".list-drag-preview")).toHaveCount(0);
+  await expect(page.locator("[data-reorder-id].drop-before")).toHaveCount(0);
+});
+
 test("the preview retains scoped theme styles and long-label geometry outside containment", async ({ page }) => {
   await open(page);
   await page.route("**/reorder-theme.css", (route) => route.fulfill({
@@ -241,10 +269,14 @@ test("native touch swipes scroll; holding then dragging reorders and releases sc
   const start = await point(page.locator('[data-reorder-id="3"]'));
   const end = await point(page.locator('[data-reorder-id="1"]'), "top");
   await touch("touchStart", start.x, start.y);
+  // Small finger drift activates implicit capture on the touched descendant
+  // without crossing the scroll-intent threshold. Lifting transfers capture to the row.
+  await touch("touchMove", start.x, start.y + 2);
   await expect(page.locator(".list-drag-preview")).toBeVisible();
   await touch("touchMove", end.x, end.y);
   await touch("touchEnd", end.x, end.y);
   await expect.poll(async () => (await order(page))[0]).toBe("3");
   await expect(page.locator(".list-drag-preview")).toHaveCount(0);
+  await expect(page.locator("#selected")).toBeEmpty();
   await swipe();
 });

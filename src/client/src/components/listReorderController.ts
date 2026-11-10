@@ -31,7 +31,9 @@ export class ListReorderController<T extends { id: string }> implements Reactive
   private pointerCandidate: PointerReorderCandidate | undefined;
   private suppressClick = false;
   private autoScrollFrame: number | undefined;
+  private lastPointerX: number | undefined;
   private lastPointerY: number | undefined;
+  private scrollElement: HTMLElement | null = null;
   private ghost: HTMLElement | undefined;
 
   hostDisconnected(): void { this.cancel(); }
@@ -57,6 +59,8 @@ export class ListReorderController<T extends { id: string }> implements Reactive
       touch: event.pointerType === "touch",
     };
     this.pointerCandidate = candidate;
+    this.scrollElement = this.scrollBody();
+    this.scrollElement?.addEventListener("scroll", this.onScroll);
     document.addEventListener("pointermove", this.onPointerMove);
     document.addEventListener("pointerup", this.onPointerUp);
     document.addEventListener("pointercancel", this.onPointerCancel);
@@ -89,6 +93,7 @@ export class ListReorderController<T extends { id: string }> implements Reactive
       if (Math.abs(event.clientY - candidate.startY) < DRAG_THRESHOLD_PX) return;
       this.startDrag(candidate, event.clientX, event.clientY);
     }
+    this.lastPointerX = event.clientX;
     this.lastPointerY = event.clientY;
     this.dropSlot = this.isOverList(event.clientX, event.clientY) ? this.slotForPointer(event.clientY) : undefined;
     this.moveGhost(event.clientX, event.clientY);
@@ -104,6 +109,7 @@ export class ListReorderController<T extends { id: string }> implements Reactive
     }
     this.draggingId = candidate.itemId;
     this.suppressClick = true;
+    this.lastPointerX = clientX;
     this.lastPointerY = clientY;
     this.dropSlot = this.slotForPointer(clientY);
     // The contact that started the drag may already have begun a text selection or callout.
@@ -140,11 +146,28 @@ export class ListReorderController<T extends { id: string }> implements Reactive
   private clearDrag(): void {
     this.draggingId = undefined;
     this.dropSlot = undefined;
+    this.lastPointerX = undefined;
     this.lastPointerY = undefined;
+    this.scrollElement?.removeEventListener("scroll", this.onScroll);
+    this.scrollElement = null;
     this.stopAutoScroll();
     this.removeGhost();
     document.removeEventListener("touchmove", this.blockTouchScroll);
   }
+
+  /** Implicit touch capture transfers from a descendant to the row when lifted. */
+  handleLostPointerCapture(event: PointerEvent): void {
+    const candidate = this.pointerCandidateFor(event);
+    if (event.target === candidate?.element) this.cancel();
+  }
+
+  private readonly onScroll = (): void => {
+    const x = this.lastPointerX;
+    const y = this.lastPointerY;
+    if (this.draggingId === undefined || x === undefined || y === undefined) return;
+    this.dropSlot = this.isOverList(x, y) ? this.slotForPointer(y) : undefined;
+    this.syncAutoScroll();
+  };
 
   private readonly onPointerMove = (event: PointerEvent): void => { this.movePointerReorder(event); };
   private readonly onPointerUp = (event: PointerEvent): void => { this.endPointerReorder(event, true); };
