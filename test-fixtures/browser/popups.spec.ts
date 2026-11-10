@@ -45,6 +45,32 @@ test("theme-grown action panels stay within the viewport without moving navigati
   }
 });
 
+test("root trust stays readable and reachable without workspace navigation", async ({ page }) => {
+  await ready(page, "/navigation.html");
+  await page.locator("workspace-list").evaluate((element) => { element.remove(); });
+  const owner = page.locator("project-list");
+  const trigger = owner.locator(".ui-popup-trigger").first();
+  await trigger.click();
+  const panel = owner.locator(".ui-popup-panel");
+  const checkbox = panel.getByRole("checkbox", { name: "Trust root folder", exact: true });
+  await expect(checkbox).toBeEnabled();
+  await expect(checkbox).toHaveAccessibleDescription(/\/repo\/very-long-project-path/);
+  await checkbox.check();
+  await expect(checkbox).toBeChecked();
+  await expect(panel).toBeVisible();
+  const viewport = page.viewportSize();
+  if (!viewport) throw new Error("Missing viewport");
+  await expect.poll(async () => {
+    const box = await panel.boundingBox();
+    return box !== null && box.x >= 0 && box.y >= 0
+      && box.x + box.width <= viewport.width && box.y + box.height <= viewport.height;
+  }).toBe(true);
+  await expect(panel).toHaveJSProperty("scrollWidth", await panel.evaluate((element) => element.clientWidth));
+  await page.screenshot({ path: test.info().outputPath("root-trust.png") });
+  await page.keyboard.press("Escape");
+  await expect(trigger).toBeFocused();
+});
+
 test("the current-picker hook permits a less-specific theme override without following keyboard focus", async ({ page }) => {
   await ready(page, "/overlays.html");
   const owner = page.locator("machine-switcher").first();

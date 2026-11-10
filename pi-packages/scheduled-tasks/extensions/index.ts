@@ -1,4 +1,4 @@
-import { Type, type TSchema } from "@earendil-works/pi-ai";
+import { Type, type TSchema } from "typebox";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createCompanionBackend, type JsonValue } from "@jmfederico/pi-web/server-plugin-api";
 

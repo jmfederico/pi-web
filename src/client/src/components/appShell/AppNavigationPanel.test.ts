@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installPopoverFake } from "../anchoredPopup.testSupport";
 installPopoverFake();
-import { trustApi, type Machine, type Project, type SessionInfo, type Workspace } from "../../api";
+import { trustApi, workspacesApi, type Machine, type Project, type SessionInfo, type Workspace } from "../../api";
 import type { MachineStatusSnapshot } from "../../../../shared/machineStatus";
 import { machineStatusSnapshot } from "../../machineStatus.testSupport";
 import { MachineList } from "../MachineList";
@@ -14,6 +14,10 @@ import { SessionList } from "../SessionList";
 import { AppNavigationPanel, shouldShowMachinesSection } from "./AppNavigationPanel";
 import type { NavigationSectionResizeHandle } from "./NavigationSectionResizeHandle";
 import { NAVIGATION_SECTION_SIZE_STORAGE_KEY } from "../../appShell/navigationSectionResizeController";
+
+beforeEach(() => {
+  vi.spyOn(workspacesApi, "workspaces").mockResolvedValue([]);
+});
 
 afterEach(() => {
   document.body.replaceChildren();
@@ -34,6 +38,27 @@ describe("shouldShowMachinesSection", () => {
 });
 
 describe("folder workspace navigation", () => {
+  it("allows root trust on the selected machine when the workspace list is hidden", async () => {
+    const root = { ...workspace("root", "project-1"), path: project("project-1").path };
+    vi.spyOn(workspacesApi, "workspaces").mockResolvedValue([root]);
+    vi.spyOn(trustApi, "workspaceTrust").mockResolvedValue({ path: root.path, decision: false, trusted: false });
+    const save = vi.spyOn(trustApi, "setWorkspaceTrust").mockResolvedValue({ path: root.path, decision: true, trusted: true });
+    const panel = await mountPanel({}, machine("remote-a"));
+    panel.workspaceSelectionVisible = false;
+    await panel.updateComplete;
+    const projects = section(panel, "project-list", ProjectList);
+    await projects.updateComplete;
+    control(projects, ".action-menu-toggle").click();
+    await vi.waitFor(() => {
+      const input = control(projects, 'input[type="checkbox"]');
+      expect(input).toBeInstanceOf(HTMLInputElement);
+      expect(input.hasAttribute("disabled")).toBe(false);
+    });
+    control(projects, 'input[type="checkbox"]').click();
+    await vi.waitFor(() => { expect(save).toHaveBeenCalledExactlyOnceWith("project-1", "root", true, "remote-a"); });
+    expect(panel.shadowRoot?.querySelector("workspace-list")).toBeNull();
+  });
+
   it.each([false, true])("skips hidden workspace controls in both keyboard directions (compact=%s)", async (compact) => {
     const panel = await mountPanel({}, machine("local"));
     panel.compact = compact;

@@ -1,7 +1,8 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createAssistantMessageEventStream, Type, type AssistantMessage } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, type AssistantMessage } from "@earendil-works/pi-ai";
+import { Type } from "pi-web-typebox";
 import { createAgentSession, createEventBus, DefaultResourceLoader, defineTool, SessionManager, SettingsManager } from "../../piSdk.js";
 import { expect, it, vi } from "vitest";
 import type { PluginBackend, PluginPeer } from "../../plugin-api.js";

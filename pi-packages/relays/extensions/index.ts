@@ -1,4 +1,4 @@
-import { Type, type Static } from "@earendil-works/pi-ai";
+import { Type, type Static } from "typebox";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { prepareRelayDispatch, type PreparedRelayDispatch } from "../relayDispatch.js";
 import { requireRelayLeg } from "../relayIdentity.js";

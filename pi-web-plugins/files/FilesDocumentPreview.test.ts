@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+// @vitest-environment-options {"settings":{"enableIframePageLoading":true,"navigation":{"disableChildFrameNavigation":true}}}
+// Create inert frame contexts, but block child navigation so fixtures cannot fetch pages.
 
 import type { MarkdownRenderingCapability, FileContentResponse, FilePreviewerInput, WorkspaceFilesCapabilityV1 } from "@jmfederico/pi-web/plugin-api";
 import { html } from "lit";

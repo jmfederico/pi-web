@@ -249,6 +249,7 @@ export class AppNavigationPanel extends LitElement {
         style=${styleMap(this.sectionSizeStyle("projects"))}
         ?data-manual-size=${!this.compact && this.sectionSizes.height("projects") !== undefined}
         .projects=${this.projects}
+        .machineId=${this.selectedMachine?.id ?? "local"}
         .selected=${this.selectedProject}
         .selectionLoading=${this.projectSelectionLoading}
         .statusSnapshot=${this.selectedMachineStatusSnapshot()}
