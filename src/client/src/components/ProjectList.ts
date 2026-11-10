@@ -150,7 +150,7 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
                           <dl class="workspace-menu-details ui-menu-details">
                             <div class="workspace-detail-row ui-menu-detail">
                               <dt>${messages.t("path")}</dt>
-                              <dd title=${project.path}><bdi dir="ltr">${project.path}</bdi>${this.detailCopy.render(this.trustScope(project, this.machineId), project.path, messages.t("copyPath"))}</dd>
+                              <dd title=${project.path}><bdi dir="ltr" id=${`project-menu-${encodeURIComponent(project.id)}-path`}>${project.path}</bdi>${this.detailCopy.render(this.trustScope(project, this.machineId), project.path, messages.t("copyPath"))}</dd>
                             </div>
                           </dl>
                           ${renderCopyIdAction("project", project.id, this.detailCopy)}
@@ -205,6 +205,7 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
         state: this.rootTrustByScope[this.trustScope(project, this.machineId)],
         label: messages.t("trustRoot"),
         busyLabel: messages.t("trustRootBusy"),
+        describedBy: `project-menu-${encodeURIComponent(project.id)}-path`,
         onChange: (trusted) => { void this.setRootTrust(project, trusted); },
       })}
     </div>`;

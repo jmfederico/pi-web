@@ -34,8 +34,9 @@ describe("project root trust", () => {
     const input = checkbox(list);
     // Scope and path are part of the permission decision, including for assistive technology.
     expect(input.labels?.[0]?.textContent).toContain("root folder");
-    const help = list.shadowRoot?.getElementById(input.getAttribute("aria-describedby") ?? "");
-    expect(help?.textContent).toContain(project.path);
+    const description = input.getAttribute("aria-describedby")?.split(/\s+/)
+      .map((id) => list.shadowRoot?.getElementById(id)?.textContent).join(" ");
+    expect(description).toContain(project.path);
     input.click();
     await loaded(list, true);
     expect(workspacesApi.workspaces).toHaveBeenCalledExactlyOnceWith(project.id, machineId);
