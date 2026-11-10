@@ -2,7 +2,7 @@
 import { installNativeDialogFake } from "./nativeDialog.testSupport";
 installNativeDialogFake();
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImageGalleryDialog } from "./ImageGalleryDialog";
 import { deepActiveElement, hasRenderedModal } from "./modalLayerRegistry";
 
@@ -11,6 +11,7 @@ const images = ["first", "second", "third"].map((alt) => ({ src: `data:image/png
 afterEach(() => {
   document.body.replaceChildren();
   localStorage.clear();
+  vi.unstubAllGlobals();
 });
 
 describe("ImageGalleryDialog", () => {
@@ -109,6 +110,37 @@ describe("ImageGalleryDialog", () => {
     stage.dispatchEvent(new PointerEvent("pointerup", { ...init, clientX: 0 }));
     await gallery.updateComplete;
     expectSelection(gallery, 0);
+  });
+
+  it("leaves zoomed drags to the browser and cancels swipes interrupted by pinch zoom", async () => {
+    const viewport = Object.assign(new EventTarget(), { scale: 2 });
+    vi.stubGlobal("visualViewport", viewport);
+    const gallery = await mountGallery(1);
+    const stage = required(gallery.renderRoot.querySelector<HTMLElement>(".image-gallery-stage"));
+    const init = { bubbles: true, pointerId: 1, pointerType: "touch", isPrimary: true, clientX: 100 };
+    const start = () => stage.dispatchEvent(new PointerEvent("pointerdown", init));
+    const end = () => stage.dispatchEvent(new PointerEvent("pointerup", { ...init, clientX: 0 }));
+    const zoom = async (scale: number) => {
+      viewport.scale = scale;
+      viewport.dispatchEvent(new Event("resize"));
+      await gallery.updateComplete;
+    };
+
+    start();
+    end();
+    await gallery.updateComplete;
+    expectSelection(gallery, 1);
+    await zoom(1);
+    start();
+    await zoom(2);
+    await zoom(1);
+    end();
+    await gallery.updateComplete;
+    expectSelection(gallery, 1);
+    start();
+    end();
+    await gallery.updateComplete;
+    expectSelection(gallery, 2);
   });
 
   it("releases native modality on disconnect and reconnects closed", async () => {

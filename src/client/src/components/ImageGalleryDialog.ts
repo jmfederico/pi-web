@@ -18,6 +18,8 @@ export class ImageGalleryDialog extends LitElement {
 
   @query("dialog") private dialog?: HTMLDialogElement;
   @state() private gallery: { images: readonly ImageOpenDetail[]; index: number } | undefined;
+  @state() private browserZoomed = false;
+  private viewport: VisualViewport | null | undefined;
   private swipe: { pointerId: number; x: number; y: number } | undefined;
   private navigationFocus: "previous" | "next" | undefined;
   private modalRegistration: RenderedModalRegistration | undefined;
@@ -35,7 +37,16 @@ export class ImageGalleryDialog extends LitElement {
     if (this.gallery !== undefined) this.gallery = undefined;
   };
 
+  override connectedCallback(): void {
+    super.connectedCallback();
+    this.viewport = this.ownerDocument.defaultView?.visualViewport;
+    this.viewport?.addEventListener("resize", this.onViewportResize);
+    this.onViewportResize();
+  }
+
   override disconnectedCallback(): void {
+    this.viewport?.removeEventListener("resize", this.onViewportResize);
+    this.viewport = undefined;
     this.close();
     if (this.dialog?.open === true) this.dialog.close();
     this.releaseModal();
@@ -112,14 +123,22 @@ export class ImageGalleryDialog extends LitElement {
     this.move((event.key === "ArrowLeft") !== (localization.direction === "rtl") ? -1 : 1);
   };
 
+  private readonly onViewportResize = (): void => {
+    // At native pinch zoom, horizontal drags belong to the browser, not gallery navigation.
+    this.browserZoomed = (this.viewport?.scale ?? 1) > 1;
+    if (this.browserZoomed) this.swipe = undefined;
+  };
+
   private readonly onPointerDown = (event: PointerEvent): void => {
     if (event.pointerType !== "touch") return;
-    if (!event.isPrimary) { this.swipe = undefined; return; }
+    this.onViewportResize();
+    if (!event.isPrimary || this.browserZoomed) { this.swipe = undefined; return; }
     this.swipe = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
     if (event.currentTarget instanceof HTMLElement) event.currentTarget.setPointerCapture(event.pointerId);
   };
 
   private readonly onPointerUp = (event: PointerEvent): void => {
+    this.onViewportResize();
     const start = this.swipe;
     if (start?.pointerId !== event.pointerId) return;
     this.swipe = undefined;
@@ -143,7 +162,7 @@ export class ImageGalleryDialog extends LitElement {
             <span id="image-gallery-position" class="image-gallery-position ui-toolbar-title" role="status" aria-live="polite" aria-atomic="true">${imageMessages.t("position", { index: gallery.index + 1, count: gallery.images.length })}</span>
             <div class="ui-toolbar-group"><button type="button" class="image-zoom-close ui-button ui-button--icon" aria-label=${imageMessages.t("close")} title=${imageMessages.t("close")} @click=${this.close}>×</button></div>
           </div>
-          <div class="image-gallery-stage" @pointerdown=${this.onPointerDown} @pointerup=${this.onPointerUp} @pointercancel=${() => { this.swipe = undefined; }}>
+          <div class="image-gallery-stage" ?data-browser-zoomed=${this.browserZoomed} @pointerdown=${this.onPointerDown} @pointerup=${this.onPointerUp} @pointercancel=${() => { this.swipe = undefined; }}>
             <img class="image-zoom-full" src=${image.src} alt=${image.alt} decoding="async" draggable="false" />
           </div>
           ${gallery.images.length < 2 ? null : html`
@@ -164,6 +183,7 @@ export class ImageGalleryDialog extends LitElement {
     .image-gallery-header { border-bottom-color: var(--pi-border); }
     .image-gallery-position { padding-inline: 12px; min-width: 0; overflow-wrap: anywhere; white-space: normal; }
     .image-gallery-stage { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; background: var(--pi-surface); touch-action: pan-y pinch-zoom; }
+    .image-gallery-stage[data-browser-zoomed] { touch-action: pan-x pan-y pinch-zoom; }
     .image-zoom-full { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; object-fit: contain; }
     .image-gallery-navigation { border-top: 1px solid var(--pi-border); }
     .image-gallery-navigation .ui-button { flex: 1 1 0; min-width: 0; white-space: normal; overflow-wrap: anywhere; }

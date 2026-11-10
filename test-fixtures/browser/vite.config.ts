@@ -12,6 +12,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         overlays: fileURLToPath(new URL("overlays.html", import.meta.url)),
+        imageGallery: fileURLToPath(new URL("image-gallery.html", import.meta.url)),
         modelPicker: fileURLToPath(new URL("model-picker.html", import.meta.url)),
         viewport: fileURLToPath(new URL("viewport.html", import.meta.url)),
         questions: fileURLToPath(new URL("questions.html", import.meta.url)),
