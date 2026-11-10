@@ -503,7 +503,7 @@ const catalogs: Record<string, Record<string, string>> = {
     "trustHelp": "Om du litar på projektet får pi läsa in dess .pi-inställningar, tillägg, färdigheter och paket. Tillägg och paket kan köra kod på maskinen. Lita bara på projekt du känner till och litar på.",
     "learnTrust": "Läs om betrodda projekt",
     "trustError": "Kunde inte kontrollera om projektet är betrott: {error}. Försök igen för att läsa in det sparade beslutet.",
-    "retryTrust": "Kontrollera betrodd status igen",
+    "retryTrust": "Kontrollera igen om projektet är betrott",
     "localFolders": "Mappar på den lokala maskinen (där PI WEB körs). Sökvägarna gäller denna maskin, inte enheten med webbläsaren.",
     "remoteFolders": "Mappar på fjärrmaskinen: {machine}. Sökvägarna gäller denna maskin, inte enheten med webbläsaren.",
     "folder": "Projektmapp",
