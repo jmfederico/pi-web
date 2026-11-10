@@ -265,6 +265,63 @@ function moveButton(list: WorkspaceList, label: string): HTMLButtonElement {
   return button;
 }
 
+describe("workspace drag ordering", () => {
+  it("forwards a drop without selecting or changing order before acknowledgement", async () => {
+    const workspaces = [workspace("a"), workspace("b"), workspace("c")];
+    const list = await mountWorkspaceList(workspaces);
+    const onReorder = vi.fn();
+    const onSelect = vi.fn();
+    list.onReorder = onReorder;
+    list.onSelect = onSelect;
+    await list.updateComplete;
+    stubWorkspaceDragGeometry(list);
+    const row = rowFor(list, "c");
+    workspacePointer(row, "pointerdown", 125);
+    workspacePointer(row, "pointermove", 10);
+    await list.updateComplete;
+    workspacePointer(row, "pointerup", 10);
+    row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(onReorder).toHaveBeenCalledExactlyOnceWith(workspaces[2], workspaces[0], "before");
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(list.workspaces).toBe(workspaces);
+  });
+
+  it("keeps a drag across status refreshes but cancels when the project scope changes", async () => {
+    const list = await mountWorkspaceList([workspace("a"), workspace("b")]);
+    list.onReorder = vi.fn();
+    await list.updateComplete;
+    stubWorkspaceDragGeometry(list);
+    const row = rowFor(list, "b");
+    workspacePointer(row, "pointerdown", 75);
+    workspacePointer(row, "pointermove", 10);
+    list.workspaces = list.workspaces.map((item) => ({ ...item }));
+    list.statusSnapshot = machineStatusSnapshot({ workspaces: { a: { "core:working": true } } });
+    await list.updateComplete;
+    expect(list.shadowRoot?.querySelector(".list-drag-preview")).not.toBeNull();
+    list.projectId = "another-project";
+    await list.updateComplete;
+    expect(list.shadowRoot?.querySelector(".list-drag-preview")).toBeNull();
+    workspacePointer(row, "pointerup", 10);
+    expect(list.onReorder).not.toHaveBeenCalled();
+    list.onReorder = undefined;
+    await list.updateComplete;
+    expect(list.shadowRoot?.querySelector("[data-reorder-id]")).toBeNull();
+  });
+});
+
+function stubWorkspaceDragGeometry(list: WorkspaceList): void {
+  const body = list.shadowRoot?.querySelector(".list-body");
+  if (body === null || body === undefined) throw new Error("Missing workspace scroll body");
+  vi.spyOn(body, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 200, 150));
+  list.shadowRoot?.querySelectorAll("[data-workspace-id]").forEach((row, index) => {
+    vi.spyOn(row, "getBoundingClientRect").mockReturnValue(new DOMRect(0, index * 50, 200, 50));
+  });
+}
+
+function workspacePointer(target: Element, type: string, clientY: number): void {
+  target.dispatchEvent(new PointerEvent(type, { pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0, clientX: 40, clientY, bubbles: true, composed: true }));
+}
+
 describe("workspace-list removal actions", () => {
   it("updates the open Git removal action live and preserves its callback target", async () => {
     const removable = workspace("review", { isMain: false, removal: {
@@ -334,10 +391,9 @@ describe("workspace-list removal actions", () => {
     list.shadowRoot?.querySelectorAll<HTMLButtonElement>(".action-menu-toggle")[1]?.click();
     await expectTrustLoaded(list, false);
     expect(trust.mock.calls).toEqual([["project-1", "neutral", "local"], ["project-1", "plain", "local"]]);
-    // The actions block stays visible for the project-trust toggle, but it
-    // must not offer a removal action without removal metadata.
-    expect(list.shadowRoot?.querySelector(".workspace-menu-actions")).not.toBeNull();
-    expect(list.shadowRoot?.querySelector(".workspace-menu-actions .danger")).toBeNull();
+    // Trust remains available even when there are no workspace actions.
+    expect(list.shadowRoot?.querySelector(".workspace-menu-trust")).not.toBeNull();
+    expect(list.shadowRoot?.querySelector(".workspace-menu-actions")).toBeNull();
   });
 });
 

@@ -14,10 +14,11 @@ export function renderTrustMenuControl(options: {
   state: TrustMenuState | undefined;
   label: string;
   busyLabel: string;
-  description?: TemplateResult;
+  /** IDs of existing menu details that identify the permission scope. */
+  describedBy?: string;
   onChange: (trusted: boolean) => void;
 }): TemplateResult {
-  const { id, state, label, busyLabel, description, onChange } = options;
+  const { id, state, label, busyLabel, describedBy, onChange } = options;
   const busy = state?.loading === true || state?.saving === true;
   const helpId = `${id}-help`;
   const errorId = `${id}-error`;
@@ -27,14 +28,13 @@ export function renderTrustMenuControl(options: {
       <input
         id=${id}
         type="checkbox"
-        aria-describedby=${state?.error === undefined ? helpId : `${helpId} ${errorId}`}
+        aria-describedby=${[describedBy, helpId, state?.error === undefined ? undefined : errorId].filter(Boolean).join(" ")}
         .checked=${state?.trusted === true}
         ?disabled=${busy || state?.trusted === undefined}
         @change=${(event: Event) => { if (event.target instanceof HTMLInputElement) onChange(event.target.checked); }}
       />
     </label>
     <div class="action-menu-description" id=${helpId}>
-      ${description}
       <a href="https://pi.dev/docs/latest/security" target="_blank" rel="noreferrer">${messages.t("learnTrust")}</a>
     </div>
     ${state?.error === undefined ? null : html`<div class="action-menu-description action-menu-error" id=${errorId} role="alert">${state.error}</div>`}

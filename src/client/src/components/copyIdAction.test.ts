@@ -48,28 +48,32 @@ async function mount(kind: "machine" | "project" | "workspace" | "session") {
   return list;
 }
 
-it.each(["machine", "project", "workspace", "session"] as const)("copies the %s ID without exposing it or selecting the row", async (kind) => {
+it.each(["machine", "project", "workspace", "session"] as const)("copies the %s ID without displaying it, closing the menu or selecting the row", async (kind) => {
   const list = await mount(kind);
   const panel = list.shadowRoot?.querySelector(".action-menu-panel");
   expect(panel).not.toBeNull();
   expect(panel?.textContent).not.toContain(id);
-  const copy = panel?.querySelector<HTMLButtonElement>("[data-copy-id]");
-  expect(copy).not.toBeNull();
-  const actions = kind === "workspace" ? panel?.querySelector(".workspace-menu-actions") : panel;
-  expect([...actions?.querySelectorAll("button") ?? []].at(-1)).toBe(copy);
+  const copy = panel?.querySelector<HTMLButtonElement>("[data-id-detail] button");
+  expect(copy?.textContent.trim()).toBe(`Copy ${kind} ID`);
+  expect(copy?.closest("[data-menu-group]")?.getAttribute("data-menu-group")).toBe("details");
+  // Copy ID remains last, after path/label fields where present.
+  expect([...panel?.querySelectorAll("button") ?? []].at(-1)).toBe(copy);
   copy?.click();
   await vi.waitFor(() => { expect(writeClipboardText).toHaveBeenCalledExactlyOnceWith(id); });
   await list.updateComplete;
-  expect(list.shadowRoot?.querySelector(".action-menu-panel")).toBeNull();
+  expect(list.shadowRoot?.querySelector(".action-menu-panel")).not.toBeNull();
+  expect(copy?.getAttribute("aria-label")).toBe("Copied");
   expect(list.onSelect).not.toHaveBeenCalled();
 });
 
 it("keeps the menu available and reports a failed copy", async () => {
   vi.mocked(writeClipboardText).mockResolvedValue(false);
-  const alert = vi.fn();
-  vi.stubGlobal("alert", alert);
   const list = await mount("machine");
-  list.shadowRoot?.querySelector<HTMLButtonElement>("[data-copy-id]")?.click();
-  await vi.waitFor(() => { expect(alert).toHaveBeenCalledOnce(); });
+  list.shadowRoot?.querySelector<HTMLButtonElement>("[data-id-detail] button")?.click();
+  await vi.waitFor(() => { expect(list.shadowRoot?.querySelector('[data-id-detail] [role="alert"]')).not.toBeNull(); });
   expect(list.shadowRoot?.querySelector(".action-menu-panel")).not.toBeNull();
+  vi.mocked(writeClipboardText).mockResolvedValue(true);
+  list.shadowRoot?.querySelector<HTMLButtonElement>("[data-id-detail] button")?.click();
+  await vi.waitFor(() => { expect(list.shadowRoot?.querySelector('[data-id-detail] [aria-label="Copied"]')).not.toBeNull(); });
+  expect(list.shadowRoot?.querySelector('[data-id-detail] [role="alert"]')).toBeNull();
 });

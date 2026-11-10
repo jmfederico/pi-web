@@ -6,6 +6,30 @@
     border-bottom: 1px solid var(--pi-border-muted);
   }
   .action-row:last-child { border-bottom: 0; }
+  [data-reorderable="true"] { cursor: grab; }
+  /* iOS needs the prefixed selection rule before its native long-press gesture starts.
+     Keep it off the row's action menu so paths there remain selectable. */
+  [data-reorderable="true"] > .action-main,
+  [data-reorderable="true"] > .action-main * {
+    -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
+  }
+  [data-reorder-id].dragging { cursor: grabbing; }
+  [data-reorder-id].dragging { opacity: .45; }
+  .drop-before::before,
+  .drop-after::after {
+    content: ""; position: absolute; inset-inline: 0; height: 2px;
+    background: var(--pi-accent); pointer-events: none; z-index: 2;
+  }
+  .drop-before::before { top: 0; }
+  .drop-after::after { top: calc(var(--reorder-group-height, 100%) - 2px); }
+  .action-row.list-drag-preview {
+    position: fixed; inset: 0 auto auto 0; margin: 0; padding: 0;
+    box-sizing: border-box; grid-template-columns: minmax(0, 1fr);
+    pointer-events: none; background: var(--pi-surface); color: var(--pi-text);
+    border: 1px solid var(--pi-border); box-shadow: 0 4px 12px var(--pi-shadow);
+  }
+  .list-drag-preview::backdrop { background: transparent; pointer-events: none; }
+  .list-reorder-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .action-main { padding: 10px 10px 10px calc(19px + var(--depth, 0) * 16px); }
   .action-main, .workspace-row .action-main {
     border-color: transparent;

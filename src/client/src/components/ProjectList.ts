@@ -7,12 +7,15 @@ import { repeat } from "lit/directives/repeat.js";
 import { trustApi, workspacesApi, type Project } from "../api";
 import { CORE_STATUS_FLAGS, type MachineStatusSnapshot } from "../../../shared/machineStatus";
 import { renderCopyIdAction } from "./copyIdAction";
+import { DetailCopyController } from "./detailCopy";
 import { createActionMenuController } from "./actionMenu";
 import { hasStatusUnread, renderActionActivityIndicator, statusActivityKind } from "./activityBadge";
 import type { KeyboardNavigableSection } from "./navigationFocus";
 import { activateSelectableRow, focusSelectedOrFirstSelectableRow, handleSelectableRowKeyboard } from "./selectableRow";
 import { listStyles } from "./shared";
 import { sidebarListStyles } from "./sidebarListStyles";
+import type { DropPosition } from "./listReorder";
+import { ListReorderController } from "./listReorderController";
 import { renderTrustMenuControl, type TrustMenuState } from "./trustMenuControl";
 
 interface RootTrustState extends TrustMenuState {
@@ -38,6 +41,8 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
   @property({ attribute: false }) onSelect?: (project: Project) => void;
   @property({ attribute: false }) onClose?: (project: Project) => void;
   @property({ attribute: false }) onMove?: (project: Project, direction: -1 | 1) => void;
+  /** The parent persists a drop relative to a visible neighbor. */
+  @property({ attribute: false }) onReorder?: (project: Project, neighbor: Project, position: DropPosition) => void;
   @property({ attribute: false }) onToggleCollapsed?: () => void;
   @property({ attribute: false }) onFocusPreviousSection?: () => void | Promise<void>;
   @property({ attribute: false }) onFocusNextSection?: () => void | Promise<void>;
@@ -50,11 +55,24 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
     return row?.querySelector<HTMLElement>(".action-menu-toggle") ?? undefined;
   }, () => { this.openMenuProjectId = undefined; });
 
+  private readonly detailCopy = new DetailCopyController(this);
   private focusedControl: HTMLElement | undefined;
   private focusAfterReorder: HTMLElement | undefined;
+  private readonly reorder: ListReorderController<Project> = new ListReorderController<Project>(this, {
+    items: () => this.projects,
+    enabled: () => this.onReorder !== undefined && !this.collapsed,
+    onDrop: (project, neighbor, position) => { this.onReorder?.(project, neighbor, position); },
+    onStart: () => { this.openMenuProjectId = undefined; },
+    label: (project) => project.name,
+  });
+
+  private reorderMembership = "";
 
   protected override willUpdate(changed: PropertyValues<this>): void {
     if (changed.has("projects")) this.focusAfterReorder = this.focusedControl;
+    const membership = JSON.stringify(this.projects.map(({ id }) => id));
+    if (membership !== this.reorderMembership || changed.has("machineId") || this.collapsed || this.onReorder === undefined) this.reorder.cancel();
+    this.reorderMembership = membership;
     if (changed.has("machineId")) this.openMenuProjectId = undefined;
   }
 
@@ -78,6 +96,7 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
 
   override render() {
     return html`
+      <span class="list-reorder-status" role="status">${this.reorder.announcement}</span>
       <section data-ui-context="projects" data-collapsed=${String(this.collapsed)}>
         <h2 class="ui-toolbar">${this.renderHeading()}</h2>
         ${this.collapsed ? null : html`
@@ -89,7 +108,8 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
               const current = this.selected?.id === project.id;
               return html`
                 <div
-                  class=${`action-row ui-nav-row ${current ? "selected" : ""}`}
+                  class=${`action-row ui-nav-row ${current ? "selected" : ""} ${this.reorder.rowClass(project.id)}`}
+                  data-reorderable=${String(this.onReorder !== undefined)}
                   data-current=${String(current)}
                   aria-current=${current ? "true" : nothing}
                   data-activity=${kind ?? "idle"}
@@ -97,10 +117,17 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
                   data-unread=${String(unread)}
                   tabindex="0"
                   data-project-id=${project.id}
+                  data-reorder-id=${this.onReorder === undefined ? nothing : project.id}
                   @focusin=${(event: FocusEvent) => { this.focusedControl = event.target instanceof HTMLElement ? event.target : undefined; }}
                   @focusout=${() => { this.focusedControl = undefined; }}
                   title=${project.path}
-                  @click=${(event: MouseEvent) => { activateSelectableRow(event, () => this.onSelect?.(project)); }}
+                  @pointerdown=${(event: PointerEvent) => { this.reorder.begin(event, project); }}
+                  @lostpointercapture=${(event: PointerEvent) => { this.reorder.handleLostPointerCapture(event); }}
+                  @contextmenu=${(event: MouseEvent) => { if (this.reorder.draggingId !== undefined) event.preventDefault(); }}
+                  @click=${(event: MouseEvent) => {
+                    if (this.reorder.consumeClick()) { event.preventDefault(); event.stopPropagation(); return; }
+                    activateSelectableRow(event, () => this.onSelect?.(project));
+                  }}
                   @keydown=${(event: KeyboardEvent) => { this.handleProjectKeydown(event, project); }}
                 >
                   <div class="action-main ui-nav-row-main">
@@ -110,14 +137,24 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
                   <div class="action-menu ui-nav-row-actions">
                     <button class="ui-button ui-button--icon action-menu-toggle ui-nav-row-action ui-popup-trigger" aria-expanded=${String(this.openMenuProjectId === project.id)} aria-controls=${`project-menu-${encodeURIComponent(project.id)}`} title=${messages.t("projectActions")} aria-label=${messages.t("actionsFor", { name: project.name })} @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleMenu(project); }}>⋯</button>
                     ${this.openMenuProjectId === project.id ? html`
-                      <div popover="auto" class="action-menu-panel ui-menu ui-nav-row-menu ui-popup-panel" data-ui-context="project-actions" id=${`project-menu-${encodeURIComponent(project.id)}`} @click=${(event: MouseEvent) => { event.stopPropagation(); }}>
-                        ${this.onMove === undefined ? null : html`
-                          <button class="ui-button ui-menu-item" data-move ?disabled=${index === 0} @click=${() => { this.onMove?.(project, -1); }}>${messages.t("moveUp")}</button>
-                          <button class="ui-button ui-menu-item" data-move ?disabled=${index === this.projects.length - 1} @click=${() => { this.onMove?.(project, 1); }}>${messages.t("moveDown")}</button>
-                        `}
+                      <div popover="auto" class="action-menu-panel ui-menu ui-menu--grouped ui-nav-row-menu ui-popup-panel" data-ui-context="project-actions" id=${`project-menu-${encodeURIComponent(project.id)}`} @click=${(event: MouseEvent) => { event.stopPropagation(); }}>
+                        <div class="ui-menu-group" data-menu-group="actions">
+                          ${this.onMove === undefined ? null : html`
+                            <button class="ui-button ui-menu-item" data-move ?disabled=${index === 0} @click=${() => { this.onMove?.(project, -1); }}>${messages.t("moveUp")}</button>
+                            <button class="ui-button ui-menu-item" data-move ?disabled=${index === this.projects.length - 1} @click=${() => { this.onMove?.(project, 1); }}>${messages.t("moveDown")}</button>
+                          `}
+                          <button class="ui-button ui-menu-item" title=${messages.t("closeProject")} @click=${() => { this.close(project); }}>${messages.t("closeProject")}</button>
+                        </div>
                         ${this.renderRootTrust(project)}
-                        <button class="ui-button ui-menu-item" title=${messages.t("closeProject")} @click=${() => { this.close(project); }}>${messages.t("close")}</button>
-                        ${renderCopyIdAction("project", project.id, () => { this.openMenuProjectId = undefined; })}
+                        <div class="ui-menu-group" data-menu-group="details">
+                          <dl class="workspace-menu-details ui-menu-details">
+                            <div class="workspace-detail-row ui-menu-detail">
+                              <dt>${messages.t("path")}</dt>
+                              <dd title=${project.path}><bdi dir="ltr" id=${`project-menu-${encodeURIComponent(project.id)}-path`}>${project.path}</bdi>${this.detailCopy.render(this.trustScope(project, this.machineId), project.path, messages.t("copyPath"))}</dd>
+                            </div>
+                          </dl>
+                          ${renderCopyIdAction("project", project.id, this.detailCopy)}
+                        </div>
                       </div>
                     ` : null}
                   </div>
@@ -131,6 +168,7 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
   }
 
   private handleProjectKeydown(event: KeyboardEvent, project: Project): void {
+    this.reorder.consumeClick();
     handleSelectableRowKeyboard(event, {
       activate: () => this.onSelect?.(project),
       previousSection: this.onFocusPreviousSection === undefined ? undefined : () => { void this.onFocusPreviousSection?.(); },
@@ -161,13 +199,13 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
   }
 
   private renderRootTrust(project: Project) {
-    return html`<div class="project-menu-trust">
+    return html`<div class="project-menu-trust ui-menu-group" data-menu-group="options">
       ${renderTrustMenuControl({
         id: `project-menu-${encodeURIComponent(project.id)}-trusted`,
         state: this.rootTrustByScope[this.trustScope(project, this.machineId)],
         label: messages.t("trustRoot"),
         busyLabel: messages.t("trustRootBusy"),
-        description: html`<div><bdi dir="ltr">${project.path}</bdi></div>`,
+        describedBy: `project-menu-${encodeURIComponent(project.id)}-path`,
         onChange: (trusted) => { void this.setRootTrust(project, trusted); },
       })}
     </div>`;

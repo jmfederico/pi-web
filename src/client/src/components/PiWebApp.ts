@@ -2387,10 +2387,17 @@ export class PiWebApp extends LitElement {
     focusNavigationTarget: (target: NavigationFocusTarget) => { this.cancelAutomaticProjectNavigation(); void this.focusNavigationTarget(target); },
     cancelKeyboardNavigation: () => { this.cancelAutomaticProjectNavigation(); void this.openChatAndFocusComposer(); },
     moveProject: (project: Project, direction: -1 | 1) => { this.moveNavigationItem({ kind: "projects", machineId: selectedMachineId(this.state) }, project.id, direction); },
+    reorderProject: (project: Project, neighbor: Project, position: "before" | "after") => { this.reorderNavigationItem({ kind: "projects", machineId: selectedMachineId(this.state) }, project.id, neighbor.id, position); },
     moveWorkspace: (workspace: Workspace, direction: -1 | 1) => { this.moveNavigationItem({ kind: "workspaces", machineId: selectedMachineId(this.state), projectId: workspace.projectId }, workspace.id, direction); },
+    reorderWorkspace: (workspace: Workspace, neighbor: Workspace, position: "before" | "after") => { this.reorderNavigationItem({ kind: "workspaces", machineId: selectedMachineId(this.state), projectId: workspace.projectId }, workspace.id, neighbor.id, position); },
     pinSession: (session: SessionInfo) => { this.changeSessionPin(session, "pin"); },
     unpinSession: (session: SessionInfo) => { this.changeSessionPin(session, "unpin"); },
     moveSessionPin: (session: SessionInfo, direction: -1 | 1) => { this.changeSessionPin(session, direction); },
+    reorderSessionPin: (session: SessionInfo, neighbor: SessionInfo, position: "before" | "after") => {
+      const workspace = this.state.selectedWorkspace;
+      if (workspace === undefined) return;
+      this.reorderNavigationItem({ kind: "sessionPins", machineId: selectedMachineId(this.state), projectId: workspace.projectId, workspaceId: workspace.id }, session.id, neighbor.id, position);
+    },
   };
 
   private workspaceDeletionInput: AppState["workspaceDeletionRuns"] | undefined;
@@ -2417,6 +2424,21 @@ export class PiWebApp extends LitElement {
       const displayed = orderItems(visibleIds.map((id) => ({ id })), ids).map((item) => item.id);
       const neighbor = displayed[displayed.indexOf(id) + direction];
       return neighbor === undefined ? ids : moveOrderedId(ids, displayed, id, neighbor, direction < 0 ? "before" : "after");
+    }).catch(() => undefined);
+  }
+
+  private reorderNavigationItem(scope: NavigationOrderScope, id: string, neighborId: string, placement: "before" | "after"): void {
+    const items = scope.kind === "projects" ? this.state.projects
+      : scope.kind === "workspaces" ? this.state.workspaces.filter((workspace) => workspace.projectId === scope.projectId)
+        : this.state.sessions.filter((session) => session.parentSessionPath === undefined && session.archived !== true);
+    const visibleIds = items.map((item) => item.id);
+    // Resolve against the preceding acknowledged order, preserving hidden entries.
+    // The controller reports persistence errors through the shared browser error surface.
+    void this.navigationOrder.mutate(scope, (ids) => {
+      const displayed = scope.kind === "sessionPins" ? ids.filter((pin) => visibleIds.includes(pin))
+        : orderItems(visibleIds.map((visibleId) => ({ id: visibleId })), ids).map((item) => item.id);
+      if (!displayed.includes(id) || !displayed.includes(neighborId)) return ids;
+      return moveOrderedId(ids, displayed, id, neighborId, placement);
     }).catch(() => undefined);
   }
 
@@ -2487,10 +2509,13 @@ export class PiWebApp extends LitElement {
         .onSelectProject=${this.navigationActions.selectProject}
         .onCloseProject=${this.navigationActions.closeProject}
         .onMoveProject=${this.navigationActions.moveProject}
+        .onReorderProject=${this.navigationActions.reorderProject}
         .onMoveWorkspace=${this.navigationActions.moveWorkspace}
+        .onReorderWorkspace=${this.navigationActions.reorderWorkspace}
         .onPinSession=${this.navigationActions.pinSession}
         .onUnpinSession=${this.navigationActions.unpinSession}
         .onMoveSessionPin=${this.navigationActions.moveSessionPin}
+        .onReorderSessionPin=${this.navigationActions.reorderSessionPin}
         .onSelectWorkspace=${this.navigationActions.selectWorkspace}
         .onDeleteWorkspace=${this.navigationActions.deleteWorkspace}
         .onArchivedCollapsed=${this.navigationActions.archivedCollapsed}

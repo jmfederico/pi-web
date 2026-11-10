@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { workspacesApi, type Project } from "../api";
+import * as clipboard from "../clipboard";
 import type { MachineStatusSnapshot } from "../../../shared/machineStatus";
 import { machineStatusSnapshot } from "../machineStatus.testSupport";
 import { installPopoverFake } from "./anchoredPopup.testSupport";
@@ -327,4 +328,396 @@ function unreadDot(row: Element): Element | null {
 
 function project(id: string): Project {
   return { id, name: id, path: `/repo/${id}`, createdAt: "2026-06-04T00:00:00.000Z" };
+}
+
+describe("project path copying", () => {
+  it("copies the full path without selecting or reordering the project and keeps the menu open", async () => {
+    const write = vi.spyOn(clipboard, "writeClipboardText").mockResolvedValue(true);
+    const item = { ...project("a"), path: "/repo/a long path/日本語" };
+    const list = await mountProjectList([item, project("b")], undefined);
+    list.onSelect = vi.fn();
+    list.onReorder = vi.fn();
+    await stubRowRects(list);
+    rowFor(list, "a").querySelector<HTMLButtonElement>(".action-menu-toggle")?.click();
+    await list.updateComplete;
+    const path = list.shadowRoot?.querySelector(".workspace-detail-row dd");
+    expect(path?.querySelector("bdi")?.textContent).toBe(item.path);
+    const button = path?.querySelector<HTMLButtonElement>("button");
+    if (!button) throw new Error("Missing path copy action");
+    pointer(button, "pointerdown", 120);
+    pointer(button, "pointermove", 10);
+    pointer(button, "pointerup", 10);
+    button.click();
+    await vi.waitFor(() => { expect(button.getAttribute("aria-label")).toBe("Copied"); });
+    expect(write).toHaveBeenCalledExactlyOnceWith(item.path);
+    expect(list.onSelect).not.toHaveBeenCalled();
+    expect(list.onReorder).not.toHaveBeenCalled();
+    expect(list.shadowRoot?.querySelector(".action-menu-panel")).not.toBeNull();
+  });
+
+  it("reports a failed copy and allows retry without closing the menu", async () => {
+    const write = vi.spyOn(clipboard, "writeClipboardText").mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const list = await mountProjectList([project("a")], undefined);
+    rowFor(list, "a").querySelector<HTMLButtonElement>(".action-menu-toggle")?.click();
+    await list.updateComplete;
+    const details = list.shadowRoot?.querySelector(".workspace-menu-details");
+    const button = details?.querySelector<HTMLButtonElement>("button");
+    if (!button) throw new Error("Missing path copy action");
+    button.click();
+    await vi.waitFor(() => { expect(details?.querySelector('[role="alert"]')).not.toBeNull(); });
+    expect(button.getAttribute("aria-label")).toBe("Copy path");
+    button.click();
+    await vi.waitFor(() => { expect(details?.querySelector('[role="alert"]')).toBeNull(); });
+    expect(write).toHaveBeenCalledTimes(2);
+    expect(button.getAttribute("aria-label")).toBe("Copied");
+  });
+});
+
+describe("project drag reorder", () => {
+  it("reports the neighbor a dragged row lands against", async () => {
+    const projects = [project("a"), project("b"), project("c")];
+    const list = await mountProjectList(projects, undefined);
+    const onReorder = vi.fn();
+    list.onReorder = onReorder;
+    await stubRowRects(list);
+
+    pointer(rowFor(list, "c"), "pointerdown", 120);
+    pointer(rowFor(list, "c"), "pointermove", 10);
+    await list.updateComplete;
+    expect(rowFor(list, "a").classList.contains("drop-before")).toBe(true);
+    pointer(rowFor(list, "c"), "pointerup", 10);
+
+    expect(onReorder).toHaveBeenCalledExactlyOnceWith(projects[2], projects[0], "before");
+  });
+
+  it("reports an append when dragged past the last row", async () => {
+    const projects = [project("a"), project("b"), project("c")];
+    const list = await mountProjectList(projects, undefined);
+    const onReorder = vi.fn();
+    list.onReorder = onReorder;
+    await stubRowRects(list);
+
+    pointer(rowFor(list, "a"), "pointerdown", 10);
+    pointer(rowFor(list, "a"), "pointermove", 200);
+    await list.updateComplete;
+    expect(rowFor(list, "c").classList.contains("drop-after")).toBe(true);
+    pointer(rowFor(list, "a"), "pointerup", 200);
+
+    expect(onReorder).toHaveBeenCalledExactlyOnceWith(projects[0], projects[2], "after");
+  });
+
+  it("stays a click until the pointer moves past the threshold", async () => {
+    const projects = [project("a"), project("b")];
+    const list = await mountProjectList(projects, undefined);
+    const onReorder = vi.fn();
+    const onSelect = vi.fn();
+    list.onReorder = onReorder;
+    list.onSelect = onSelect;
+    await stubRowRects(list);
+
+    pointer(rowFor(list, "b"), "pointerdown", 60);
+    pointer(rowFor(list, "b"), "pointermove", 62);
+    pointer(rowFor(list, "b"), "pointerup", 62);
+    rowFor(list, "b").dispatchEvent(new MouseEvent("click", { bubbles: true, composed: true }));
+
+    expect(onReorder).not.toHaveBeenCalled();
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith(projects[1]);
+  });
+
+  it("swallows the click that ends a drag", async () => {
+    const projects = [project("a"), project("b"), project("c")];
+    const list = await mountProjectList(projects, undefined);
+    const onSelect = vi.fn();
+    list.onReorder = vi.fn();
+    list.onSelect = onSelect;
+    await stubRowRects(list);
+
+    pointer(rowFor(list, "c"), "pointerdown", 120);
+    pointer(rowFor(list, "c"), "pointermove", 10);
+    pointer(rowFor(list, "c"), "pointerup", 10);
+    rowFor(list, "c").dispatchEvent(new MouseEvent("click", { bubbles: true, composed: true }));
+
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("cancels on Escape without reordering", async () => {
+    const projects = [project("a"), project("b"), project("c")];
+    const list = await mountProjectList(projects, undefined);
+    const onReorder = vi.fn();
+    list.onReorder = onReorder;
+    await stubRowRects(list);
+
+    pointer(rowFor(list, "c"), "pointerdown", 120);
+    pointer(rowFor(list, "c"), "pointermove", 10);
+    rowFor(list, "c").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true }));
+    await list.updateComplete;
+    pointer(rowFor(list, "c"), "pointerup", 10);
+
+    expect(onReorder).not.toHaveBeenCalled();
+    expect(list.shadowRoot?.querySelector(".action-row.dragging")).toBeNull();
+  });
+
+  it("does not start a drag from the row menu button", async () => {
+    const projects = [project("a"), project("b"), project("c")];
+    const list = await mountProjectList(projects, undefined);
+    const onReorder = vi.fn();
+    list.onReorder = onReorder;
+    await stubRowRects(list);
+
+    const toggle = rowFor(list, "c").querySelector<HTMLButtonElement>(".action-menu-toggle");
+    if (toggle === null) throw new Error("Expected a menu toggle");
+    pointer(toggle, "pointerdown", 120);
+    pointer(toggle, "pointermove", 10);
+    pointer(toggle, "pointerup", 10);
+
+    expect(onReorder).not.toHaveBeenCalled();
+  });
+
+  it("ignores drags when the parent passes no reorder callback", async () => {
+    const list = await mountProjectList([project("a"), project("b")], undefined);
+    await stubRowRects(list);
+
+    pointer(rowFor(list, "b"), "pointerdown", 60);
+    pointer(rowFor(list, "b"), "pointermove", 10);
+    await list.updateComplete;
+    pointer(rowFor(list, "b"), "pointerup", 10);
+
+    expect(list.shadowRoot?.querySelector(".action-row.dragging")).toBeNull();
+  });
+});
+
+function pointer(target: Element, type: string, clientY: number, init: { clientX?: number; pointerType?: string; pointerId?: number; isPrimary?: boolean } = {}): void {
+  target.dispatchEvent(new PointerEvent(type, {
+    pointerId: init.pointerId ?? 1,
+    isPrimary: init.isPrimary ?? true,
+    button: 0,
+    clientY,
+    clientX: init.clientX ?? 40,
+    pointerType: init.pointerType ?? "mouse",
+    bubbles: true,
+    composed: true,
+  }));
+}
+
+describe("project drag ghost", () => {
+  it("follows the pointer and is removed when the drag ends", async () => {
+    const projects = [project("a"), project("b"), project("c")];
+    const list = await mountProjectList(projects, undefined);
+    list.onReorder = vi.fn();
+    await stubRowRects(list);
+
+    pointer(rowFor(list, "c"), "pointerdown", 120);
+    pointer(rowFor(list, "c"), "pointermove", 110);
+    const ghost = list.shadowRoot?.querySelector<HTMLElement>(".list-drag-preview");
+    expect(ghost).not.toBeNull();
+    expect(ghost?.getAttribute("aria-hidden")).toBe("true");
+    expect(ghost?.querySelector(".action-menu")).toBeNull();
+    const first = ghost?.style.transform;
+    pointer(rowFor(list, "c"), "pointermove", 60);
+    expect(ghost?.style.transform).not.toBe(first);
+    expect(ghost?.style.transform).toContain("translate");
+
+    pointer(rowFor(list, "c"), "pointerup", 60);
+    expect(list.shadowRoot?.querySelector(".list-drag-preview")).toBeNull();
+  });
+
+  it("removes the ghost when Escape cancels", async () => {
+    const list = await mountProjectList([project("a"), project("b")], undefined);
+    list.onReorder = vi.fn();
+    await stubRowRects(list);
+
+    pointer(rowFor(list, "b"), "pointerdown", 60);
+    pointer(rowFor(list, "b"), "pointermove", 20);
+    expect(list.shadowRoot?.querySelector(".list-drag-preview")).not.toBeNull();
+    rowFor(list, "b").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true }));
+    expect(list.shadowRoot?.querySelector(".list-drag-preview")).toBeNull();
+  });
+});
+
+describe("touch long-press reorder", () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+  it("lifts the row after the press elapses and reorders on release", async () => {
+    const projects = [project("a"), project("b"), project("c")];
+    const list = await mountProjectList(projects, undefined);
+    const onReorder = vi.fn();
+    list.onReorder = onReorder;
+    await stubRowRects(list);
+
+    const row = rowFor(list, "c");
+    pointer(row, "pointerdown", 120, { pointerType: "touch" });
+    await vi.advanceTimersByTimeAsync(400);
+    await list.updateComplete;
+    expect(row.classList.contains("dragging")).toBe(true);
+    expect(list.shadowRoot?.querySelector(".list-drag-preview")).not.toBeNull();
+
+    pointer(row, "pointermove", 10, { pointerType: "touch" });
+    pointer(row, "pointerup", 10, { pointerType: "touch" });
+
+    expect(onReorder).toHaveBeenCalledExactlyOnceWith(projects[2], projects[0], "before");
+    expect(list.shadowRoot?.querySelector(".list-drag-preview")).toBeNull();
+  });
+
+  it("treats movement before the press elapses as scroll intent, not a drag", async () => {
+    const list = await mountProjectList([project("a"), project("b"), project("c")], undefined);
+    const onReorder = vi.fn();
+    const onSelect = vi.fn();
+    list.onReorder = onReorder;
+    list.onSelect = onSelect;
+    await stubRowRects(list);
+
+    const row = rowFor(list, "c");
+    pointer(row, "pointerdown", 120, { pointerType: "touch" });
+    pointer(row, "pointermove", 140, { pointerType: "touch" });
+    await vi.advanceTimersByTimeAsync(400);
+    await list.updateComplete;
+
+    expect(list.shadowRoot?.querySelector(".action-row.dragging")).toBeNull();
+    expect(list.shadowRoot?.querySelector(".list-drag-preview")).toBeNull();
+    row.dispatchEvent(new MouseEvent("click", { bubbles: true, composed: true }));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onReorder).not.toHaveBeenCalled();
+  });
+
+  it("does not lift when the press is released early", async () => {
+    const list = await mountProjectList([project("a"), project("b")], undefined);
+    const onReorder = vi.fn();
+    list.onReorder = onReorder;
+    await stubRowRects(list);
+
+    const row = rowFor(list, "b");
+    pointer(row, "pointerdown", 60, { pointerType: "touch" });
+    pointer(row, "pointerup", 60, { pointerType: "touch" });
+    await vi.advanceTimersByTimeAsync(400);
+    await list.updateComplete;
+
+    expect(list.shadowRoot?.querySelector(".action-row.dragging")).toBeNull();
+    expect(onReorder).not.toHaveBeenCalled();
+  });
+});
+
+describe("drag cancellation and ownership", () => {
+  it("keeps dragging across metadata-only refreshes with unchanged order", async () => {
+    const list = await mountProjectList([project("a"), project("b")], undefined);
+    list.onReorder = vi.fn();
+    await stubRowRects(list);
+    pointer(rowFor(list, "b"), "pointerdown", 60);
+    pointer(document.body, "pointermove", 10);
+    list.projects = list.projects.map((item) => ({ ...item, name: item.name + " refreshed" }));
+    await list.updateComplete;
+    expect(list.shadowRoot?.querySelector(".list-drag-preview")).not.toBeNull();
+    pointer(document.body, "pointerup", 10);
+    expect(list.onReorder).toHaveBeenCalledExactlyOnceWith(list.projects[1], list.projects[0], "before");
+  });
+
+  it.each([
+    ["collapse", (list: ProjectList) => { list.collapsed = true; }],
+    ["machine change", (list: ProjectList) => { list.machineId = "other"; }],
+    ["list membership change", (list: ProjectList) => { list.projects = [project("c")]; }],
+    ["disconnect", (list: ProjectList) => { list.remove(); }],
+    ["window blur", () => { window.dispatchEvent(new Event("blur")); }],
+    ["lost capture", (list: ProjectList) => { rowFor(list, "b").dispatchEvent(new PointerEvent("lostpointercapture", { pointerId: 1 })); }],
+  ])("cancels an active touch drag on %s and releases scroll ownership", async (_reason, cancel) => {
+    vi.useFakeTimers();
+    try {
+      const list = await mountProjectList([project("a"), project("b")], undefined);
+      const onReorder = vi.fn();
+      list.onReorder = onReorder;
+      await stubRowRects(list);
+      const row = rowFor(list, "b");
+      pointer(row, "pointerdown", 60, { pointerType: "touch" });
+      await vi.advanceTimersByTimeAsync(400);
+      await list.updateComplete;
+      expect(list.shadowRoot?.querySelector(".list-drag-preview")).not.toBeNull();
+      const scroll = () => {
+        const event = new Event("touchmove", { cancelable: true });
+        Object.defineProperty(event, "touches", { value: [{}] });
+        document.dispatchEvent(event);
+        return event.defaultPrevented;
+      };
+      expect(scroll()).toBe(true);
+      cancel(list);
+      await list.updateComplete;
+      expect(scroll()).toBe(false);
+      expect(list.shadowRoot?.querySelector(".list-drag-preview")).toBeNull();
+      pointer(document.body, "pointerup", 10, { pointerType: "touch" });
+      expect(onReorder).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores descendant capture transfers and other pointers, but cancels loss of the owned row capture", async () => {
+    const list = await mountProjectList([project("a"), project("b")], undefined);
+    list.onReorder = vi.fn();
+    await stubRowRects(list);
+    const row = rowFor(list, "b");
+    pointer(row, "pointerdown", 60);
+    pointer(document.body, "pointermove", 10);
+    row.querySelector(".action-name")?.dispatchEvent(new PointerEvent("lostpointercapture", { pointerId: 1, bubbles: true }));
+    row.dispatchEvent(new PointerEvent("lostpointercapture", { pointerId: 2, bubbles: true }));
+    await list.updateComplete;
+    expect(list.shadowRoot?.querySelector(".list-drag-preview")).not.toBeNull();
+    row.dispatchEvent(new PointerEvent("lostpointercapture", { pointerId: 1, bubbles: true }));
+    await list.updateComplete;
+    expect(list.shadowRoot?.querySelector(".list-drag-preview")).toBeNull();
+    pointer(document.body, "pointerup", 10);
+    expect(list.onReorder).not.toHaveBeenCalled();
+  });
+
+  it("clears a pending long press when the list is disconnected", async () => {
+    vi.useFakeTimers();
+    try {
+      const list = await mountProjectList([project("a"), project("b")], undefined);
+      list.onReorder = vi.fn();
+      await stubRowRects(list);
+      pointer(rowFor(list, "b"), "pointerdown", 60, { pointerType: "touch" });
+      list.remove();
+      await vi.advanceTimersByTimeAsync(400);
+      expect(list.shadowRoot?.querySelector(".list-drag-preview")).toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not let another pointer finish the owned gesture", async () => {
+    const projects = [project("a"), project("b"), project("c")];
+    const list = await mountProjectList(projects, undefined);
+    const onReorder = vi.fn();
+    list.onReorder = onReorder;
+    await stubRowRects(list);
+    pointer(rowFor(list, "c"), "pointerdown", 120);
+    pointer(document.body, "pointermove", 10);
+    pointer(rowFor(list, "b"), "pointerdown", 60, { pointerId: 2, isPrimary: false });
+    pointer(document.body, "pointerup", 10, { pointerId: 2, isPrimary: false });
+    expect(onReorder).not.toHaveBeenCalled();
+    pointer(document.body, "pointerup", 10);
+    expect(onReorder).toHaveBeenCalledExactlyOnceWith(projects[2], projects[0], "before");
+  });
+
+  it("discards a drop outside the list and lets the next keyboard activation select", async () => {
+    const list = await mountProjectList([project("a"), project("b")], undefined);
+    list.onReorder = vi.fn();
+    list.onSelect = vi.fn();
+    await stubRowRects(list);
+    const row = rowFor(list, "b");
+    pointer(row, "pointerdown", 60);
+    pointer(document.body, "pointermove", 10);
+    pointer(document.body, "pointerup", 10, { clientX: 300 });
+    expect(list.onReorder).not.toHaveBeenCalled();
+    row.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(list.onSelect).toHaveBeenCalledOnce();
+  });
+});
+
+async function stubRowRects(list: ProjectList): Promise<void> {
+  await list.updateComplete;
+  const body = list.shadowRoot?.querySelector<HTMLElement>(".list-body");
+  if (!body) throw new Error("Missing scroll body");
+  vi.spyOn(body, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 200, 240));
+  const rows = [...(list.shadowRoot?.querySelectorAll<HTMLElement>("[data-project-id]") ?? [])];
+  rows.forEach((row, index) => {
+    vi.spyOn(row, "getBoundingClientRect").mockReturnValue(new DOMRect(0, index * 50, 200, 50));
+  });
 }

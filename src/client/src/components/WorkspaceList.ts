@@ -8,7 +8,7 @@ import { trustApi } from "../api";
 import type { Workspace } from "../api";
 import { CORE_STATUS_FLAGS, type MachineStatusSnapshot } from "../../../shared/machineStatus";
 import { renderCopyIdAction } from "./copyIdAction";
-import { writeClipboardText } from "../clipboard";
+import { DetailCopyController } from "./detailCopy";
 import type { WorkspaceLabelItem } from "../plugins/types";
 import { canDeleteWorkspace, workspaceRemovalActionLabel } from "../workspaceDeletion";
 import { createActionMenuController } from "./actionMenu";
@@ -17,6 +17,8 @@ import type { KeyboardNavigableSection } from "./navigationFocus";
 import { activateSelectableRow, focusSelectedOrFirstSelectableRow, handleSelectableRowKeyboard } from "./selectableRow";
 import { listStyles } from "./shared";
 import { sidebarListStyles } from "./sidebarListStyles";
+import { ListReorderController } from "./listReorderController";
+import type { DropPosition } from "./listReorder";
 import { renderWorkspaceLabelInlineItems } from "./workspaceLabel";
 
 import { renderTrustMenuControl, type TrustMenuState } from "./trustMenuControl";
@@ -33,6 +35,7 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
   @property({ attribute: false }) selected?: Workspace;
   /** Machine the listed workspaces belong to; targets the trust API. */
   @property({ attribute: false }) machineId = "local";
+  @property({ attribute: false }) projectId = "";
   @property({ type: Boolean, reflect: true }) collapsible = false;
   @property({ type: Boolean, reflect: true }) collapsed = false;
   @property({ attribute: false }) workspaceLabelItems: (workspace: Workspace) => WorkspaceLabelItem[] = () => [];
@@ -42,6 +45,7 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
   @property({ attribute: false }) onSelect?: (workspace: Workspace) => void;
   @property({ attribute: false }) onDelete?: (workspace: Workspace) => void;
   @property({ attribute: false }) onMove?: (workspace: Workspace, direction: -1 | 1) => void;
+  @property({ attribute: false }) onReorder?: ((workspace: Workspace, neighbor: Workspace, position: DropPosition) => void) | undefined;
   @property({ attribute: false }) onToggleCollapsed?: () => void;
   @property({ attribute: false }) onFocusPreviousSection?: () => void | Promise<void>;
   @property({ attribute: false }) onFocusNextSection?: () => void | Promise<void>;
@@ -52,14 +56,26 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
     const row = [...this.renderRoot.querySelectorAll<HTMLElement>("[data-workspace-id]")].find((item) => item.dataset["workspaceId"] === this.openMenuWorkspaceId);
     return row?.querySelector<HTMLElement>(".action-menu-toggle") ?? undefined;
   }, () => { this.openMenuWorkspaceId = undefined; });
-  @state() private copiedDetailKey: string | undefined;
+  private readonly detailCopy = new DetailCopyController(this);
   @state() private trustByWorkspaceId: Record<string, TrustMenuState> = {};
+
+  private readonly reorder: ListReorderController<Workspace> = new ListReorderController<Workspace>(this, {
+    items: () => this.workspaces,
+    enabled: () => this.onReorder !== undefined && !this.collapsed,
+    onDrop: (workspace, neighbor, position) => { this.onReorder?.(workspace, neighbor, position); },
+    onStart: () => { this.openMenuWorkspaceId = undefined; },
+    label: workspacePrimaryLabel,
+  });
+  private reorderMembership = "";
 
   private focusedControl: HTMLElement | undefined;
   private focusAfterReorder: HTMLElement | undefined;
 
   protected override willUpdate(changed: PropertyValues<this>): void {
     if (changed.has("workspaces")) this.focusAfterReorder = this.focusedControl;
+    const membership = JSON.stringify(this.workspaces.map(({ id, projectId }) => [id, projectId]));
+    if (membership !== this.reorderMembership || changed.has("machineId") || changed.has("projectId") || this.collapsed || this.onReorder === undefined) this.reorder.cancel();
+    this.reorderMembership = membership;
   }
 
   protected override updated(changed: PropertyValues<this>): void {
@@ -108,7 +124,7 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
               const current = this.selected?.id === workspace.id;
               return html`
                 <div
-                  class=${`action-row workspace-row ui-nav-row ${current ? "selected" : ""}`}
+                  class=${`action-row workspace-row ui-nav-row ${current ? "selected" : ""} ${this.reorder.rowClass(workspace.id)}`}
                   data-current=${String(current)}
                   aria-current=${current ? "true" : nothing}
                   data-activity=${kind ?? "idle"}
@@ -116,10 +132,18 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
                   data-unread=${String(unread)}
                   tabindex="0"
                   data-workspace-id=${workspace.id}
+                  data-reorder-id=${this.onReorder === undefined ? nothing : workspace.id}
+                  data-reorderable=${String(this.onReorder !== undefined)}
+                  @pointerdown=${(event: PointerEvent) => { this.reorder.begin(event, workspace); }}
+                  @lostpointercapture=${(event: PointerEvent) => { this.reorder.handleLostPointerCapture(event); }}
+                  @contextmenu=${(event: MouseEvent) => { if (this.reorder.draggingId !== undefined) event.preventDefault(); }}
                   @focusin=${(event: FocusEvent) => { this.focusedControl = event.target instanceof HTMLElement ? event.target : undefined; }}
                   @focusout=${() => { this.focusedControl = undefined; }}
                   title=${label}
-                  @click=${(event: MouseEvent) => { activateSelectableRow(event, () => this.onSelect?.(workspace)); }}
+                  @click=${(event: MouseEvent) => {
+                    if (this.reorder.consumeClick()) { event.preventDefault(); event.stopPropagation(); return; }
+                    activateSelectableRow(event, () => this.onSelect?.(workspace));
+                  }}
                   @keydown=${(event: KeyboardEvent) => { this.handleWorkspaceKeydown(event, workspace); }}
                 >
                   <div class="action-main ui-nav-row-main">
@@ -131,6 +155,7 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
             })}
           </div>
         `}
+        <div class="list-reorder-status" role="status">${this.reorder.announcement}</div>
       </section>
     `;
   }
@@ -176,36 +201,39 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
           @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleMenu(workspace.id); }}
         >⋯</button>
         ${open ? html`
-          <div popover="auto" class="action-menu-panel workspace-menu-panel ui-menu ui-nav-row-menu ui-popup-panel" data-ui-context="workspace-actions" id=${menuId} @click=${(event: MouseEvent) => { event.stopPropagation(); }}>
+          <div popover="auto" class="action-menu-panel workspace-menu-panel ui-menu ui-menu--grouped ui-nav-row-menu ui-popup-panel" data-ui-context="workspace-actions" id=${menuId} @click=${(event: MouseEvent) => { event.stopPropagation(); }}>
             ${this.renderWorkspaceActions(workspace, index)}
-            ${this.renderWorkspaceDetails(label, items, workspace)}
+            ${this.renderTrustToggle(workspace)}
+            <div class="ui-menu-group" data-menu-group="details">
+              ${this.renderWorkspaceDetails(label, items, workspace)}
+              ${renderCopyIdAction("workspace", workspace.id, this.detailCopy)}
+            </div>
           </div>
         ` : null}
       </div>
     `;
   }
 
-  private renderWorkspaceActions(workspace: Workspace, index: number): TemplateResult {
+  private renderWorkspaceActions(workspace: Workspace, index: number): TemplateResult | null {
+    if (this.onMove === undefined && !canDeleteWorkspace(workspace)) return null;
     const deleting = this.isDeleting(workspace);
     const actionLabel = workspaceRemovalActionLabel(workspace) ?? messages.t("removeWorkspace");
     return html`
-      <div class="workspace-menu-actions">
+      <div class="workspace-menu-actions ui-menu-group" data-menu-group="actions">
         ${this.onMove === undefined ? null : html`
           <button class="ui-button ui-menu-item" data-move ?disabled=${index === 0} @click=${() => { this.onMove?.(workspace, -1); }}>${messages.t("moveUp")}</button>
           <button class="ui-button ui-menu-item" data-move ?disabled=${index === this.workspaces.length - 1} @click=${() => { this.onMove?.(workspace, 1); }}>${messages.t("moveDown")}</button>
         `}
-        ${this.renderTrustToggle(workspace)}
         ${canDeleteWorkspace(workspace) ? html`
           <button class="danger ui-button ui-menu-item" title=${deleting ? messages.t("removalProgress") : actionLabel} ?disabled=${deleting} @click=${() => { this.delete(workspace); }}>${deleting ? messages.t("removing") : actionLabel}</button>
         ` : null}
-        ${renderCopyIdAction("workspace", workspace.id, () => { this.openMenuWorkspaceId = undefined; })}
       </div>
     `;
   }
 
   private renderTrustToggle(workspace: Workspace): TemplateResult {
     return html`
-      <div class="workspace-menu-trust">
+      <div class="workspace-menu-trust ui-menu-group" data-menu-group="options">
         ${renderTrustMenuControl({
           id: `${workspaceMenuId(workspace.id)}-trusted`,
           state: this.trustByWorkspaceId[workspace.id],
@@ -254,42 +282,23 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
 
   private renderWorkspaceDetails(label: string, items: WorkspaceLabelItem[], workspace: Workspace): TemplateResult {
     return html`
-      <dl class="workspace-menu-details">
-        <div class="workspace-detail-row">
+      <dl class="workspace-menu-details ui-menu-details">
+        <div class="workspace-detail-row ui-menu-detail">
           <dt>${messages.t("workspace")}</dt>
-          <dd>${label}${this.renderDetailCopyButton(`${workspace.id}:label`, workspace.label, messages.t("copyLabel"))}</dd>
+          <dd>${label}${this.detailCopy.render(`${workspace.id}:label`, workspace.label, messages.t("copyLabel"))}</dd>
         </div>
-        <div class="workspace-detail-row">
+        <div class="workspace-detail-row ui-menu-detail">
           <dt>${messages.t("path")}</dt>
-          <dd title=${workspace.path}><bdi dir="ltr">${workspace.path}</bdi>${this.renderDetailCopyButton(`${workspace.id}:path`, workspace.path, messages.t("copyPath"))}</dd>
+          <dd title=${workspace.path}><bdi dir="ltr">${workspace.path}</bdi>${this.detailCopy.render(`${workspace.id}:path`, workspace.path, messages.t("copyPath"))}</dd>
         </div>
         ${items.length === 0 ? null : html`
-          <div class="workspace-detail-row">
+          <div class="workspace-detail-row ui-menu-detail">
             <dt>${messages.t("details")}</dt>
             <dd><span class="workspace-label">${renderWorkspaceLabelInlineItems(items)}</span></dd>
           </div>
         `}
       </dl>
     `;
-  }
-
-  private renderDetailCopyButton(key: string, value: string, action: string): TemplateResult {
-    const copied = this.copiedDetailKey === key;
-    const label = copied ? messages.t("copied") : action;
-    return html`
-      <button type="button" class="ui-button ui-button--compact ui-button--icon detail-copy" title=${label} aria-label=${label} @click=${() => { void this.copyDetail(key, value); }}>
-        <span aria-hidden="true">${copied ? "✓" : "⧉"}</span>
-      </button>
-    `;
-  }
-
-  private async copyDetail(key: string, value: string): Promise<void> {
-    const copied = await writeClipboardText(value);
-    if (!copied) return;
-    this.copiedDetailKey = key;
-    window.setTimeout(() => {
-      if (this.copiedDetailKey === key) this.copiedDetailKey = undefined;
-    }, 1200);
   }
 
   private delete(workspace: Workspace): void {
@@ -313,6 +322,7 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
   }
 
   private handleWorkspaceKeydown(event: KeyboardEvent, workspace: Workspace): void {
+    this.reorder.consumeClick();
     if (event.key === "Escape" && this.openMenuWorkspaceId === workspace.id) {
       event.preventDefault();
       event.stopPropagation();

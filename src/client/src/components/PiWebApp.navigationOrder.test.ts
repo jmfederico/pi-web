@@ -8,6 +8,8 @@ import { NavigationOrderController, type NavigationOrderPort, type NavigationOrd
 import { PiWebApp } from "./PiWebApp";
 import { RealtimeSocket } from "../sessionSocket";
 import { AppNavigationPanel } from "./appShell/AppNavigationPanel";
+import { WorkspaceList } from "./WorkspaceList";
+import { SessionList } from "./SessionList";
 
 class NavigationOrderApp extends PiWebApp {
   override connectedCallback(): void { LitElement.prototype.connectedCallback.call(this); }
@@ -70,6 +72,57 @@ it("renders saved scoped orders and saves menu moves and root pins without order
   panel.onPinSession?.({ ...session("child"), parentSessionPath: root.path });
   await controller.mutate(pinScope, (ids) => ids);
   expect(save).toHaveBeenCalledTimes(2);
+});
+
+it("wires workspace and pinned-root drops to their durable scopes without pruning hidden entries", async () => {
+  const app = new NavigationOrderApp();
+  const firstWorkspace: Workspace = { id: "ws-a", projectId: "a", label: "main", path: "/repo", isMain: true, effectiveConfig: {} };
+  const secondWorkspace: Workspace = { ...firstWorkspace, id: "ws-b", label: "branch", isMain: false };
+  const first = session("first");
+  const second = session("second");
+  const recent = session("recent");
+  const child = { ...session("child"), parentSessionPath: first.path };
+  Reflect.set(app, "state", {
+    ...initialAppState(), projects: [project("a")], selectedProject: project("a"),
+    workspaces: [firstWorkspace, secondWorkspace], selectedWorkspace: firstWorkspace,
+    sessions: [first, child, second, recent], mainView: "navigation",
+  });
+  const save = vi.fn<NavigationOrderPort["save"]>((_scope, ids, revision) => Promise.resolve({ ids: [...ids], revision: revision + 1 }));
+  const controller = new NavigationOrderController({
+    load: (scope) => Promise.resolve({ ids: scope.kind === "workspaces" ? ["hidden-workspace", "ws-a", "ws-b"] : ["hidden-pin", "first", "second"], revision: 4 }),
+    save,
+  }, { onChange: () => { Reflect.set(app, "navigationOrderVersion", Number(Reflect.get(app, "navigationOrderVersion")) + 1); } });
+  Reflect.set(app, "navigationOrder", controller);
+  const workspaceScope: NavigationOrderScope = { kind: "workspaces", machineId: "local", projectId: "a" };
+  const pinScope: NavigationOrderScope = { kind: "sessionPins", machineId: "local", projectId: "a", workspaceId: "ws-a" };
+  await Promise.all([controller.ensure(workspaceScope), controller.ensure(pinScope)]);
+  document.body.append(app);
+  await app.updateComplete;
+  const panel = app.shadowRoot?.querySelector("app-navigation-panel");
+  if (!(panel instanceof AppNavigationPanel)) throw new Error("Missing navigation panel");
+  await panel.updateComplete;
+  const workspaces = panel.shadowRoot?.querySelector("workspace-list");
+  const sessions = panel.shadowRoot?.querySelector("session-list");
+  if (!(workspaces instanceof WorkspaceList) || !(sessions instanceof SessionList)) throw new Error("Missing navigation lists");
+  await Promise.all([workspaces.updateComplete, sessions.updateComplete]);
+  expect(workspaces.projectId).toBe("a");
+  expect([sessions.machineId, sessions.projectId, sessions.workspaceId]).toEqual(["local", "a", "ws-a"]);
+  workspaces.onReorder?.(secondWorkspace, firstWorkspace, "before");
+  sessions.onReorderPin?.(second, first, "before");
+  await Promise.all([controller.mutate(workspaceScope, (ids) => ids), controller.mutate(pinScope, (ids) => ids)]);
+  expect(save).toHaveBeenCalledWith(workspaceScope, ["hidden-workspace", "ws-b", "ws-a"], 4);
+  expect(save).toHaveBeenCalledWith(pinScope, ["hidden-pin", "second", "first"], 4);
+  // Neither a recent root nor a child becomes a pin through the reorder boundary.
+  sessions.onReorderPin?.(recent, first, "before");
+  sessions.onReorderPin?.(child, first, "before");
+  await controller.mutate(pinScope, (ids) => ids);
+  expect(save).toHaveBeenCalledTimes(2);
+  panel.onReorderWorkspace = undefined;
+  panel.onReorderSessionPin = undefined;
+  await panel.updateComplete;
+  await Promise.all([workspaces.updateComplete, sessions.updateComplete]);
+  expect(workspaces.onReorder).toBeUndefined();
+  expect(sessions.onReorderPin).toBeUndefined();
 });
 
 it.each(["handleRealtimeEvent", "handleMachineActivityEvent"])("refreshes explicitly scoped pins through %s without using selected workspace", async (handler) => {

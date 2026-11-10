@@ -74,10 +74,13 @@ export class AppNavigationPanel extends LitElement {
   @property({ attribute: false }) onSelectProject?: (project: Project) => void | Promise<void>;
   @property({ attribute: false }) onCloseProject?: (project: Project) => void | Promise<void>;
   @property({ attribute: false }) onMoveProject?: (project: Project, direction: -1 | 1) => void;
+  @property({ attribute: false }) onReorderProject?: (project: Project, neighbor: Project, position: "before" | "after") => void;
   @property({ attribute: false }) onMoveWorkspace?: (workspace: Workspace, direction: -1 | 1) => void;
+  @property({ attribute: false }) onReorderWorkspace?: ((workspace: Workspace, neighbor: Workspace, position: "before" | "after") => void) | undefined;
   @property({ attribute: false }) onPinSession?: (session: SessionInfo) => void;
   @property({ attribute: false }) onUnpinSession?: (session: SessionInfo) => void;
   @property({ attribute: false }) onMoveSessionPin?: (session: SessionInfo, direction: -1 | 1) => void;
+  @property({ attribute: false }) onReorderSessionPin?: ((session: SessionInfo, neighbor: SessionInfo, position: "before" | "after") => void) | undefined;
   @property({ attribute: false }) onSelectWorkspace?: (workspace: Workspace) => void | Promise<void>;
   @property({ attribute: false }) onDeleteWorkspace?: (workspace: Workspace) => void | Promise<void>;
   @property({ attribute: false }) onStartSession?: () => void | Promise<void>;
@@ -169,10 +172,13 @@ export class AppNavigationPanel extends LitElement {
     selectProject: (project: Project) => this.onSelectProject?.(project),
     closeProject: (project: Project) => this.onCloseProject?.(project),
     moveProject: (project: Project, direction: -1 | 1) => this.onMoveProject?.(project, direction),
+    reorderProject: (project: Project, neighbor: Project, position: "before" | "after") => this.onReorderProject?.(project, neighbor, position),
     moveWorkspace: (workspace: Workspace, direction: -1 | 1) => this.onMoveWorkspace?.(workspace, direction),
+    reorderWorkspace: (workspace: Workspace, neighbor: Workspace, position: "before" | "after") => this.onReorderWorkspace?.(workspace, neighbor, position),
     pinSession: (session: SessionInfo) => this.onPinSession?.(session),
     unpinSession: (session: SessionInfo) => this.onUnpinSession?.(session),
     moveSessionPin: (session: SessionInfo, direction: -1 | 1) => this.onMoveSessionPin?.(session, direction),
+    reorderSessionPin: (session: SessionInfo, neighbor: SessionInfo, position: "before" | "after") => this.onReorderSessionPin?.(session, neighbor, position),
     toggleWorkspaces: () => { this.onToggleWorkspaces?.(); },
     selectWorkspace: (workspace: Workspace) => this.onSelectWorkspace?.(workspace),
     deleteWorkspace: (workspace: Workspace) => this.onDeleteWorkspace?.(workspace),
@@ -259,6 +265,7 @@ export class AppNavigationPanel extends LitElement {
         .onSelect=${this.childCallbacks.selectProject}
         .onClose=${this.childCallbacks.closeProject}
         .onMove=${this.childCallbacks.moveProject}
+        .onReorder=${this.onReorderProject === undefined ? undefined : this.childCallbacks.reorderProject}
         .onFocusPreviousSection=${this.childCallbacks.previousFromProjects}
         .onFocusNextSection=${this.childCallbacks.nextFromProjects}
         .onCancelKeyboardNavigation=${this.childCallbacks.cancelKeyboardNavigation}
@@ -269,6 +276,7 @@ export class AppNavigationPanel extends LitElement {
         style=${styleMap(this.sectionSizeStyle("workspaces"))}
         ?data-manual-size=${!this.compact && this.sectionSizes.height("workspaces") !== undefined}
         .workspaces=${this.workspaces}
+        .projectId=${this.selectedProject?.id ?? ""}
         .selected=${this.selectedWorkspace}
         .machineId=${this.selectedMachine?.id ?? "local"}
         .statusSnapshot=${this.selectedMachineStatusSnapshot()}
@@ -280,6 +288,7 @@ export class AppNavigationPanel extends LitElement {
         .onSelect=${this.childCallbacks.selectWorkspace}
         .onDelete=${this.childCallbacks.deleteWorkspace}
         .onMove=${this.childCallbacks.moveWorkspace}
+        .onReorder=${this.onReorderWorkspace === undefined ? undefined : this.childCallbacks.reorderWorkspace}
         .onFocusPreviousSection=${this.childCallbacks.previousFromWorkspaces}
         .onFocusNextSection=${this.childCallbacks.nextFromWorkspaces}
         .onCancelKeyboardNavigation=${this.childCallbacks.cancelKeyboardNavigation}
@@ -287,11 +296,15 @@ export class AppNavigationPanel extends LitElement {
       ${this.workspacesCollapsed ? null : this.renderSectionResizeHandle("workspaces")}` : null}
       <session-list
         .sessions=${this.sessions}
+        .machineId=${this.selectedMachine?.id ?? "local"}
+        .projectId=${this.selectedWorkspace?.projectId ?? this.selectedProject?.id ?? ""}
+        .workspaceId=${this.selectedWorkspace?.id ?? ""}
         .loading=${this.sessionsLoading}
         .pinnedRootIds=${this.pinnedRootIds}
         .onPin=${this.childCallbacks.pinSession}
         .onUnpin=${this.childCallbacks.unpinSession}
         .onMovePin=${this.childCallbacks.moveSessionPin}
+        .onReorderPin=${this.onReorderSessionPin === undefined ? undefined : this.childCallbacks.reorderSessionPin}
         .statuses=${this.sessionStatuses}
         .activities=${this.sessionActivities}
         .sessionFlags=${this.selectedMachineStatusSnapshot()?.sessions}
