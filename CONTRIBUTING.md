@@ -6,11 +6,17 @@ Bug reports, questions, feature requests, and pull requests are welcome.
 
 Use plain, concise language. State what happened or what should change, and why it matters.
 
-Start with `## What and why`, using **250 words maximum**. The opening must stand alone without requiring code or appendix reading. For bugs, include expected/actual behavior and only the reproduction steps needed to understand the report.
+The [issue template](.github/ISSUE_TEMPLATE/report.md) provides short prompts. Replace the opening comment with your description; a few sentences are usually enough.
+
+Explain what happened or should change and why it matters near the beginning, using **250 words maximum** for that explanation. The template uses `## What and why`, but that exact heading is not required. A brief greeting, thank-you, or introductory sentence before the explanation is fine. The explanation must stand alone without requiring code or appendix reading. For bugs, describe what happened and include:
+
+- How to reproduce it, with only the steps needed to understand the report
+- What you expected
+- The PI WEB version
 
 Brief implementation context, including code identifiers or a short explanation of a fix, may stay in the opening when the problem and outcome remain understandable without reading code. Technical detail alone is not a readability problem.
 
-Put implementation walkthroughs, file inventories, lengthy logs, and detailed verification in one optional collapsed appendix. Keep essential decisions, risks, and questions in the opening. Omit the appendix when there is no extended detail to separate.
+Use the collapsed **Additional information** section for implementation walkthroughs, file inventories, lengthy logs, and detailed verification. Replace its comment with your details, or remove the whole `<details>...</details>` block when you do not need it. This section is optional; keep essential decisions, risks, and questions in the opening.
 
 ```markdown
 ## What and why
@@ -20,7 +26,7 @@ The same session should remain selected so work can continue
 without searching for it again.
 
 <details>
-<summary>Technical details — optional reading</summary>
+<summary>Additional information</summary>
 
 Optional logs, investigation, and verification.
 
