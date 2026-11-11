@@ -81,6 +81,7 @@ export async function reconcileAutoInstallablePiPackages(options: ReconcileAutoI
   } = options;
 
   try {
+    // TEMP(pi-package-dismissal-migration): see docs/temporary-code.md
     // Import every profile, even packages outside today's registry. Keep the
     // legacy file so Settings removals and older installations remain supported.
     for (const dismissal of await dismissalStore.list()) {
