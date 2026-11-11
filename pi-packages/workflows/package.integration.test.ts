@@ -8,6 +8,7 @@ import { ActiveProfilePiPackageService, createDefaultPiPackageService } from "..
 import { reconcileAutoInstallablePiPackages } from "../../src/server/sessiond/autoInstallPiPackages.js";
 import { createAutoInstallPiPackageProfile } from "../../src/server/sessiond/autoInstallPiPackageSources.js";
 import { PiPackageDismissalStore } from "../../src/server/storage/piPackageDismissalStore.js";
+import { PiPackageProvisioningStore } from "../../src/server/storage/piPackageProvisioningStore.js";
 
 const known = KNOWN_AUTO_INSTALLABLE_PI_PACKAGES.find(({ id }) => id === "@jmfederico/pi-web-workflows");
 if (known === undefined) throw new Error("Workflows must be in the default-install registry");
@@ -53,7 +54,8 @@ describe("shipped Workflows Pi package", () => {
     const reconcile = () => reconcileAutoInstallablePiPackages({
       profileDir: agentDir,
       ...createAutoInstallPiPackageProfile(agentDir),
-      dismissalChecker: dismissals,
+      dismissalStore: dismissals,
+      provisioningStore: new PiPackageProvisioningStore(join(root, "provisioning.json")),
       packageRoot: root,
       knownPackages: [known],
     });
@@ -91,7 +93,8 @@ describe("shipped Workflows Pi package", () => {
     await reconcileAutoInstallablePiPackages({
       profileDir: agentDir,
       ...createAutoInstallPiPackageProfile(agentDir),
-      dismissalChecker: { isDismissed: () => Promise.resolve(false) },
+      dismissalStore: { list: () => Promise.resolve([]) },
+      provisioningStore: new PiPackageProvisioningStore(join(root, "provisioning.json")),
       packageRoot: root,
       knownPackages: [known],
     });
