@@ -55,6 +55,7 @@ import { loadServerPluginRecoveryConfig } from "../serverPluginRecovery.js";
 import { PiWebPluginCatalog } from "./piWebPluginCatalog.js";
 import { createAutoInstallPiPackageProfile } from "./sessiond/autoInstallPiPackageSources.js";
 import { PiPackageDismissalStore, piPackageDismissalStorePath } from "./storage/piPackageDismissalStore.js";
+import { PiPackageProvisioningStore, piPackageProvisioningStorePath } from "./storage/piPackageProvisioningStore.js";
 import { reconcileAutoInstallablePiPackages } from "./sessiond/autoInstallPiPackages.js";
 import { applyAgentHttpIdleTimeout } from "./sessiond/agentHttpDispatcher.js";
 import { scrubNonAgentVisibleEnvKeys } from "./sessiond/agentProcessEnvironment.js";
@@ -213,7 +214,8 @@ async function createSessionDaemonRuntime() {
   await reconcileAutoInstallablePiPackages({
     profileDir: activeAgentProfile.dir,
     ...createAutoInstallPiPackageProfile(activeAgentProfile.dir),
-    dismissalChecker: new PiPackageDismissalStore(piPackageDismissalStorePath(daemonEnvironment)),
+    dismissalStore: new PiPackageDismissalStore(piPackageDismissalStorePath(daemonEnvironment)),
+    provisioningStore: new PiPackageProvisioningStore(piPackageProvisioningStorePath(daemonEnvironment)),
     logger: app.log,
   }).catch((error: unknown) => {
     app.log.warn({ err: error }, "Pi package auto-install reconciliation failed unexpectedly; continuing without it");

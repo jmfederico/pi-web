@@ -19,6 +19,7 @@ export default defineConfig({
       "src/serverPluginRecovery.test.ts",
       "src/server/workingDirectory.test.ts",
       "src/server/storage/navigationPreferenceStore.test.ts",
+      "src/server/storage/piPackageProvisioningStore.test.ts",
       "src/server/sessions/sessionArchiveStore.test.ts",
       "src/server/sessions/archiveSelfTool.integration.test.ts",
       "src/server/sessions/attachmentService.test.ts",
@@ -31,6 +32,7 @@ export default defineConfig({
       "src/server/workspaces/filePreviewService.test.ts",
       "src/server/piWebPluginCatalog.test.ts",
       "src/server/piWebPluginService.test.ts",
+      "src/server/sessiond/autoInstallPiPackageSources.test.ts",
       "pi-web-plugins/audio/server.test.ts",
       // Real Git processes, worktrees, and canonical repository paths.
       "pi-web-plugins/git/git-backend.test.ts",

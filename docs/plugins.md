@@ -475,7 +475,21 @@ pi-web workspaces notify --project ID --plugin git
 
 Use **Settings → Pi packages** to install, update, or remove a package. Enter its npm, git/URL, or local package source. Use **Settings → PI WEB plugins** to enable or disable its web integration and see whether it is active or needs a restart.
 
-Relays, Workflows, and Session naming ship and update with PI WEB. At session-daemon startup, PI WEB updates their configured sources in the active agent profile to the running installation while preserving resource filters. Remove them through **Settings → Pi packages** for persistent removal. A package removed only with `pi remove` may be installed again at daemon startup.
+Relays, Workflows, and Session naming ship with PI WEB and are automatically provisioned once per agent profile. At session-daemon startup, configured copies follow the running PI WEB installation while preserving resource filters. Once provisioning is recorded, removing a package through **Settings → Pi packages**, `pi remove`, or manual removal from Pi's package settings keeps it absent across daemon restarts. Reinstall explicitly from **Available packages** if you change your mind; reinstalling does not reset the provisioning record.
+
+### One-time package provisioning
+
+PI WEB keeps a persistent ledger at `$PI_WEB_DATA_DIR/pi-package-provisioning.json`, with `profileDir`, `packageId`, and `provisionedAt` for each record. The timestamp means automatic provisioning was considered complete, not necessarily that the package was installed on that date. At session-daemon startup, for each automatically provisioned package without a record:
+
+- An existing dismissal is migrated, using its original `dismissedAt` timestamp as `provisionedAt`.
+- Otherwise, an already configured package is recorded with the current timestamp.
+- Otherwise, PI WEB installs the package and records successful provisioning. Failed installs remain unrecorded and retry on a later startup.
+
+After a record exists, PI WEB never automatically recreates an absent package for that profile. Configured copies still receive the source updates described above. The existing `$PI_WEB_DATA_DIR/pi-package-dismissals.json` file remains honored.
+
+**Upgrade caveat:** a package removed only with `pi remove` or manual settings edits before provisioning was recorded can be installed one last time during rollout. Remove it again after that successful install; the new record then prevents future automatic reinstalls. Existing Settings dismissals migrate without reinstalling.
+
+### Activate package changes
 
 | Change | What to do next |
 | --- | --- |
@@ -594,7 +608,7 @@ You can also use `/worktree` directly in a conversation with the free-form hint 
 
 The prompt asks the agent to create a worktree named for your purpose, using the requested base or the current worktree's HEAD. If you give no purpose or description, the agent asks for one.
 
-PI WEB installs Workflows automatically for the active agent profile at session-daemon startup. Its web plugin is enabled by default. After installing or updating its server-backed web plugin, restart the target session daemon when safe and reload the browser. Disable **Workflows** in **Settings → PI WEB plugins** and restart the target daemon when safe to hide the shortcut while keeping `/worktree`. To remove its prompts as well, remove the package in **Settings → Pi packages** and run `/reload` in each idle conversation. Removal is remembered across daemon restarts; reinstall from **Available packages** if you change your mind, then reload idle conversations and the browser.
+Workflows follows the [one-time package provisioning](#one-time-package-provisioning) rules for the active agent profile. Its web plugin is enabled by default. After installing or updating its server-backed web plugin, restart the target session daemon when safe and reload the browser. Disable **Workflows** in **Settings → PI WEB plugins** and restart the target daemon when safe to hide the shortcut while keeping `/worktree`. To remove its prompts as well, remove the package in **Settings → Pi packages** and run `/reload` in each idle conversation. Removal is remembered across daemon restarts; reinstall from **Available packages** if you change your mind, then reload idle conversations and the browser.
 
 ### Relays
 
@@ -602,7 +616,7 @@ The shipped Relay package adds `/relay` for the current checkout and `/relay-wor
 
 The read-only **Relays** tab lists saved packets under `.pi-web/relays/` and shows their goal, current baton, history, and any recorded decisions. It does not start or edit a relay. A session-list indicator opens the associated packet on that conversation's machine and workspace, including custom packet locations inside the workspace. Older sessions without public Relay metadata have no indicator.
 
-PI WEB installs Relay automatically for the active agent profile if it is not configured. Removing it through **Settings → Pi packages** is remembered; it will not be silently reinstalled. Reinstall from **Available packages** if you change your mind. Disabling just the Relays plugin hides its tab and row indicators but leaves its agent resources available.
+Relay follows the [one-time package provisioning](#one-time-package-provisioning) rules for the active agent profile. Once recorded, removal through **Settings → Pi packages**, `pi remove`, or manual package-settings edits persists across daemon restarts. Reinstall from **Available packages** if you change your mind. Disabling just the Relays plugin hides its tab and row indicators but leaves its agent resources available.
 
 ## Pi extension dialogs
 
