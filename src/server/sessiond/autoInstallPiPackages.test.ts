@@ -122,6 +122,35 @@ describe("one-time Pi package provisioning", () => {
     expect(warn).toHaveBeenCalledOnce();
   });
 
+  it.each(["dismissal read", "provisioning read", "dismissal migration write", "provisioning write"])("updates stale configured sources despite a %s failure without installing absent packages", async (failure) => {
+    const source = join(tempDir, "obsolete-relays");
+    const configured = { source, scope: "user" as const, installedPath: source };
+    const laterConfigured = { source: join(tempDir, "obsolete-other"), scope: "user" as const, installedPath: join(tempDir, "obsolete-other") };
+    options.packageProvider = { listPackages: () => [configured, laterConfigured], getInstalledPath: () => undefined };
+    options.identityResolver = { resolveDeclaredName: (path) => Promise.resolve(path === source ? PACKAGE_ID : "@example/configured") };
+    options.knownPackages = [
+      ...KNOWN_PACKAGES,
+      { id: "@example/absent", label: "Absent", description: "Absent", shippedPathSegments: ["absent"] },
+      { id: "@example/configured", label: "Configured", description: "Configured", shippedPathSegments: ["configured"] },
+    ];
+    if (failure === "dismissal read" || failure === "provisioning read") {
+      await writeFile(failure === "dismissal read" ? dismissalPath : provisioningPath, "{broken");
+    } else {
+      if (failure === "dismissal migration write") await dismissalStore.dismiss("/agent", PACKAGE_ID);
+      options.provisioningStore = {
+        has: (profile, id) => provisioningStore.has(profile, id),
+        record: () => Promise.reject(new Error("ledger is read-only")),
+      };
+    }
+
+    await reconcileAutoInstallablePiPackages(options);
+
+    expect(replaceSources).toHaveBeenCalledWith([configured], join(PACKAGE_ROOT, "dist", "pi-packages", "relays"));
+    expect(replaceSources).toHaveBeenCalledWith([laterConfigured], join(PACKAGE_ROOT, "configured"));
+    expect(install).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalled();
+  });
+
   it("reports a ledger write failure and records the configured package on the next startup", async () => {
     await reconcileAutoInstallablePiPackages({
       ...options,

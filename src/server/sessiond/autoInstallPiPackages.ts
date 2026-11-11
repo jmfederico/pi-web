@@ -63,8 +63,8 @@ const defaultIdentityResolver: PiPackageAutoInstallIdentityResolver = {
  * Reconciles the active agent profile's configured Pi packages against the
  * known auto-installable registry, replacing stale managed sources and
  * provisioning each identity once. Legacy dismissals seed the ledger without
- * recreating removed packages. State migration failures skip reconciliation;
- * individual package failures are logged without aborting daemon startup.
+ * recreating removed packages. History failures block initial provisioning,
+ * not configured-source updates; failures never abort daemon startup.
  */
 export async function reconcileAutoInstallablePiPackages(options: ReconcileAutoInstallablePiPackagesOptions): Promise<void> {
   const {
@@ -80,6 +80,7 @@ export async function reconcileAutoInstallablePiPackages(options: ReconcileAutoI
     logger,
   } = options;
 
+  let provisioningStateAvailable = true;
   try {
     // TEMP(pi-package-dismissal-migration): see docs/temporary-code.md
     // Import every profile, even packages outside today's registry. Keep the
@@ -92,29 +93,42 @@ export async function reconcileAutoInstallablePiPackages(options: ReconcileAutoI
       });
     }
   } catch (error) {
-    logger?.warn({ err: error, profileDir }, "Pi package dismissal migration failed; skipping automatic package reconciliation");
-    return;
+    provisioningStateAvailable = false;
+    logger?.warn({ err: error, profileDir }, "Pi package dismissal migration failed; skipping initial provisioning but continuing configured-source updates");
   }
 
   for (const knownPackage of knownPackages) {
     try {
-      const provisioned = await provisioningStore.has(profileDir, knownPackage.id);
       const recordProvisioning = () => provisioningStore.record({ profileDir, packageId: knownPackage.id, provisionedAt: now() });
       const source = resolveShippedPiPackagePath(knownPackage, packageRoot);
       const configured = await findConfiguredCopies(knownPackage, packageProvider, identityResolver, profileDir);
       if (configured.length > 0) {
-        if (!provisioned) await recordProvisioning();
         const currentPath = await canonicalPath(source);
         const paths = await Promise.all(configured.map((entry) => canonicalPath(entry.installedPath)));
         if (paths.some((path) => path !== currentPath)) {
           await installer.replaceSources(configured, source);
           logger?.info?.({ packageId: knownPackage.id, profileDir, source, previousSources: configured.map(({ source, scope }) => ({ source, scope })) }, "reconciled managed Pi package sources to the current shipped copy");
         }
-        continue;
       }
-      if (provisioned) continue;
+      // Updating an explicitly configured source does not require permission to
+      // provision an absent package. Keep history failures on that boundary.
+      if (!provisioningStateAvailable) continue;
+      let provisioned: boolean;
+      try {
+        provisioned = await provisioningStore.has(profileDir, knownPackage.id);
+        if (configured.length > 0 && !provisioned) await recordProvisioning();
+      } catch (error) {
+        provisioningStateAvailable = false;
+        throw error;
+      }
+      if (configured.length > 0 || provisioned) continue;
       await installer.install(source);
-      await recordProvisioning();
+      try {
+        await recordProvisioning();
+      } catch (error) {
+        provisioningStateAvailable = false;
+        throw error;
+      }
       logger?.info?.({ packageId: knownPackage.id, profileDir, source }, "auto-installed known Pi package for the active agent profile");
     } catch (error) {
       logger?.warn(
