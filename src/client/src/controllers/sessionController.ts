@@ -1142,8 +1142,14 @@ export class SessionController {
     const restored = { ...session };
     delete restored.archived;
     delete restored.archivedAt;
-    const wasSelected = this.getState().selectedSession?.id === restored.id;
-    this.replaceSession(restored);
+    const state = this.getState();
+    const wasSelected = state.selectedSession?.id === restored.id;
+    // Match the server listing order instead of retaining the archived row's position.
+    const sessions = state.sessions
+      .map((candidate) => candidate.id === restored.id ? restored : candidate)
+      .sort((a, b) => Number(a.archived === true) - Number(b.archived === true)
+        || Date.parse(b.modified) - Date.parse(a.modified));
+    this.setState({ sessions, selectedSession: wasSelected ? restored : state.selectedSession });
     if (wasSelected) {
       await this.selectSession(restored, {
         updateUrl: false,
