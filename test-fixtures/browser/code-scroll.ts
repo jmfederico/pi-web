@@ -60,26 +60,43 @@ async function frames(count = 2) {
   }
   return samples;
 }
-let samples: ReturnType<typeof geometry>[] = [];
-let recording = false;
-function recordFrame(): void {
-  if (!recording) return;
-  // Sample after the frame's layout/scroll RAFs, not halfway through the
-  // production viewport transaction before the browser has painted it.
-  setTimeout(() => {
-    if (!recording) return;
-    samples.push(geometry());
-    requestAnimationFrame(recordFrame);
-  }, 0);
-}
+type Geometry = ReturnType<typeof geometry>;
+let recording: { stop: () => Promise<Geometry[]> } | undefined;
 function startRecording(): void {
-  samples = [geometry()];
-  recording = true;
-  requestAnimationFrame(recordFrame);
+  if (recording !== undefined) throw new Error("Scroll recording already started");
+  const samples = [geometry()];
+  // ResizeObserver runs after animation-frame callbacks and layout, before
+  // paint. A timer can instead sample a deferred DOM update before the next
+  // frame has compensated its scroll position. Resize an isolated probe each
+  // frame so we also sample wheel movement when the content size is unchanged.
+  const probe = document.createElement("div");
+  probe.style.cssText = "position: fixed; top: 0; left: 0; width: 1px; height: 1px; visibility: hidden; pointer-events: none; contain: strict;";
+  document.body.append(probe);
+  let wide = false;
+  let frame = 0;
+  let finish: ((samples: Geometry[]) => void) | undefined;
+  const observer = new ResizeObserver(() => {
+    samples.push(geometry());
+    if (finish !== undefined) {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      probe.remove();
+      finish(samples);
+      return;
+    }
+    frame = requestAnimationFrame(() => {
+      wide = !wide;
+      probe.style.width = wide ? "2px" : "1px";
+    });
+  });
+  observer.observe(probe);
+  recording = { stop: () => new Promise((resolve) => { finish = resolve; }) };
 }
 async function stopRecording() {
-  await frames();
-  recording = false;
+  if (recording === undefined) throw new Error("Scroll recording has not started");
+  // Include a final rendering-phase sample, rather than stopping between frames.
+  const samples = await recording.stop();
+  recording = undefined;
   return samples;
 }
 function enterFromBelow() {
