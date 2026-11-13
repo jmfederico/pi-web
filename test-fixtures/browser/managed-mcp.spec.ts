@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
-import { managedMcpView } from "../../src/client/src/api/managedMcp.testSupport";
-import type { ManagedMcpUpdate } from "../../src/shared/managedMcp";
+import { managedMcpView } from "../../pi-packages/mcp-manager/browser/managedMcp.testSupport.js";
+import type { ManagedMcpUpdate } from "../../pi-packages/mcp-manager/shared.js";
 
 function isUpdate(value: unknown): value is ManagedMcpUpdate {
   return typeof value === "object" && value !== null
@@ -13,9 +13,13 @@ function isUpdate(value: unknown): value is ManagedMcpUpdate {
 test("all scope controls remain reachable in desktop columns and a narrow scrolling panel", async ({ page }, testInfo) => {
   const updates: ManagedMcpUpdate[] = [];
   let view = managedMcpView();
-  await page.route("**/api/machines/fixture/mcp/managed**", async (route) => {
-    if (route.request().method() === "POST") {
-      const update: unknown = route.request().postDataJSON();
+  await page.route("**/mcp-fixture", async (route) => {
+    const payload: unknown = route.request().postDataJSON();
+    if (typeof payload !== "object" || payload === null || !("scope" in payload) || !("operation" in payload) || !("input" in payload)) throw new Error("Invalid backend request");
+    expect(payload.scope).toEqual({ kind: "workspace", projectId: "project", workspaceId: "workspace" });
+    expect(payload.input).not.toHaveProperty("cwd");
+    if (payload.operation === "update") {
+      const update = payload.input;
       if (!isUpdate(update)) throw new Error("Invalid fixture update");
       updates.push(update);
       view = { ...view, revision: `revision-${String(updates.length + 1)}`, servers: view.servers.map((row) => {
@@ -41,6 +45,13 @@ test("all scope controls remain reachable in desktop columns and a narrow scroll
   const keepEditing = page.getByRole("button", { name: "Keep editing", exact: true });
   await expect(keepEditing).toBeFocused();
   await keepEditing.click();
+  await expect(project).toBeChecked();
+  const refresh = page.getByRole("button", { name: "Refresh", exact: true });
+  await refresh.click();
+  await expect(keepEditing).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  await expect(refresh).toBeFocused();
   await expect(project).toBeChecked();
   await page.screenshot({ path: testInfo.outputPath("managed-mcp-unsaved.png"), fullPage: true });
   await page.getByRole("button", { name: "Save Project change for docs" }).click();
@@ -74,11 +85,11 @@ test("all scope controls remain reachable in desktop columns and a narrow scroll
 });
 
 test("empty state exposes setup paths without opening a disclosure", async ({ page }, testInfo) => {
-  await page.route("**/api/machines/fixture/mcp/managed**", (route) => route.fulfill({ json: managedMcpView({ servers: [] }) }));
+  await page.route("**/mcp-fixture", (route) => route.fulfill({ json: managedMcpView({ servers: [] }) }));
   await page.goto("/managed-mcp.html");
   await expect(page.getByRole("button", { name: "Copy Global config path" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Copy Project config path" })).toBeVisible();
-  await expect(page.getByText("/workspace/.pi-web/config.json", { exact: true })).toBeVisible();
+  await expect(page.getByText("/workspace/.pi/mcp-manager.json", { exact: true })).toBeVisible();
   await expect(page.locator("pre code")).not.toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("managed-mcp-empty.png"), fullPage: true });
 });

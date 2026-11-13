@@ -75,13 +75,6 @@ export function createCoreActions(): PluginAction[] {
       run: (context) => context.logoutAuth(),
     },
     {
-      id: "mcp.manage",
-      get title() { return m.t("mcp_manage_title"); },
-      get description() { return m.t("mcp_manage_description"); },
-      get group() { return m.t("groupMCP"); },
-      run: (context) => context.navigate({ tool: "core:mcp", view: "workspace" }, { mode: "patch" }),
-    },
-    {
       id: "mcp.login",
       get title() { return m.t("mcp_login_title"); },
       get description() { return m.t("mcp_login_description"); },

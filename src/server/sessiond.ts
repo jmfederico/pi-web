@@ -18,8 +18,6 @@ import { AuthService } from "./sessions/authService.js";
 import { bootstrapAndFreezeGlobalExtensionProviders } from "./sessions/globalProviderPolicy.js";
 import { registerAuthRoutes } from "./sessions/authRoutes.js";
 import { registerMcpAuthRoutes } from "./sessions/mcpAuthRoutes.js";
-import { registerManagedMcpRoutes } from "./mcp/managedMcpRoutes.js";
-import { createManagedMcpConfigService } from "./mcp/managedMcpConfig.js";
 import { ModelCatalogRefresher } from "./sessions/modelCatalogRefresher.js";
 import { PiSessionService } from "./sessions/piSessionService.js";
 import { createPiSessionManagerGateway } from "./sessions/piSessionManagerGateway.js";
@@ -37,6 +35,10 @@ import { navigationPreferenceStorePath } from "./storage/navigationPreferenceSto
 import { registerSessionPinRoutes } from "./navigationPreferenceRoutes.js";
 import { PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY } from "../shared/pluginSessionLifecycleTypes.js";
 import { createServerPluginSessionLifecycleCapabilityFactory } from "./plugins/serverPluginSessionLifecycleCapability.js";
+import { createServerPluginSessionStateCapabilityFactory } from "./plugins/serverPluginSessionStateCapability.js";
+import { createServerPluginProjectTrustCapabilityFactory } from "./plugins/serverPluginProjectTrustCapability.js";
+import { PI_WEB_HOST_SESSION_STATE_CAPABILITY } from "../shared/pluginSessionStateTypes.js";
+import { PI_WEB_HOST_PROJECT_TRUST_CAPABILITY } from "../shared/pluginProjectTrustTypes.js";
 import { registerPluginSessionLifecycleRoutes } from "./sessiond/pluginSessionLifecycleRoutes.js";
 import {
   eligibleWorkspaceProviderContributions,
@@ -247,7 +249,7 @@ async function createSessionDaemonRuntime() {
       capability: MAINTENANCE_TERMINAL_CAPABILITY,
       value: resolveMaintenanceExecutionContext(childProcessEnvironment, daemonLaunchCwd),
     }],
-    lateHostCapabilities: [PI_WEB_HOST_WORKSPACES_CAPABILITY, PI_WEB_HOST_PI_SESSIONS_CAPABILITY, PI_WEB_HOST_PI_SESSION_EVENTS_CAPABILITY, PI_WEB_HOST_CATALOG_CAPABILITY, PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY],
+    lateHostCapabilities: [PI_WEB_HOST_WORKSPACES_CAPABILITY, PI_WEB_HOST_PI_SESSIONS_CAPABILITY, PI_WEB_HOST_PI_SESSION_EVENTS_CAPABILITY, PI_WEB_HOST_CATALOG_CAPABILITY, PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY, PI_WEB_HOST_SESSION_STATE_CAPABILITY, PI_WEB_HOST_PROJECT_TRUST_CAPABILITY],
   });
   let sessionsForFailedConstruction: PiSessionService | undefined;
   let projectLifecycleForFailedConstruction: ProjectLifecycleService | undefined;
@@ -364,7 +366,6 @@ async function createSessionDaemonRuntime() {
       subsessionsEnabled: config.subsessions,
       askUserEnabled: config.askUser,
       config: configService,
-      managedMcpConfig: createManagedMcpConfigService({ env: daemonEnvironment }),
       appendSystemPromptSections: [
         // Sessions always run nested in this daemon, so they always get the
         // session environment facts; Docker deployments add their container
@@ -412,6 +413,8 @@ async function createSessionDaemonRuntime() {
       }),
       createServerPluginPiSessionsCapabilityFactory({ projects, workspaces: workspaceProviders, sessions }),
       createServerPluginPiSessionEventsCapabilityFactory({ projects, workspaces: workspaceProviders, sessions }),
+      createServerPluginSessionStateCapabilityFactory({ projects, workspaces: workspaceProviders, sessions }),
+      createServerPluginProjectTrustCapabilityFactory({ projects, workspaces: workspaceProviders, agentDir: activeAgentProfile.dir }),
     ]);
     const providerPluginIdSet = new Set(providerPluginIds);
     const remainingActivePluginIds = serverPlugins.healthRecords()
@@ -512,7 +515,6 @@ function registerSessionDaemonRoutes({ eventHub, machineStatus, statusAttributio
   registerServerNoticeRoutes(app, serverNotices);
   registerAuthRoutes(app, auth);
   registerMcpAuthRoutes(app, sessions);
-  registerManagedMcpRoutes(app, sessions);
   registerSessionRoutes(app, sessions, eventHub);
   registerSessionLocationRoutes(app, { sessions, workspaces: statusAttribution });
   registerWorkspaceCatalogRoutes(app, {

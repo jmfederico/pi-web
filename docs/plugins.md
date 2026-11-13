@@ -91,6 +91,14 @@ Plugins can publish namespaced session metadata to identify workflows and link t
 
 Only deliberately published session metadata is exposed, not arbitrary Pi custom entries. Keep secrets and private extension state out of it. Namespaces organize data rather than enforce ownership or authorization, and plugins must validate their own schema and render values as untrusted input. Browser API v4 remains unchanged; older hosts omit the field.
 
+### MCP manager
+
+The bundled `@jmfederico/pi-mcp-manager` package (`pi-packages/mcp-manager`) provides the **MCP** tab through plugin ID `mcp-manager`. It is enabled by default and follows the selected machine. Its thin Pi extension loads configured servers in standalone Pi TUI sessions and PI WEB without a web runtime dependency. Management controls exist only in the web plugin; the package adds no TUI management commands.
+
+The package follows [one-time provisioning](#one-time-package-provisioning). Remove it through **Settings → Pi packages** and reload idle sessions to stop loading its servers; reinstall from **Available packages** to restore it. Disabling only the PI WEB plugin hides management while the installed extension continues loading servers. Native Pi MCP configuration and authentication remain Pi-owned.
+
+See [managed MCP configuration](config.md#managed-mcp) for package-owned global/project files, environment enforcement, trust, and manual migration.
+
 ### Automatic session naming
 
 The bundled **Session naming** Pi extension (`@jmfederico/pi-session-naming`) names each new conversation from its first prompt in PI WEB and the TUI. Remove it through **Settings → Pi packages** to use another naming extension; reinstall it from **Available packages** to restore naming.
@@ -415,6 +423,23 @@ The host PI sessions capability's `run()` accepts optional `model` (an exact `pr
 
 A messaging connection targets a session already hosted on that machine; it does not open saved sessions automatically. Sending a message is not proof that a companion is installed or that its work succeeded. Integrations must report their own progress and results. Connections have no startup-message replay, and closing a connection does not stop agent work.
 
+### Private session state
+
+Server plugins can keep namespaced JSON state with a conversation through `PI_WEB_HOST_SESSION_STATE_CAPABILITY` (`pi-web.host/session-state`, version 1), exported by `@jmfederico/pi-web/server-plugin-api`. Declare it in `requires` and resolve it in `start({ capabilities })`. Normal capability authority checks and revocation apply; namespaces organize data, not permissions. These private custom entries are separate from browser-public session metadata.
+
+- `read({ projectId, workspaceId, sessionId }, namespace, { signal? })` returns `{ value?: JsonValue, revision: string }`. An absent namespace has no value and revision `""`. Reading hosts a saved session on the owning daemon, making `events.connect` available afterward.
+- `write(selection, namespace, { value, inherit, revision }, { signal? })` returns the new snapshot. Pass the revision from `read`; stale writes fail with code `SESSION_STATE_CONFLICT`. Archived sessions reject writes. State is bounded to **64 KiB UTF-8** and **64 levels** of JSON nesting.
+
+Set `inherit: true` to copy the latest state into forks and agent-spawned sessions before their first prompt. `inherit: false` excludes active state from that copy; it does **not** erase history or make inherited transcript content secret. Physical transcript history follows Pi's native fork semantics. Extensions reading entries directly should use the exported `readSessionState(entries, namespace)` helper with entries in native append order; it honors the fork reset marker rather than reviving historical state.
+
+Saved-session writes are durable through Pi's persistence APIs. A blank, unprompted session follows Pi's native persistence lifecycle; a successful state write does not independently guarantee a session file exists. Do not handcraft session JSONL to bypass that lifecycle.
+
+### Explicit project trust
+
+`PI_WEB_HOST_PROJECT_TRUST_CAPABILITY` (`pi-web.host/project-trust`, version 1), from the same server API export, provides `get({ projectId, workspaceId }): Promise<boolean>`. It reports explicit saved/default Pi trust, not the automatic trust Pi grants an empty workspace. Use it when loading plugin-owned project resources that Pi does not recognize itself. Declare and resolve it like other capabilities; normal authority checks and revocation apply.
+
+Both capabilities are generic, not MCP-specific. Older hosts may lack them. Reload the target session daemon to activate newly installed capability code; restarting interrupts active sessions and terminals.
+
 ### Companion tools calling a v5 backend
 
 Companion Pi extensions can call the same v5 `peer` handlers as a plugin's browser entry. Import `createCompanionBackend` from `@jmfederico/pi-web/server-plugin-api`; no additional server handler, HTTP listener, or browser panel is needed.
@@ -449,7 +474,7 @@ Outside a supporting PI WEB host, discovery throws rather than falling back to H
 
 ### Storage and background work
 
-Server plugins receive a persistent `dataDirectory`, separate from installed package code. The directory is shared across that plugin's projects on the machine. Plugins own their data format, migrations, and cleanup; there is no host storage API to learn.
+Server plugins receive a persistent `dataDirectory`, separate from installed package code. The directory is shared across that plugin's projects on the machine. Plugins own that directory's data format, migrations, and cleanup. Use [private session state](#private-session-state) instead for values that should follow a conversation.
 
 Requests and channels are bounded and can fail, time out, or disconnect. A successful send does not guarantee delivery, and the host does not automatically retry uncertain work. Long-running jobs should maintain their own state and let the UI reconnect without accidentally starting the job twice.
 
@@ -475,7 +500,7 @@ pi-web workspaces notify --project ID --plugin git
 
 Use **Settings → Pi packages** to install, update, or remove a package. Enter its npm, git/URL, or local package source. Use **Settings → PI WEB plugins** to enable or disable its web integration and see whether it is active or needs a restart.
 
-Relays, Workflows, and Session naming ship with PI WEB and are automatically provisioned once per agent profile. At session-daemon startup, configured copies follow the running PI WEB installation while preserving resource filters. Once provisioning is recorded, removing a package through **Settings → Pi packages**, `pi remove`, or manual removal from Pi's package settings keeps it absent across daemon restarts. Reinstall explicitly from **Available packages** if you change your mind; reinstalling does not reset the provisioning record.
+Relays, Workflows, Session naming, and MCP manager ship with PI WEB and are automatically provisioned once per agent profile. At session-daemon startup, configured copies follow the running PI WEB installation while preserving resource filters. Once provisioning is recorded, removing a package through **Settings → Pi packages**, `pi remove`, or manual removal from Pi's package settings keeps it absent across daemon restarts. Reinstall explicitly from **Available packages** if you change your mind; reinstalling does not reset the provisioning record.
 
 ### One-time package provisioning
 

@@ -1,5 +1,4 @@
 import { constants } from "node:fs";
-import { parseManagedMcpConfig, type PiWebMcpConfig } from "../../shared/mcpConfig.js";
 import { open, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { effectiveAttachmentsConfig, effectiveUploadsConfig, overlayPiWebConfig, parseAttachmentsConfig, parsePathAccessConfig, parseUploadsConfig, type PiWebConfig } from "../../config.js";
@@ -11,7 +10,6 @@ export const PROJECT_PI_WEB_CONFIG_PATH = ".pi-web/config.json";
 
 export interface ProjectPiWebConfig {
   version?: 1;
-  mcp?: PiWebMcpConfig;
   pathAccess?: PiWebPathAccessConfig;
   uploads?: PiWebUploadsConfig;
   attachments?: PiWebAttachmentsConfig;
@@ -113,7 +111,6 @@ function parseProjectPiWebConfig(value: Record<string, unknown>, path: string): 
     ...(value["uploads"] !== undefined ? { uploads: parseUploadsConfig(value["uploads"], path) } : {}),
     ...(value["attachments"] !== undefined ? { attachments: parseAttachmentsConfig(value["attachments"], path) } : {}),
     ...(value["plugins"] !== undefined ? { plugins: parseProjectPlugins(value["plugins"], path) } : {}),
-    ...(value["mcp"] !== undefined ? { mcp: parseManagedMcpConfig(value["mcp"], path, true) } : {}),
   };
 }
 

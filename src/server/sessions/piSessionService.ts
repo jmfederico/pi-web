@@ -30,8 +30,6 @@ import {
   type ExtensionCommandContextActions,
   type ExtensionUIDialogOptions,
   type ExtensionUIContext,
-  type InlineExtension,
-  type SessionStartEvent,
   type MarkdownTransformer,
   type ModelRuntime,
   type ProjectTrustContext,
@@ -45,11 +43,10 @@ import { projectBrowserMessage } from "../browserMessageProjection.js";
 import { isSessionMediaId } from "../../shared/sessionMedia.js";
 import { getBuiltinExtensionFactories } from "./builtinExtensionFactories.js";
 import { McpAuthFlowService } from "./mcpAuthFlowService.js";
-import type { ManagedMcpContext, ManagedMcpUpdate, ManagedMcpView } from "../../shared/managedMcp.js";
-import { ManagedMcpService, type ManagedMcpConfigService } from "../mcp/managedMcpService.js";
-import { createManagedMcpConfigService } from "../mcp/managedMcpConfig.js";
-import { readManagedMcpSession, writeManagedMcpSession } from "../mcp/managedMcpSession.js";
-import { hasManagedMcpProjectConfig } from "../mcp/nativeMcpNames.js";
+import {
+  SESSION_STATE_CUSTOM_TYPE, SESSION_STATE_RESET_CUSTOM_TYPE, createSessionStateData, latestSessionStateEntries, readSessionState,
+  validateSessionStateNamespace, type SessionStateData, type SessionStateSnapshot, type SessionStateWrite,
+} from "../../shared/sessionState.js";
 import type { SessionMedia } from "./sessionMediaIndex.js";
 import { pageMessagesAtSafeBoundary } from "./messagePaging.js";
 import { clientSessionFirstMessagePreview } from "./clientSessionPreview.js";
@@ -317,7 +314,7 @@ interface StartSessionOptions {
 
 interface InternalStartSessionOptions extends StartSessionOptions {
   /** Internal inheritance only; never a session-creation tool or API option. */
-  initialManagedMcp?: readonly string[];
+  initialSessionState?: readonly SessionStateData[];
   creationProvenance?: SessionCreationProvenance;
   deferAnnouncement?: boolean;
 }
@@ -993,7 +990,7 @@ function webProjectTrustContext(cwd: string): ProjectTrustContext {
  */
 export async function resolveWebProjectTrusted(resolution: WebProjectTrustResolution): Promise<boolean> {
   const { cwd, trustStore, settingsManager } = resolution;
-  if (!hasTrustRequiringProjectResources(cwd) && !hasManagedMcpProjectConfig(cwd)) return true;
+  if (!hasTrustRequiringProjectResources(cwd)) return true;
   if (resolution.extensionsResult) {
     const { result, errors } = await emitWebProjectTrustEvent(
       resolution.extensionsResult,
@@ -1040,7 +1037,6 @@ function createDefaultRuntimeFactory(
   askUserEnabled = false,
   appendSystemPromptSections: readonly string[] = [],
   messaging?: SendSessionMessageToolDeps,
-  managedMcp?: (manager: SessionManager, event: SessionStartEvent | undefined) => InlineExtension,
 ): PiWebCreateAgentSessionRuntimeFactory {
   return async ({ cwd, agentDir, sessionManager, sessionStartEvent, initialModel, initialThinkingLevel, delegationToolsEnabled }) => {
     const parentSessionFile = sessionManager.getHeader()?.parentSession;
@@ -1068,7 +1064,7 @@ function createDefaultRuntimeFactory(
       ...(spawn === undefined ? {} : { spawn }),
       isEnabled: () => dispatchEnabled,
     });
-    const projectTrustRequiring = hasTrustRequiringProjectResources(cwd) || hasManagedMcpProjectConfig(cwd);
+    const projectTrustRequiring = hasTrustRequiringProjectResources(cwd);
     const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: !projectTrustRequiring });
     // Pre-session-creation trust failures (`project_trust` handler errors)
     // land in the runtime diagnostics next to the services diagnostics,
@@ -1082,7 +1078,6 @@ function createDefaultRuntimeFactory(
       resourceLoaderOptions: {
         ...resourceLoaderOptions, eventBus,
         extensionFactories: [
-          ...(managedMcp === undefined ? [] : [managedMcp(sessionManager, sessionStartEvent)]),
           ...builtinFactories, sessionDispatch, ...(subsessions === undefined ? [] : [createSubsessionCompletionDelivery(subsessions)]),
         ],
       },
@@ -1151,7 +1146,6 @@ function createPiWebEditToolDefinition(cwd: string) {
 }
 
 export interface PiSessionServiceDependencies {
-  managedMcpConfig?: ManagedMcpConfigService;
   sessionEvents?: PiSessionEventConnections;
   agentDir: string;
   sessionManager: PiSessionManagerGateway;
@@ -1262,7 +1256,6 @@ export class PiSessionService implements SessionRouteService {
   /** Exempt only a command's own prompt receipt while it invokes guarded session control. */
   private readonly extensionCommandExecution = new AsyncLocalStorage<ExtensionCommandExecution>();
   readonly mcpAuthFlows = new McpAuthFlowService();
-  private readonly managedMcp: ManagedMcpService;
   private readonly runtimeMessageCounts = new WeakMap<PiAgentSession, number>();
   private readonly interventionStates = new WeakMap<PiAgentSession, boolean>();
   /** Fresh tool intent only: reopening a transcript never replays archival. */
@@ -1372,7 +1365,6 @@ export class PiSessionService implements SessionRouteService {
     this.extensionDialogsTimeoutMs = deps.extensionDialogsTimeoutMs ?? DEFAULT_EXTENSION_DIALOGS_TIMEOUT_MS;
     this.catalogRefreshStatus = deps.catalogRefreshStatus;
     this.config = deps.config;
-    this.managedMcp = new ManagedMcpService(deps.managedMcpConfig ?? createManagedMcpConfigService(), deps.agentDir);
     this.unreadPublicationRetryInitialMs = Math.max(
       0,
       deps.unreadPublicationRetryDelayMs ?? DEFAULT_UNREAD_PUBLICATION_RETRY_MS,
@@ -1382,7 +1374,7 @@ export class PiSessionService implements SessionRouteService {
     // also require the spawn capability (they share its project-scope resolver).
     const subsessionsActive = this.spawnTargets !== undefined && deps.subsessionsEnabled === true;
     this.sessionEvents = deps.sessionEvents ?? new PiSessionEventConnections();
-    this.createRuntime = deps.createRuntime ?? createDefaultRuntimeFactory(
+    const createRuntime = deps.createRuntime ?? createDefaultRuntimeFactory(
       this.sessionEvents,
       this.modelRuntime,
       this.sessionManager,
@@ -1401,19 +1393,20 @@ export class PiSessionService implements SessionRouteService {
       deps.askUserEnabled === true,
       deps.appendSystemPromptSections ?? [],
       this.messageTargets === undefined ? undefined : { send: (input) => this.sendSessionMessage(input) },
-      (manager, event) => {
-        // Forks can cut the transcript before its latest preference entry. Copy the
-        // source's current choices before the replacement runtime connects MCPs.
-        if (event?.reason === "fork" && event.previousSessionFile !== undefined) {
-          const source = [...this.active.values()].find((active) => active.runtime.session.sessionFile === event.previousSessionFile)?.runtime.session.sessionManager
-            ?? this.sessionManager.open(event.previousSessionFile);
-          writeManagedMcpSession(manager, readManagedMcpSession(source));
-        }
-        return this.managedMcp.extension(manager, (message) => {
-          this.logger.info({ sessionId: manager.getSessionId(), message }, "Managed MCP registration failed");
-        });
-      },
     );
+    this.createRuntime = (options) => {
+      const event = options.sessionStartEvent;
+      if (event?.reason === "fork" && event.previousSessionFile !== undefined) {
+        const source = [...this.active.values()].find((active) => active.runtime.session.sessionFile === event.previousSessionFile)?.runtime.session.sessionManager
+          ?? this.sessionManager.open(event.previousSessionFile);
+        const inherited = this.inheritableSessionState(source);
+        // Native forks copy historical entries, potentially before a later opt-out.
+        // Reset their live interpretation before installing the source's current state.
+        options.sessionManager.appendCustomEntry(SESSION_STATE_RESET_CUSTOM_TYPE, { version: 1 });
+        this.appendInheritedSessionState(options.sessionManager, inherited);
+      }
+      return createRuntime(options);
+    };
     this.createAgentRuntime = deps.createAgentRuntime ?? defaultCreateAgentRuntime;
     this.workspaceActivity = deps.workspaceActivity;
     this.heartbeat = setInterval(() => { this.publishHeartbeats(); }, deps.heartbeatIntervalMs ?? 2000);
@@ -1842,8 +1835,8 @@ export class PiSessionService implements SessionRouteService {
     const metadata = options.metadata === undefined ? undefined : requireSessionUiMetadata(options.metadata);
     const name = options.name === undefined ? undefined : requireInitialSessionName(options.name);
     const manager = this.sessionManager.create(cwd, options.parentSession === undefined ? undefined : { parentSession: options.parentSession });
-    const inheritedMcp = options.initialManagedMcp ?? (options.parentSession === undefined ? [] : readManagedMcpSession(this.sessionManager.open(options.parentSession)));
-    if (inheritedMcp.length > 0) writeManagedMcpSession(manager, inheritedMcp);
+    const inheritedState = options.initialSessionState ?? (options.parentSession === undefined ? [] : this.inheritableSessionState(this.sessionManager.open(options.parentSession)));
+    this.appendInheritedSessionState(manager, inheritedState);
     if (metadata !== undefined) {
       if (manager.appendCustomEntry === undefined) throw new Error("Session manager does not support UI metadata initialization");
       manager.appendCustomEntry(SESSION_UI_METADATA_CUSTOM_TYPE, { version: 1, metadata });
@@ -1902,7 +1895,7 @@ export class PiSessionService implements SessionRouteService {
       ? input.model
       : await this.resolveSpawnModel({ id: input.spawningSessionId, cwd: input.spawningCwd }, input.modelSpec);
     const created = await this.startSession(decision.cwd, {
-      initialManagedMcp: await this.managedMcpForSpawn(input.spawningSessionId, input.spawningCwd),
+      initialSessionState: await this.sessionStateForSpawn(input.spawningSessionId, input.spawningCwd),
       ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
       ...(input.name === undefined ? {} : { name: input.name }),
       ...(model === undefined ? {} : { initialModel: model }),
@@ -1944,7 +1937,7 @@ export class PiSessionService implements SessionRouteService {
       ? input.model
       : await this.resolveSpawnModel({ id: input.parentSessionId, cwd: input.spawningCwd }, input.modelSpec);
     const created = await this.startSession(decision.cwd, {
-      initialManagedMcp: await this.managedMcpForSpawn(input.parentSessionId, input.spawningCwd),
+      initialSessionState: await this.sessionStateForSpawn(input.parentSessionId, input.spawningCwd),
       ...(input.parentSessionFile === undefined ? {} : { parentSession: input.parentSessionFile }),
       ...(model === undefined ? {} : { initialModel: model }),
       ...(input.thinkingLevel === undefined ? {} : { initialThinkingLevel: input.thinkingLevel }),
@@ -3214,67 +3207,63 @@ export class PiSessionService implements SessionRouteService {
     return commands.sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  private async managedMcpForSpawn(sessionId: string, cwd: string): Promise<string[]> {
+  private inheritableSessionState(manager: PiSessionManager): SessionStateData[] {
+    return latestSessionStateEntries(manager.getEntries?.() ?? manager.getBranch())
+      .filter((entry) => entry.inherit)
+      .map(({ namespace, value, inherit }) => createSessionStateData(namespace, value, inherit));
+  }
+
+  private appendInheritedSessionState(manager: PiSessionManager, entries: readonly SessionStateData[]): void {
+    if (entries.length === 0) return;
+    if (manager.appendCustomEntry === undefined) throw new Error("Session manager does not support private session state");
+    for (const entry of entries) manager.appendCustomEntry(SESSION_STATE_CUSTOM_TYPE, createSessionStateData(entry.namespace, entry.value, entry.inherit));
+  }
+
+  private async sessionStateForSpawn(sessionId: string, cwd: string): Promise<SessionStateData[]> {
     const active = this.active.get(sessionId)?.runtime.session;
     if (active !== undefined) {
-      if (!cwdPathsEqual(active.sessionManager.getCwd(), cwd)) throw new Error("MCP source session belongs to another workspace");
-      return readManagedMcpSession(active.sessionManager);
+      if (!cwdPathsEqual(active.sessionManager.getCwd(), cwd)) throw new Error("Source session belongs to another workspace");
+      return this.inheritableSessionState(active.sessionManager);
     }
     const resolved = await this.sessionManager.resolveSessionFile(cwd, sessionId);
-    return resolved === undefined ? [] : readManagedMcpSession(this.sessionManager.open(resolved.path));
+    return resolved === undefined ? [] : this.inheritableSessionState(this.sessionManager.open(resolved.path));
   }
 
-  private async managedMcpContext(context: ManagedMcpContext): Promise<{ session?: PiAgentSession; projectTrusted: boolean }> {
-    if (context.sessionId !== undefined) {
-      if (context.cwd === undefined) throw new Error("Session MCP settings require a workspace");
-      const ref = { id: context.sessionId, cwd: context.cwd };
-      await this.assertWritable(ref);
-      const session = await this.getOrOpen(ref);
-      await this.assertWritable(ref);
-      this.assertManagedMcpIdentity(context, session);
-      return { session, projectTrusted: this.managedMcp.projectTrusted(session.sessionManager, session.settingsManager.isProjectTrusted?.() === true) };
-    }
-    if (context.cwd === undefined) return { projectTrusted: false };
-    const saved = new ProjectTrustStore(this.agentDir).get(context.cwd);
-    const settings = SettingsManager.create(context.cwd, this.agentDir, { projectTrusted: false });
-    return { projectTrusted: saved ?? settings.getDefaultProjectTrust() === "always" };
-  }
-
-  private assertManagedMcpIdentity(context: ManagedMcpContext, session: PiAgentSession): void {
+  private assertSessionStateIdentity(ref: PiSessionRef, session: PiAgentSession): void {
     this.assertCurrentExtensionSession(session);
-    if (session.sessionId !== context.sessionId || context.cwd === undefined || !cwdPathsEqual(context.cwd, session.sessionManager.getCwd())) {
-      throw new Error("MCP session workspace changed; refresh and retry");
+    if (session.sessionId !== ref.id || !cwdPathsEqual(ref.cwd, session.sessionManager.getCwd())) {
+      throw new Error("Session state workspace changed; refresh and retry");
     }
   }
 
-  async managedMcpView(context: ManagedMcpContext): Promise<ManagedMcpView> {
-    const { session, projectTrusted } = await this.managedMcpContext(context);
-    if (session !== undefined) {
-      await this.managedMcp.refresh(session.sessionManager);
-      this.assertManagedMcpIdentity(context, session);
-    }
-    return this.managedMcp.view(context, projectTrusted, session?.sessionManager);
+  /** Hosting on read lets callers subsequently connect to the native extension bus. */
+  async readSessionState(ref: PiSessionRef, namespace: string, signal?: AbortSignal): Promise<SessionStateSnapshot> {
+    validateSessionStateNamespace(namespace);
+    signal?.throwIfAborted();
+    const session = await this.getOrOpen(ref);
+    signal?.throwIfAborted();
+    this.assertSessionStateIdentity(ref, session);
+    return readSessionState(session.sessionManager.getEntries?.() ?? session.sessionManager.getBranch(), namespace);
   }
 
-  async updateManagedMcp(input: ManagedMcpUpdate): Promise<ManagedMcpView> {
-    const { session, projectTrusted } = await this.managedMcpContext(input);
-    if (session !== undefined) this.assertManagedMcpIdentity(input, session);
-    if (input.scope === "session") {
-      if (session === undefined) throw new Error("Select a session to change session MCP settings");
-      await this.runSessionEntryMutation(session, "change MCP settings", async () => {
-        this.managedMcp.update(input, projectTrusted, session.sessionManager);
-        await this.managedMcp.refresh(session.sessionManager);
-      });
-    } else {
-      this.managedMcp.update(input, projectTrusted, session?.sessionManager);
-      // Every loaded session resolves its own trusted project and saved choices.
-      // Busy controllers defer reconciliation until Pi settles the current run.
-      await Promise.all([...new Set(this.active.values())]
-        .filter((active) => input.scope === "global" || (input.cwd !== undefined && cwdPathsEqual(active.runtime.cwd, input.cwd)))
-        .map((active) => this.managedMcp.refresh(active.runtime.session.sessionManager)));
-    }
-    if (session !== undefined) this.assertManagedMcpIdentity(input, session);
-    return this.managedMcp.view(input, projectTrusted, session?.sessionManager);
+  async writeSessionState(ref: PiSessionRef, namespace: string, input: SessionStateWrite, signal?: AbortSignal): Promise<SessionStateSnapshot> {
+    const data = createSessionStateData(namespace, input.value, input.inherit);
+    if (typeof input.revision !== "string" || input.revision.length > 512) throw new Error("Invalid session state revision");
+    signal?.throwIfAborted();
+    await this.assertWritable(ref);
+    const session = await this.getOrOpen(ref);
+    await this.assertWritable(ref);
+    signal?.throwIfAborted();
+    this.assertSessionStateIdentity(ref, session);
+    if (this.isTreeExclusiveOperationActive(session)) throw new Error("Cannot change private session state while session replacement is active");
+    return this.runSessionEntryMutation(session, "change private session state", () => {
+      const manager = session.sessionManager;
+      const current = readSessionState(manager.getEntries?.() ?? manager.getBranch(), namespace);
+      if (current.revision !== input.revision) throw Object.assign(new Error("Session state changed; refresh and retry"), { code: "SESSION_STATE_CONFLICT" });
+      if (manager.appendCustomEntry === undefined) throw new Error("Session manager does not support private session state");
+      const revision = manager.appendCustomEntry(SESSION_STATE_CUSTOM_TYPE, data);
+      return Promise.resolve({ value: data.value, revision });
+    });
   }
 
   private async mcpAuthSession(ref: PiSessionRef): Promise<PiAgentSession> {

@@ -3,7 +3,6 @@ import type { ChatSessionWarningRow } from "../../components/chat/SessionWarning
 import { createCoreActions } from "./actions";
 import { createCoreMessageActions } from "./messageActions";
 import { createCoreNoticesPanel } from "./notices";
-import { createCoreManagedMcpPanel } from "./managedMcp";
 
 export function createCorePlugin(getApplicationNotices?: () => readonly ChatSessionWarningRow[]): PiWebPlugin {
   return {
@@ -13,7 +12,7 @@ export function createCorePlugin(getApplicationNotices?: () => readonly ChatSess
       contributions: {
         actions: createCoreActions(),
         messageActions: createCoreMessageActions(),
-        applicationPanels: [createCoreNoticesPanel(getApplicationNotices), createCoreManagedMcpPanel()],
+        applicationPanels: [createCoreNoticesPanel(getApplicationNotices)],
       },
     }),
   };

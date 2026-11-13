@@ -14,7 +14,6 @@ export interface PiWebConfigService {
 export const SELECTED_MACHINE_CONFIG_KEYS = [
   "installationName",
   "plugins",
-  "mcp",
   "pathAccess",
   "basePaths",
   "uploads",
@@ -41,7 +40,7 @@ export function createFilePiWebConfigService(options: LoadOptions = {}): PiWebCo
     },
     replace: (config, selectedMachine) => {
       const current = currentPiWebConfigResponse(options);
-      const replacement = preserveManagedMcpDefinitions(current.config, selectedMachine ? mergeSelectedMachineConfig(current.config, config) : config);
+      const replacement = selectedMachine ? mergeSelectedMachineConfig(current.config, config) : config;
       savePiWebConfig(preserveEnforcedConfigOverrides(current.config, replacement, current.enforcedSettings), options);
       return currentPiWebConfigResponse(options);
     },
@@ -72,7 +71,7 @@ export function currentPiWebConfigResponse(options: LoadOptions = {}): PiWebConf
 
 export function registerConfigRoutes(app: FastifyInstance, service: PiWebConfigService = createFilePiWebConfigService(), activeHostAccess?: PiWebHostAccess | null): void {
   const withRuntime = (response: PiWebConfigResponse): PiWebConfigResponse => ({
-    ...redactManagedMcpConfigResponse(response), ...(activeHostAccess === undefined ? {} : { activeHostAccess }),
+    ...response, ...(activeHostAccess === undefined ? {} : { activeHostAccess }),
   });
   app.get("/api/config", async (_request, reply) => {
     try {
@@ -93,7 +92,6 @@ export function registerConfigRoutes(app: FastifyInstance, service: PiWebConfigS
   app.put<{ Body: { config?: unknown } | undefined }>("/api/config", async (request, reply) => {
     try {
       const config = parseConfigRequest(request.body?.config);
-      rejectManagedMcpDefinitionWrite(config);
       return withRuntime(await replaceConfigService(service, config));
     } catch (error) {
       const status = isConfigValidationError(error) ? 400 : 500;
@@ -142,8 +140,6 @@ export function parsePiWebConfigUpdate(value: unknown, selectedMachine = false, 
     const root = parseConfigPointer(pointer)[0];
     if (selectedMachine && (root === undefined || !SELECTED_MACHINE_CONFIG_KEY_SET.has(root))) throw new Error(`${prefix} key is not allowed: ${root ?? pointer}`);
   }
-  rejectManagedMcpDefinitionWrite(set);
-  if (unset.some((pointer) => pointer === "/mcp" || pointer === "/mcp/servers")) throw new Error("PI WEB config MCP definitions are managed in config files; reset /mcp/enabledServers instead");
   const update = { set, unset };
   validateConfigUpdate(update);
   return update;
@@ -157,7 +153,7 @@ export function applyPiWebConfigUpdate(current: PiWebConfigResponse, update: PiW
 async function replaceConfigService(service: PiWebConfigService, config: PiWebConfigValues, selectedMachine = false): Promise<PiWebConfigResponse> {
   if (service.replace !== undefined) return service.replace(config, selectedMachine);
   const current = await service.read();
-  const replacement = preserveManagedMcpDefinitions(current.config, selectedMachine ? mergeSelectedMachineConfig(current.config, config) : config);
+  const replacement = selectedMachine ? mergeSelectedMachineConfig(current.config, config) : config;
   return service.write(preserveEnforcedConfigOverrides(current.config, replacement, current.enforcedSettings));
 }
 
@@ -192,9 +188,7 @@ export function parseSelectedMachineConfigRequest(value: unknown, agentPathHost:
     if (!SELECTED_MACHINE_CONFIG_KEY_SET.has(key)) throw new Error(`PI WEB selected-machine config key is not allowed: ${key}`);
   }
   try {
-    const config = parseConfigRequest(value, agentPathHost);
-    rejectManagedMcpDefinitionWrite(config);
-    return pickSelectedMachineConfig(config);
+    return pickSelectedMachineConfig(parseConfigRequest(value, agentPathHost));
   } catch (error) {
     throw new Error(selectedMachineConfigErrorMessage(error), { cause: error });
   }
@@ -205,7 +199,6 @@ export function mergeSelectedMachineConfig(current: PiWebConfigValues, patch: Pi
 }
 
 export function selectedMachineConfigResponse(response: PiWebConfigResponse): PiWebConfigResponse {
-  response = redactManagedMcpConfigResponse(response);
   const selected: PiWebConfigResponse = {
     ...response,
     config: pickSelectedMachineConfig(response.config),
@@ -232,28 +225,6 @@ export function parsePiWebConfigResponseBody(value: unknown, source = "PI WEB co
     ...(record["defaultsPath"] === undefined ? {} : { defaultsPath: requireResponseString(record, "defaultsPath", source) }),
     ...(record["defaultsConfig"] === undefined ? {} : { defaultsConfig: parseConfigRequest(record["defaultsConfig"], "portable") }),
   };
-}
-
-function redactManagedMcpConfigResponse(response: PiWebConfigResponse): PiWebConfigResponse {
-  const redact = (config: PiWebConfigValues): PiWebConfigValues => {
-    if (config.mcp === undefined) return config;
-    return { ...config, mcp: config.mcp.enabledServers === undefined ? {} : { enabledServers: config.mcp.enabledServers } };
-  };
-  return {
-    ...response,
-    config: redact(response.config),
-    effectiveConfig: redact(response.effectiveConfig),
-    ...(response.defaultsConfig === undefined ? {} : { defaultsConfig: redact(response.defaultsConfig) }),
-  };
-}
-
-function rejectManagedMcpDefinitionWrite(config: PiWebConfigValues): void {
-  if (config.mcp?.servers !== undefined) throw new Error("PI WEB config MCP definitions are managed in config files, not the config API");
-}
-
-function preserveManagedMcpDefinitions(current: PiWebConfigValues, replacement: PiWebConfigValues): PiWebConfigValues {
-  if (current.mcp?.servers === undefined) return replacement;
-  return { ...replacement, mcp: { ...replacement.mcp, servers: current.mcp.servers } };
 }
 
 function parseConfigRequest(value: unknown, agentPathHost: AgentPathHost = "current"): PiWebConfig {

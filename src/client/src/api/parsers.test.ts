@@ -136,24 +136,6 @@ describe("API parsers", () => {
     });
   });
 
-  it("preserves safe MCP enablement and policy sources across config layers without accepting definitions", () => {
-    const response = { path: "/tmp/config.json", exists: true, config: {}, effectiveConfig: {},
-      envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false },
-      enforcedSettings: { "/mcp/enabledServers": "PI_WEB_MCP" }, configSources: { "/mcp/enabledServers": "environment" } };
-    for (const field of ["config", "effectiveConfig", "defaultsConfig"] as const) {
-      for (const enabledServers of [[], ["docs", "project-tools"]]) {
-        const parsed = parsePiWebConfigResponse({ ...response, [field]: { mcp: { enabledServers } } });
-        expect(parsed[field]).toEqual({ mcp: { enabledServers } });
-        expect(parsed.enforcedSettings).toEqual(response.enforcedSettings);
-        expect(parsed.configSources).toEqual(response.configSources);
-      }
-      expect(() => parsePiWebConfigResponse({ ...response, [field]: { mcp: { enabledServers: [false] } } })).toThrow("mcp.enabledServers");
-      expect(() => parsePiWebConfigResponse({ ...response, [field]: { mcp: { servers: { docs: { url: "https://secret.invalid" } } } } })).toThrow("MCP server definitions");
-    }
-    expect(parsePiWebConfigResponse(response).config).not.toHaveProperty("mcp");
-    expect(() => parsePiWebConfigResponse({ ...response, config: { mcp: [] } })).toThrow("mcp");
-  });
-
   it("preserves archive destinations for config round-trips without a UI control", () => {
     const sessionArchive = { directory: "/external/archives" };
     const response = { path: "/tmp/config.json", exists: true, config: { sessionArchive }, effectiveConfig: { sessionArchive }, envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false } };

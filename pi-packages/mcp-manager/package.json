@@ -1,0 +1,24 @@
+{
+  "name": "@jmfederico/pi-mcp-manager",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Load configured MCP servers in Pi, with management controls in PI WEB.",
+  "keywords": ["pi-package"],
+  "files": ["extensions/index.ts", "server-plugin.js", "browser"],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": { "extensions": ["./extensions/index.ts"] },
+  "piWeb": {
+    "plugins": [{
+      "id": "mcp-manager",
+      "defaultEnabled": true,
+      "browserRoot": "browser",
+      "module": "browser/pi-web-plugin.js",
+      "serverModule": "server-plugin.js",
+      "machineSpecific": true
+    }]
+  }
+}

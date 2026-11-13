@@ -1,4 +1,5 @@
-import { ManagedMcpPanel } from "../../src/client/src/components/ManagedMcpPanel";
+import { panelServices } from "../../pi-packages/mcp-manager/browser/panel.testSupport.js";
+import { parseManagedMcpView } from "../../pi-packages/mcp-manager/browser/managedMcp.js";
 
 const style = document.createElement("style");
 style.textContent = `
@@ -11,8 +12,19 @@ host.style.cssText = "position: fixed; inset: 0; height: 100dvh; overflow: hidde
 const root = host.attachShadow({ mode: "open" });
 const scroller = document.createElement("section");
 scroller.style.cssText = "height: 100%; overflow: auto;";
-const panel = new ManagedMcpPanel();
-panel.context = { machineId: "fixture", cwd: "/workspace", sessionId: "session-fixture" };
+const services = panelServices();
+const panel = services.createPanel();
+panel.backend = {
+  machineId: "fixture",
+  forScope: (scope) => ({
+    async request(operation, input) {
+      const response = await fetch(new URL("mcp-fixture", document.baseURI), { method: "POST", body: JSON.stringify({ scope, operation, input }) });
+      const view = parseManagedMcpView(await response.json());
+      return { ...view, servers: view.servers.map((server) => ({ ...server })) };
+    },
+  }),
+};
+panel.context = { machineId: "fixture", projectId: "project", workspaceId: "workspace", cwd: "/workspace", sessionId: "session-fixture" };
 panel.machineLabel = "Build machine";
 panel.sessionLabel = "Documentation review";
 scroller.append(panel);

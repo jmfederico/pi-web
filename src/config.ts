@@ -10,7 +10,6 @@ import { requireDefaultStreamingBehavior } from "./shared/streamingBehavior.js";
 import { migrateSessionNamingConfig } from "./configSessionNamingMigration.js";
 import { requireInstallationName } from "./shared/installationName.js";
 import { requireHostAccess } from "./shared/hostAccess.js";
-import { parseManagedMcpConfig } from "./shared/mcpConfig.js";
 import { readConfigDocument, updateConfigDocument } from "./configFileStorage.js";
 
 import { PI_WEB_CONFIG_DEFINITIONS, overlayPiWebConfig, parsePiWebEnvBoolean, piWebConfigEnvName, piWebConfigNamespaceFields, piWebConfigSettingPointers } from "./shared/configResolution.js";
@@ -400,7 +399,6 @@ export function parsePiWebConfig(value: Record<string, unknown>, path = "request
     ...(value["defaultStreamingBehavior"] !== undefined ? { defaultStreamingBehavior: requireDefaultStreamingBehavior(value["defaultStreamingBehavior"], path) } : {}),
     ...(value["quietMode"] !== undefined ? { quietMode: parseBooleanKey(value["quietMode"], "quietMode", path) } : {}),
     ...(value["plugins"] !== undefined ? { plugins: parsePlugins(value["plugins"], path) } : {}),
-    ...(value["mcp"] !== undefined ? { mcp: parseManagedMcpConfig(value["mcp"], path) } : {}),
     ...(value["basePaths"] !== undefined ? { basePaths: parseBasePaths(value["basePaths"], path) } : {}),
     ...(value["pathAccess"] !== undefined ? { pathAccess: parsePathAccessConfig(value["pathAccess"], path) } : {}),
     ...(value["uploads"] !== undefined ? { uploads: parseUploadsConfig(value["uploads"], path) } : {}),
