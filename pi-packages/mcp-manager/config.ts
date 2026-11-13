@@ -81,17 +81,22 @@ export function createManagedMcpConfigService(options: ManagedMcpConfigOptions =
       namespaces.set(key, [...namespaces.get(key) ?? [], definition]);
     }
     const conflicts = [...new Set([...namespaces.values()].filter((entries) => entries.length > 1).flatMap((entries) => entries.map((entry) => entry.name)))];
+    const knownNames = new Set(definitions.map((definition) => definition.name));
+    const globalNames = new Set(definitions.filter((definition) => definition.scope === "global").map((definition) => definition.name));
+    const enforcedEnabled = enabledEnforced ? globalConfig.enabledServers ?? [] : undefined;
+    // Policy selects available definitions, not global-file grants. Project-only
+    // definitions still require trust and cannot be enabled by saved global grants.
     const enabledByScope = {
-      global: globalConfig.enabledServers ?? [],
-      project: enabledEnforced ? [] : projectConfig.enabledServers ?? [],
+      global: enforcedEnabled?.filter((name) => globalNames.has(name)) ?? globalConfig.enabledServers ?? [],
+      project: enforcedEnabled?.filter((name) => knownNames.has(name) && !globalNames.has(name)) ?? projectConfig.enabledServers ?? [],
       session: enabledEnforced ? [] : [...new Set(context.sessionEnabledServers ?? [])].map((name) => requireMcpServerName(name, "session")),
     };
     const enabledServers = definitions.filter((definition) => !conflicts.includes(definition.name) && (
       (definition.scope === "global" && enabledByScope.global.includes(definition.name)) || enabledByScope.project.includes(definition.name) || enabledByScope.session.includes(definition.name)
     )).map((definition) => definition.name);
-    const knownNames = new Set(definitions.map((definition) => definition.name));
-    const globalNames = new Set(definitions.filter((definition) => definition.scope === "global").map((definition) => definition.name));
     const issues = [
+      ...(enforcedEnabled === undefined ? [] : ["MCP enablement is enforced by PI_MCP_MANAGER.",
+        ...enforcedEnabled.filter((name) => !knownNames.has(name)).map((name) => `Enforced MCP server ${name} has no available definition.`)]),
       ...conflicts.map((name) => `Conflicting managed MCP definitions for ${name}; rename or remove the duplicate.`),
       ...enabledByScope.global.filter((name) => !globalNames.has(name)).map((name) => `Globally enabled MCP server ${name} has no global definition.`),
       ...[...new Set([...enabledByScope.project, ...enabledByScope.session])].filter((name) => !knownNames.has(name)).map((name) => `Enabled MCP server ${name} has no available definition.`),

@@ -71,6 +71,23 @@ describe("MCP manager configuration", () => {
     expect(() => service({ PI_MCP_MANAGER: "private-invalid-json" }).read(context())).not.toThrow("private-invalid-json");
   });
 
+  it("applies enforced enablement to trusted project definitions without treating it as a saved global grant", () => {
+    put(globalPath, { servers: { shared: stdio }, enabledServers: ["shared"] });
+    put(projectPath, { servers: { local: http }, enabledServers: [] });
+    const enforced = service({ PI_MCP_MANAGER: '{"enabledServers":["local"]}' });
+    const result = enforced.read({ ...context(), sessionEnabledServers: ["shared"] });
+    expect(result.enabledServers).toEqual(["local"]);
+    expect(result.enabledByScope).toEqual({ global: [], project: ["local"], session: [] });
+    expect(result.view.servers.find((entry) => entry.name === "local")).toMatchObject({ effectiveEnabled: true, enabled: { global: false, project: true } });
+    expect(result.view).toMatchObject({ globalWritable: false, projectWritable: false, sessionWritable: false });
+    expect(result.view.issues).not.toContain("Globally enabled MCP server local has no global definition.");
+    expect(enforced.read({ cwd: root, projectTrusted: false }).enabledServers).toEqual([]);
+    expect(enforced.read({ projectTrusted: false }).enabledServers).toEqual([]);
+    // Policy never writes the saved scope choices or bypasses a definition policy.
+    expect(service().read(context()).enabledServers).toEqual(["shared"]);
+    expect(service({ PI_MCP_MANAGER: '{"servers":{},"enabledServers":["local"]}' }).read(context()).enabledServers).toEqual([]);
+  });
+
   it("changes only selected scope, preserves raw definitions, and rejects stale external edits", () => {
     const raw = { ...http, exposure: "codemode-deferred" };
     put(globalPath, { servers: { shared: raw }, enabledServers: ["shared"] });
