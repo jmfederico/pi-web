@@ -50,6 +50,10 @@ Use [test harnesses](docs/testing-harnesses.md) for implementation mechanics and
 
 The project Pi prompt `/reassess-tests` lives in [`.pi/prompts/reassess-tests.md`](.pi/prompts/reassess-tests.md).
 
+## CodeRabbit and automatic merging
+
+Follow `docs/coderabbit.md` when managing CodeRabbit reviews or automatic merging. Use actual current-head GitHub reviews as approval evidence, not summary comments or a green CodeRabbit check. Do not use blanket approval/resolution commands or administrator bypass to clear a blocked PR.
+
 ## Verification reporting
 
 Never report failed, incomplete, or skipped verification as passing. Identify any expected check that was not run and why, and do not mask a non-zero result. If a command intentionally probes a failure path or captures an exit for inspection, state that purpose and interpret the result.
