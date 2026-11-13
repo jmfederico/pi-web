@@ -189,9 +189,16 @@ function imageByteSize(source: string): number | undefined {
   // Buffer.from(base64) silently accepts junk. Validate standard base64 (with
   // optional omitted padding) arithmetically, including unused final sextet bits,
   // without allocating, decoding, or re-encoding every transcript image.
-  if (source === "" || !/^[A-Za-z0-9+/]+={0,2}$/u.test(source)) return undefined;
   const padding = source.endsWith("==") ? 2 : source.endsWith("=") ? 1 : 0;
   const length = source.length - padding;
+  if (length === 0) return undefined;
+  // A full-source regex can exhaust V8's regexp stack on large photos. Scan
+  // only the unpadded portion so misplaced or excess "=" is rejected as well.
+  for (let i = 0; i < length; i++) {
+    const code = source.charCodeAt(i);
+    if (!((code >= 65 && code <= 90) || (code >= 97 && code <= 122)
+      || (code >= 48 && code <= 57) || code === 43 || code === 47)) return undefined;
+  }
   const remainder = length % 4;
   if (remainder === 1 || (padding > 0 && (source.length % 4 !== 0 || padding !== 4 - remainder))) return undefined;
   const last = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".indexOf(source.charAt(length - 1));
