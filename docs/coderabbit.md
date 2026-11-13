@@ -16,7 +16,7 @@ The `CodeRabbit merge` workflow checks open PRs after CI completes, approximatel
 
 It only merges a PR when:
 
-- Its author is `jmfederico`, its branch belongs to this repository, its target is `main`, and it is open and not a draft.
+- Its author is `jmfederico` or the personal `federico-agent[bot]` App (verified GitHub account ID `356431845`), its branch belongs to this repository, its target is `main`, and it is open and not a draft. The agent's own reviews cannot substitute for CodeRabbit approval.
 - It has no `do-not-merge` label.
 - It does not change review or automation policy: `.github/**`, `.agents/**`, `AGENTS.md`, or `.coderabbit.yaml`. Renaming those files also requires a manual merge.
 - CodeRabbit's latest effective approval is for the current head commit. Comments, stale approvals, dismissed approvals, and approvals from other reviewers do not qualify.
@@ -40,11 +40,11 @@ One required approval permits either a human or CodeRabbit approval for manual m
 
 The workflow is disabled unless repository variable `CODERABBIT_MERGE_ENABLED` is `true`.
 
-Use a dedicated GitHub App, rather than Actions' built-in `GITHUB_TOKEN`: merges made with that token can suppress the normal post-merge CI and documentation deployment events. Do not copy a broad personal GitHub token into this workflow.
+Use a GitHub App, rather than Actions' built-in `GITHUB_TOKEN`: merges made with that token can suppress the normal post-merge CI and documentation deployment events. The personal `federico-agent` App can serve both agent work and merging; CodeRabbit remains the independent reviewer. Do not copy a personal GitHub token into this workflow.
 
-1. Create a private GitHub App owned by `jmfederico`, with webhooks disabled. No user authorization callback is needed for installation-token authentication.
-2. Grant only repository **Contents: Read and write**, **Pull requests: Read and write**, and the mandatory **Metadata: Read-only** permission. Do not grant administration or workflow-editing permissions, or add the App to any ruleset bypass list.
-3. Install the App on `jmfederico/pi-web` only and generate a private key.
+1. Use the `federico-agent` App owned by `jmfederico`, or a separate merge App, with webhooks disabled. No user authorization callback is needed for installation-token authentication.
+2. The merge workflow needs repository **Contents: Read and write**, **Pull requests: Read and write**, and the mandatory **Metadata: Read-only** permission. It requests a token restricted to those permissions and `pi-web`, even if the personal App has broader access for agent work. Do not add the App to any ruleset bypass list.
+3. Install the App with access to `jmfederico/pi-web` and generate a private key. The personal App can also be installed on other repositories; the merge token does not include them.
 4. Save its App ID as repository variable `CODERABBIT_MERGE_APP_ID`. Save the PEM key as Actions secret `CODERABBIT_MERGE_PRIVATE_KEY`. Never commit or paste the key into chat.
 5. Confirm the `main` rules above, then set repository variable `CODERABBIT_MERGE_ENABLED` to `true` and manually run `CodeRabbit merge`. Enabling it applies to existing eligible PRs as well as future ones; label any PR that should wait with `do-not-merge` first.
 

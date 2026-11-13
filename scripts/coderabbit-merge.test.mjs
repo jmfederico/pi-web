@@ -76,8 +76,18 @@ describe("CodeRabbit merge controller", () => {
     );
   });
 
+  it("merges the personal agent\'s PR only with independent CodeRabbit approval", async () => {
+    const initial = pull({ user: { id: 356431845, login: "federico-agent[bot]", type: "Bot" } });
+    const h = harness({ initial });
+    await h.run();
+    expect(h.pulls.merge).toHaveBeenCalledOnce();
+    await expectSkipped({ initial, reviews: [review({ user: initial.user })] });
+  });
+
   it.each([
     ["another author", { user: { login: "contributor" } }],
+    ["a different bot with the agent name", { user: { id: 123, login: "federico-agent[bot]", type: "Bot" } }],
+    ["an unexpected agent identity", { user: { id: 356431845, login: "other[bot]", type: "Bot" } }],
     ["a fork, even for the allowed author", { head: { sha, repo: { full_name: "other/pi-web" } } }],
     ["a deleted head repository", { head: { sha, repo: null } }],
     ["another base branch", { base: { ref: "release", repo } }],

@@ -3,7 +3,9 @@ const repositoryName = "jmfederico/pi-web";
 
 function ineligibleReason(pr) {
   if (pr.state !== "open" || pr.draft !== false) return "not an open, non-draft PR";
-  if (pr.user?.login !== "jmfederico") return "author is not jmfederico";
+  const ownerAuthored = pr.user?.login === "jmfederico";
+  const agentAuthored = pr.user?.id === 356431845 && pr.user?.login === "federico-agent[bot]" && pr.user?.type === "Bot";
+  if (!ownerAuthored && !agentAuthored) return "author is not Federico or his agent";
   if (pr.head?.repo?.full_name !== repositoryName) return "head is not in this repository";
   if (pr.base?.repo?.full_name !== repositoryName || pr.base?.ref !== "main") return "base is not this repository's main";
   if (pr.labels.some((label) => label.name === "do-not-merge")) return "do-not-merge label is set";
