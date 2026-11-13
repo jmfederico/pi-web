@@ -43,6 +43,10 @@ import { projectBrowserMessage } from "../browserMessageProjection.js";
 import { isSessionMediaId } from "../../shared/sessionMedia.js";
 import { getBuiltinExtensionFactories } from "./builtinExtensionFactories.js";
 import { McpAuthFlowService } from "./mcpAuthFlowService.js";
+import {
+  SESSION_STATE_CUSTOM_TYPE, SESSION_STATE_RESET_CUSTOM_TYPE, createSessionStateData, latestSessionStateEntries, readSessionState,
+  validateSessionStateNamespace, type SessionStateData, type SessionStateSnapshot, type SessionStateWrite,
+} from "../../shared/sessionState.js";
 import type { SessionMedia } from "./sessionMediaIndex.js";
 import { pageMessagesAtSafeBoundary } from "./messagePaging.js";
 import { clientSessionFirstMessagePreview } from "./clientSessionPreview.js";
@@ -309,6 +313,8 @@ interface StartSessionOptions {
 }
 
 interface InternalStartSessionOptions extends StartSessionOptions {
+  /** Internal inheritance only; never a session-creation tool or API option. */
+  initialSessionState?: readonly SessionStateData[];
   creationProvenance?: SessionCreationProvenance;
   deferAnnouncement?: boolean;
 }
@@ -1071,7 +1077,9 @@ function createDefaultRuntimeFactory(
       settingsManager,
       resourceLoaderOptions: {
         ...resourceLoaderOptions, eventBus,
-        extensionFactories: [...builtinFactories, sessionDispatch, ...(subsessions === undefined ? [] : [createSubsessionCompletionDelivery(subsessions)])],
+        extensionFactories: [
+          ...builtinFactories, sessionDispatch, ...(subsessions === undefined ? [] : [createSubsessionCompletionDelivery(subsessions)]),
+        ],
       },
       ...(projectTrustRequiring
         ? {
@@ -1366,7 +1374,7 @@ export class PiSessionService implements SessionRouteService {
     // also require the spawn capability (they share its project-scope resolver).
     const subsessionsActive = this.spawnTargets !== undefined && deps.subsessionsEnabled === true;
     this.sessionEvents = deps.sessionEvents ?? new PiSessionEventConnections();
-    this.createRuntime = deps.createRuntime ?? createDefaultRuntimeFactory(
+    const createRuntime = deps.createRuntime ?? createDefaultRuntimeFactory(
       this.sessionEvents,
       this.modelRuntime,
       this.sessionManager,
@@ -1386,6 +1394,19 @@ export class PiSessionService implements SessionRouteService {
       deps.appendSystemPromptSections ?? [],
       this.messageTargets === undefined ? undefined : { send: (input) => this.sendSessionMessage(input) },
     );
+    this.createRuntime = (options) => {
+      const event = options.sessionStartEvent;
+      if (event?.reason === "fork" && event.previousSessionFile !== undefined) {
+        const source = [...this.active.values()].find((active) => active.runtime.session.sessionFile === event.previousSessionFile)?.runtime.session.sessionManager
+          ?? this.sessionManager.open(event.previousSessionFile);
+        const inherited = this.inheritableSessionState(source);
+        // Native forks copy historical entries, potentially before a later opt-out.
+        // Reset their live interpretation before installing the source's current state.
+        options.sessionManager.appendCustomEntry(SESSION_STATE_RESET_CUSTOM_TYPE, { version: 1 });
+        this.appendInheritedSessionState(options.sessionManager, inherited);
+      }
+      return createRuntime(options);
+    };
     this.createAgentRuntime = deps.createAgentRuntime ?? defaultCreateAgentRuntime;
     this.workspaceActivity = deps.workspaceActivity;
     this.heartbeat = setInterval(() => { this.publishHeartbeats(); }, deps.heartbeatIntervalMs ?? 2000);
@@ -1814,6 +1835,8 @@ export class PiSessionService implements SessionRouteService {
     const metadata = options.metadata === undefined ? undefined : requireSessionUiMetadata(options.metadata);
     const name = options.name === undefined ? undefined : requireInitialSessionName(options.name);
     const manager = this.sessionManager.create(cwd, options.parentSession === undefined ? undefined : { parentSession: options.parentSession });
+    const inheritedState = options.initialSessionState ?? (options.parentSession === undefined ? [] : this.inheritableSessionState(this.sessionManager.open(options.parentSession)));
+    this.appendInheritedSessionState(manager, inheritedState);
     if (metadata !== undefined) {
       if (manager.appendCustomEntry === undefined) throw new Error("Session manager does not support UI metadata initialization");
       manager.appendCustomEntry(SESSION_UI_METADATA_CUSTOM_TYPE, { version: 1, metadata });
@@ -1871,7 +1894,8 @@ export class PiSessionService implements SessionRouteService {
     const model = input.modelSpec === undefined
       ? input.model
       : await this.resolveSpawnModel({ id: input.spawningSessionId, cwd: input.spawningCwd }, input.modelSpec);
-    const created = await this.start(decision.cwd, {
+    const created = await this.startSession(decision.cwd, {
+      initialSessionState: await this.sessionStateForSpawn(input.spawningSessionId, input.spawningCwd),
       ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
       ...(input.name === undefined ? {} : { name: input.name }),
       ...(model === undefined ? {} : { initialModel: model }),
@@ -1913,6 +1937,7 @@ export class PiSessionService implements SessionRouteService {
       ? input.model
       : await this.resolveSpawnModel({ id: input.parentSessionId, cwd: input.spawningCwd }, input.modelSpec);
     const created = await this.startSession(decision.cwd, {
+      initialSessionState: await this.sessionStateForSpawn(input.parentSessionId, input.spawningCwd),
       ...(input.parentSessionFile === undefined ? {} : { parentSession: input.parentSessionFile }),
       ...(model === undefined ? {} : { initialModel: model }),
       ...(input.thinkingLevel === undefined ? {} : { initialThinkingLevel: input.thinkingLevel }),
@@ -3180,6 +3205,65 @@ export class PiSessionService implements SessionRouteService {
       commands.push({ name: `skill:${skill.name}`, ...(skill.description === undefined ? {} : { description: skill.description }), source: "skill" });
     }
     return commands.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  private inheritableSessionState(manager: PiSessionManager): SessionStateData[] {
+    return latestSessionStateEntries(manager.getEntries?.() ?? manager.getBranch())
+      .filter((entry) => entry.inherit)
+      .map(({ namespace, value, inherit }) => createSessionStateData(namespace, value, inherit));
+  }
+
+  private appendInheritedSessionState(manager: PiSessionManager, entries: readonly SessionStateData[]): void {
+    if (entries.length === 0) return;
+    if (manager.appendCustomEntry === undefined) throw new Error("Session manager does not support private session state");
+    for (const entry of entries) manager.appendCustomEntry(SESSION_STATE_CUSTOM_TYPE, createSessionStateData(entry.namespace, entry.value, entry.inherit));
+  }
+
+  private async sessionStateForSpawn(sessionId: string, cwd: string): Promise<SessionStateData[]> {
+    const active = this.active.get(sessionId)?.runtime.session;
+    if (active !== undefined) {
+      if (!cwdPathsEqual(active.sessionManager.getCwd(), cwd)) throw new Error("Source session belongs to another workspace");
+      return this.inheritableSessionState(active.sessionManager);
+    }
+    const resolved = await this.sessionManager.resolveSessionFile(cwd, sessionId);
+    return resolved === undefined ? [] : this.inheritableSessionState(this.sessionManager.open(resolved.path));
+  }
+
+  private assertSessionStateIdentity(ref: PiSessionRef, session: PiAgentSession): void {
+    this.assertCurrentExtensionSession(session);
+    if (session.sessionId !== ref.id || !cwdPathsEqual(ref.cwd, session.sessionManager.getCwd())) {
+      throw new Error("Session state workspace changed; refresh and retry");
+    }
+  }
+
+  /** Hosting on read lets callers subsequently connect to the native extension bus. */
+  async readSessionState(ref: PiSessionRef, namespace: string, signal?: AbortSignal): Promise<SessionStateSnapshot> {
+    validateSessionStateNamespace(namespace);
+    signal?.throwIfAborted();
+    const session = await this.getOrOpen(ref);
+    signal?.throwIfAborted();
+    this.assertSessionStateIdentity(ref, session);
+    return readSessionState(session.sessionManager.getEntries?.() ?? session.sessionManager.getBranch(), namespace);
+  }
+
+  async writeSessionState(ref: PiSessionRef, namespace: string, input: SessionStateWrite, signal?: AbortSignal): Promise<SessionStateSnapshot> {
+    const data = createSessionStateData(namespace, input.value, input.inherit);
+    if (typeof input.revision !== "string" || input.revision.length > 512) throw new Error("Invalid session state revision");
+    signal?.throwIfAborted();
+    await this.assertWritable(ref);
+    const session = await this.getOrOpen(ref);
+    await this.assertWritable(ref);
+    signal?.throwIfAborted();
+    this.assertSessionStateIdentity(ref, session);
+    if (this.isTreeExclusiveOperationActive(session)) throw new Error("Cannot change private session state while session replacement is active");
+    return this.runSessionEntryMutation(session, "change private session state", () => {
+      const manager = session.sessionManager;
+      const current = readSessionState(manager.getEntries?.() ?? manager.getBranch(), namespace);
+      if (current.revision !== input.revision) throw Object.assign(new Error("Session state changed; refresh and retry"), { code: "SESSION_STATE_CONFLICT" });
+      if (manager.appendCustomEntry === undefined) throw new Error("Session manager does not support private session state");
+      const revision = manager.appendCustomEntry(SESSION_STATE_CUSTOM_TYPE, data);
+      return Promise.resolve({ value: data.value, revision });
+    });
   }
 
   private async mcpAuthSession(ref: PiSessionRef): Promise<PiAgentSession> {

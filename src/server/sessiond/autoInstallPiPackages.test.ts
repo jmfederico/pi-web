@@ -183,8 +183,9 @@ describe("one-time Pi package provisioning", () => {
     expect(install).not.toHaveBeenCalledWith(join(PACKAGE_ROOT, "dist", "pi-packages", "relays"));
     expect(install).toHaveBeenCalledWith(join(PACKAGE_ROOT, "dist", "pi-packages", "workflows"));
     expect(install).toHaveBeenCalledWith(join(PACKAGE_ROOT, "dist", "pi-packages", "session-naming"));
-    expect(install).toHaveBeenCalledTimes(2);
-    await reconcileAutoInstallablePiPackages({ ...options, profileDir: "/new-agent", knownPackages: KNOWN_PACKAGES });
+    expect(install).toHaveBeenCalledWith(join(PACKAGE_ROOT, "dist", "pi-packages", "mcp-manager"));
     expect(install).toHaveBeenCalledTimes(3);
+    await reconcileAutoInstallablePiPackages({ ...options, profileDir: "/new-agent", knownPackages: KNOWN_PACKAGES });
+    expect(install).toHaveBeenCalledTimes(4);
   });
 });

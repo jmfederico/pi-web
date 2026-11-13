@@ -6,9 +6,9 @@
 [![Bun*](https://img.shields.io/badge/Bun*-fbf0df?logo=bun&logoColor=black)](https://pi-web.dev/install#bun)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**PI WEB is a web UI for [Pi Coding Agent](https://github.com/earendil-works/pi/tree/main/packages/coding-agent) that keeps agent sessions running in real workspaces on your machine or server.**
+**PI WEB is a remote-first runtime for AI coding agents, with a web interface for managing their work.**
 
-Run agents where your code, tools, credentials, and build caches live. Supervise multiple sessions from any browser, even after disconnecting.
+Built for [Pi Coding Agent](https://github.com/earendil-works/pi/tree/main/packages/coding-agent), it keeps sessions running in real workspaces on your computer or server. Give instructions, inspect files, and review progress from any browser. Agents keep running when you disconnect.
 
 <p align="center">
   <picture>

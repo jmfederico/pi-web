@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, normalize, resolve } from "node:path";
@@ -10,6 +10,7 @@ import { requireDefaultStreamingBehavior } from "./shared/streamingBehavior.js";
 import { migrateSessionNamingConfig } from "./configSessionNamingMigration.js";
 import { requireInstallationName } from "./shared/installationName.js";
 import { requireHostAccess } from "./shared/hostAccess.js";
+import { readConfigDocument, updateConfigDocument } from "./configFileStorage.js";
 
 import { PI_WEB_CONFIG_DEFINITIONS, overlayPiWebConfig, parsePiWebEnvBoolean, piWebConfigEnvName, piWebConfigNamespaceFields, piWebConfigSettingPointers } from "./shared/configResolution.js";
 import { versionChecksDisabled } from "./shared/versionCheckPolicy.js";
@@ -270,11 +271,11 @@ export function savePiWebConfig(config: PiWebConfig, options: LoadOptions = {}):
   // Reject malformed environment policy before publishing a write.
   applyPiWebConfigEnv(overlayPiWebConfig(defaultsConfig, normalized), env);
   effectiveAgentConfig(env, normalized);
-  const existing = readExistingConfigObject(path);
-  if (existing["agent"] !== undefined) parseAgentConfig(existing["agent"], path);
-  for (const key of [...Object.keys(PI_WEB_CONFIG_DEFINITIONS), "agent", "respectProjectTrust"]) Reflect.deleteProperty(existing, key);
-  const merged = { ...existing, ...piWebConfigRecord(normalized) };
-  writeWritableConfig(path, merged);
+  updateConfigDocument(path, ({ record: existing }) => {
+    if (existing["agent"] !== undefined) parseAgentConfig(existing["agent"], path);
+    for (const key of [...Object.keys(PI_WEB_CONFIG_DEFINITIONS), "agent", "respectProjectTrust"]) Reflect.deleteProperty(existing, key);
+    return { ...existing, ...piWebConfigRecord(normalized) };
+  });
   return loadPiWebConfig(options);
 }
 
@@ -294,9 +295,9 @@ function writeWritableConfig(path: string, config: Record<string, unknown>): voi
 }
 
 function readConfigObject(path: string): Record<string, unknown> {
-  const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
-  if (!isRecord(parsed)) throw new Error(`PI WEB config must be a JSON object: ${path}`);
-  return parsed;
+  const document = readConfigDocument(path);
+  if (document.content === undefined) throw new Error(`PI WEB config does not exist: ${path}`);
+  return document.record;
 }
 
 function parseFileConfig(record: Record<string, unknown>, path: string): PiWebConfig {
@@ -369,13 +370,6 @@ export function piWebConfigSources(loaded: LoadedPiWebConfig, options: LoadOptio
   for (const pointer of piWebConfigSettingPointers(loaded.config)) sources[pointer] = "config";
   Object.assign(sources, piWebConfigEnforcedSettings(options.env ?? process.env));
   return sources;
-}
-
-function readExistingConfigObject(path: string): Record<string, unknown> {
-  if (!existsSync(path)) return {};
-  const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
-  if (!isRecord(parsed)) throw new Error(`PI WEB config must be a JSON object: ${path}`);
-  return parsed;
 }
 
 function piWebConfigRecord(config: PiWebConfig): Record<string, unknown> {

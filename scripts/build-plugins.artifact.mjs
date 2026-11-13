@@ -117,6 +117,10 @@ describe("plugin delivery artifacts", () => {
     expect(builtPackageFiles).toEqual(expect.arrayContaining([
       "dist/pi-packages/session-naming/package.json",
       "dist/pi-packages/session-naming/extensions/index.js",
+      "dist/pi-packages/mcp-manager/package.json",
+      "dist/pi-packages/mcp-manager/extensions/index.ts",
+      "dist/pi-packages/mcp-manager/server-plugin.js",
+      "dist/pi-packages/mcp-manager/browser/pi-web-plugin.js",
       "dist/pi-packages/scheduled-tasks/package.json",
       "dist/pi-packages/scheduled-tasks/server-plugin.js",
       "dist/pi-packages/scheduled-tasks/browser/pi-web-plugin.js",
@@ -154,6 +158,57 @@ describe("plugin delivery artifacts", () => {
     settings.setPackages([]);
     await loader.reload();
     expect(loader.getExtensions().extensions).toHaveLength(0);
+  });
+
+  it("ships a standalone MCP loader and an independently disableable management plugin", async () => {
+    const source = join(repoRoot, "dist", "pi-packages", "mcp-manager");
+    const standalone = join(tempDir, "mcp-manager");
+    await mkdir(join(standalone, "extensions"), { recursive: true });
+    for (const path of ["package.json", "extensions/index.ts", "server-plugin.js"]) await cp(join(source, path), join(standalone, path));
+    const extensionImports = moduleSpecifiers(await readFile(join(standalone, "extensions/index.ts"), "utf8"));
+    expect(extensionImports.every((specifier) => specifier.startsWith("node:") || specifier === "@earendil-works/pi-coding-agent")).toBe(true);
+    const loader = new DefaultResourceLoader({
+      cwd: tempDir, agentDir: tempDir,
+      settingsManager: SettingsManager.inMemory({ packages: [standalone] }),
+      noThemes: true, noPromptTemplates: true,
+    });
+    await loader.reload();
+    expect(loader.getExtensions().errors).toEqual([]);
+    expect(loader.getExtensions().extensions).toHaveLength(1);
+    const extension = loader.getExtensions().extensions[0];
+    expect(extension.handlers.has("session_start")).toBe(true);
+    expect(extension.commands.size).toBe(0);
+    expect(extension.tools.size).toBe(0);
+    const browserEntry = await readFile(join(source, "browser", "pi-web-plugin.js"), "utf8");
+    expect(moduleSpecifiers(browserEntry)).toEqual([]);
+    expect(Buffer.byteLength(browserEntry)).toBeLessThan(PI_WEB_PLUGIN_ARTIFACT_MAX_BYTES);
+    const catalog = new PiWebPluginCatalog({ roots: [],
+      packageProvider: { listPackages: () => [{ source, installedPath: source, scope: "user" }], getInstalledPath: () => source },
+      configProvider: () => ({ plugins: { "mcp-manager": { enabled: false } } }),
+    });
+    expect((await catalog.snapshot()).plugins).toContainEqual(expect.objectContaining({ id: "mcp-manager", enabled: false, defaultEnabled: true }));
+    await loader.reload();
+    expect(loader.getExtensions().extensions).toHaveLength(1);
+    // The backend imports outside this checkout too; no host internals or SDK copy.
+    const probe = join(standalone, "probe.mjs");
+    await writeFile(probe, `
+      import { mkdirSync, writeFileSync } from "node:fs";
+      import { join } from "node:path";
+      import plugin from "./server-plugin.js";
+      process.env.PI_CODING_AGENT_DIR = join(process.cwd(), "agent");
+      delete process.env.PI_MCP_MANAGER;
+      mkdirSync(join(process.env.PI_CODING_AGENT_DIR, "mcp-manager"), { recursive: true });
+      writeFileSync(join(process.env.PI_CODING_AGENT_DIR, "mcp-manager/config.json"), JSON.stringify({
+        servers: { docs: { url: "https://private.example", headers: { Authorization: "secret-token" } } }, enabledServers: ["docs"],
+      }));
+      const activation = plugin.activate({});
+      await activation.start({ capabilities: { resolve() { return { version: 1 }; } } });
+      const view = await activation.peer.request({ scope: { kind: "machine" }, operation: "view", input: {}, signal: new AbortController().signal });
+      if (!view.servers[0]?.effectiveEnabled || JSON.stringify(view).includes("secret-token")) throw new Error("Invalid standalone MCP view");
+      console.log("standalone MCP manager passed");
+      await activation.dispose();
+    `);
+    expect(await execUtf8(process.execPath, [probe], standalone, 10_000)).toContain("standalone MCP manager passed");
   });
 
   it("ships an optional disabled scheduler with standalone SQLite and cron dispatch", async () => {

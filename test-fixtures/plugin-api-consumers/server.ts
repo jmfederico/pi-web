@@ -3,6 +3,8 @@ import {
   PI_WEB_HOST_PI_SESSIONS_CAPABILITY,
   PI_WEB_HOST_CATALOG_CAPABILITY,
   PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY,
+  PI_WEB_HOST_SESSION_STATE_CAPABILITY,
+  PI_WEB_HOST_PROJECT_TRUST_CAPABILITY,
   PI_WEB_HOST_WORKSPACES_CAPABILITY,
 } from "@jmfederico/pi-web/server-plugin-api";
 import type {
@@ -42,6 +44,8 @@ const plugin: PiWebServerPlugin = {
     fixtureDependency,
     PI_WEB_HOST_CATALOG_CAPABILITY,
     PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY,
+    PI_WEB_HOST_SESSION_STATE_CAPABILITY,
+    PI_WEB_HOST_PROJECT_TRUST_CAPABILITY,
     PI_WEB_HOST_WORKSPACES_CAPABILITY,
     PI_WEB_HOST_PI_SESSIONS_CAPABILITY,
   ],
@@ -62,6 +66,11 @@ const plugin: PiWebServerPlugin = {
         await catalog.projects.list({ signal });
         const lifecycle = capabilities.resolve(PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY);
         const selected = { projectId: "fixture-project", workspaceId: "fixture-workspace", sessionId: "fixture-session" };
+        const sessionState = capabilities.resolve(PI_WEB_HOST_SESSION_STATE_CAPABILITY);
+        const snapshot = await sessionState.read(selected, "fixture.preferences", { signal });
+        await sessionState.write(selected, "fixture.preferences", { value: { enabled: true }, inherit: true, revision: snapshot.revision }, { signal });
+        const trust = capabilities.resolve(PI_WEB_HOST_PROJECT_TRUST_CAPABILITY);
+        context.logger.info(`Trusted: ${String(await trust.get({ projectId: selected.projectId, workspaceId: selected.workspaceId }))}`);
         await lifecycle.get(selected, { signal });
         await lifecycle.pin(selected, { signal });
         await lifecycle.unpin(selected, { signal });

@@ -91,7 +91,8 @@ export function registerConfigRoutes(app: FastifyInstance, service: PiWebConfigS
 
   app.put<{ Body: { config?: unknown } | undefined }>("/api/config", async (request, reply) => {
     try {
-      return withRuntime(await replaceConfigService(service, parseConfigRequest(request.body?.config)));
+      const config = parseConfigRequest(request.body?.config);
+      return withRuntime(await replaceConfigService(service, config));
     } catch (error) {
       const status = isConfigValidationError(error) ? 400 : 500;
       return reply.code(status).send({ error: errorMessage(error) });

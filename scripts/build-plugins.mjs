@@ -69,6 +69,9 @@ async function buildAll() {
         ["scheduled-tasks", "vite.config.mjs"],
         ["scheduled-tasks", "vite.companion.config.mjs"],
         ["scheduled-tasks", "vite.browser.config.mjs"],
+        ["mcp-manager", "vite.config.mjs"],
+        ["mcp-manager", "vite.companion.config.mjs"],
+        ["mcp-manager", "vite.browser.config.mjs"],
       ]) await viteBuild({
         configFile: resolve(target.rootDir, packageName, config),
         logLevel: "silent",

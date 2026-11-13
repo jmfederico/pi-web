@@ -280,6 +280,8 @@ Unless environment-enforced, project-local `uploads.defaultFolder` overrides the
 
 Project-local `plugins.<id>.settings` supplies overrides for server plugins that support project settings, including Git. Only settings are allowed here: `plugins.<id>.enabled` is not supported; plugin enablement stays global. See [Project plugin settings](#project-plugin-settings) for merge and restart rules.
 
+The MCP manager package uses its own `.pi/mcp-manager.json`, not the project PI WEB config; see [managed MCP servers](#managed-mcp).
+
 Plugins may also own separate project files, such as `.pi-web/tasks.json` for the built-in Workspace Tasks plugin.
 
 PI WEB also honors one optional project hook; see [Worktree pre-remove hook](#worktree-pre-remove-hook).
@@ -480,6 +482,54 @@ Provider decisions are recorded in daemon logs, not browser notifications. Entri
 This prevents accidental provider, configuration, or credential contamination between projects; it is not a security boundary because Pi extensions remain trusted daemon code.
 
 Configure providers before the daemon starts: use the active agent directory's `models.json`, or install the Pi extension globally in that agent directory. Project Pi extensions and project-level `models.json` files cannot add providers to PI WEB's shared baseline. After updating PI WEB—or after installing, removing, or updating a global Pi extension that registers providers—manually restart `pi-web-sessiond.service` (`systemctl --user restart pi-web-sessiond`). Restarting only the web/API service and running `/reload` do not rebuild the baseline.
+
+## Managed MCP
+
+The **MCP** tab belongs to the `@jmfederico/pi-mcp-manager` Pi package (plugin ID `mcp-manager`). Its thin Pi extension loads configured servers in both standalone Pi TUI sessions and PI WEB, without a web runtime dependency. Management controls are available only in the web plugin; the package adds no TUI management commands. Disabling the plugin hides management but leaves the installed extension active. See [package installation and removal](plugins.md#mcp-manager).
+
+### Define a server
+
+For agent-assisted setup, open **Add or edit servers** in the MCP tab and select **Copy instruction**. Replace the placeholder at the end with the server's name, URL, or installation instructions, then send it to your agent. The instruction includes the configuration paths and this reference so the agent can choose the appropriate scope.
+
+Put shared definitions in `<Pi agent dir>/mcp-manager/config.json` and workspace-only definitions in `<workspace>/.pi/mcp-manager.json`. Both files use the same JSON root, without an `mcp` wrapper:
+
+```json
+{
+  "servers": {
+    "browser": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"]
+    }
+  },
+  "enabledServers": []
+}
+```
+
+An empty `enabledServers` defines the server without enabling it at this scope. Add `"browser"` to enable it, or use the tab. A project can enable a global definition with `{"enabledServers":["browser"]}`. Project definitions cannot be enabled globally. **Project** means the session's workspace directory, including a separate worktree's own file, not all worktrees of a repository.
+
+Definitions use Pi's MCP server fields (`command`/`args` or `url`, with optional `env`, `headers`, `oauth`, exposure, and other connection settings). Omit per-definition `enabled`: the scope's `enabledServers` list controls enablement. Prefer environment references such as `${TOKEN}` over committed credentials. Definitions are file-managed; the plugin shows redacted server summaries and edits enablement only. Pi owns validation, connections, tools, resources, and authentication.
+
+### Enablement and sessions
+
+Global, project, and session enablement are **additive**: any checked scope keeps the server enabled. Unchecking Session cannot turn off a globally enabled server. Global/project edits require **Save**; session edits save immediately. Session choices are saved with the conversation, survive resume and tree navigation, and are copied into forks, subsessions, and independent agent-created sessions. Copies evolve independently; ordinary new sessions have no session grants.
+
+The tab reports configured enablement, not transport health. Changes during an agent run wait until Pi settles that run; existing tool calls are not interrupted. Tab saves refresh affected loaded sessions. Manual file edits are read on **Refresh**, session startup/reload, and before the next agent run. Enablement changes need no daemon restart after the package is loaded.
+
+All project definitions and enablement require both a saved approval in Pi's trust store (or global `defaultProjectTrust: "always"`) and a current runtime that considers the project trusted. Save approval with Pi's native `/trust` command, then reload. The package reads this policy only from global Pi settings, never project settings. Neither the presence of native Pi resources nor automatic trust for an empty workspace supplies approval; `.pi/mcp-manager.json` alone is not a Pi-native trust-requiring resource. See [project trust](#project-trust-for-project-local-resources).
+
+### Pi-native servers and conflicts
+
+Pi still reads its own `<Pi agent dir>/mcp.json` and trusted `<workspace>/.pi/mcp.json`. Native entries remain authoritative, even when disabled. The tab marks same-name definitions **Managed by Pi** and disables their controls; it never edits Pi's files. To transfer a native definition to the manager, move it into the package config, omit `enabled`, remove the native entry, and reload Pi resources. Preserve the server name and URL to retain Pi's OAuth credential identity; no aliases or credential copying are needed.
+
+Duplicate global/project managed definitions are errors, not overrides. Names differing only by hyphens and underscores also conflict because Pi maps them to the same tool namespace. Resolve conflicts in the files before enabling the server.
+
+### Deployment policy and migration
+
+The package owns `servers` and `enabledServers` as independent atomic fields. Trusted project definitions contribute separately; connection properties are not merged. `PI_MCP_MANAGER` accepts a JSON object and enforces only supplied fields. Supplying `servers` enforces the catalog and excludes project additions. Supplying `enabledServers` enforces enablement across all scopes, including sessions, while preserving saved choices. For example, `PI_MCP_MANAGER='{"enabledServers":[]}'` disables manager-owned servers, not Pi-native servers. Restart the consuming Pi process or PI WEB session daemon after environment changes; daemon restarts interrupt active sessions and terminals.
+
+**Manual migration:** move the old `mcp` object's contents from PI WEB global/defaults config to `<Pi agent dir>/mcp-manager/config.json`, and from `.pi-web/config.json` to `.pi/mcp-manager.json`. Replace `PI_WEB_MCP` with `PI_MCP_MANAGER`, then remove the old keys. There is no automatic migration. Keep server names and URLs unchanged; native Pi entries remain authoritative. Old session choices used `pi-web.mcp-enabled`; the package uses the generic `mcp-manager` namespace. Reselect existing **Session** checkboxes once after migration; do not manually edit live session JSONL.
+
+Concurrent tab/file edits produce a refresh-and-retry error rather than overwriting a stale snapshot. Package writers use an advisory lock and atomic replacement; avoid concurrent external edits. A leftover `<config-path>.mcp-manager-lock` after a crash causes a visible error; verify no writer is active before removing it.
 
 ### MCP server sign-in and sign-out
 
