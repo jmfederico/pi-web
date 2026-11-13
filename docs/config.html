@@ -819,6 +819,7 @@
 </section>
 <section id="managed-mcp"><h2>Managed MCP servers</h2>
 <p>The <strong>MCP</strong> tab belongs to <code>@jmfederico/pi-mcp-manager</code> (plugin ID <code>mcp-manager</code>). Its thin Pi extension loads configured servers in standalone Pi TUI sessions and PI WEB without a web runtime dependency. Management controls are web-plugin-only; the package adds no TUI management commands. Disabling the plugin hides management but leaves the installed extension active. See <a href="plugins#mcp-manager">package installation and removal</a>.</p>
+<p>For agent-assisted setup, open <strong>Add or edit servers</strong> in the MCP tab and select <strong>Copy instruction</strong>. Replace the placeholder at the end with the server's name, URL, or installation instructions, then send it to your agent. The instruction includes the configuration paths and this reference so the agent can choose the appropriate scope.</p>
 <p>Put shared definitions in <code>&lt;Pi agent dir&gt;/mcp-manager/config.json</code> and workspace-only definitions in <code>&lt;workspace&gt;/.pi/mcp-manager.json</code>. Both use this JSON root, without an <code>mcp</code> wrapper:</p>
 <pre><code>{
   "servers": {

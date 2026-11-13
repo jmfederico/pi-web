@@ -74,22 +74,47 @@ test("all scope controls remain reachable in desktop columns and a narrow scroll
   }
   await page.getByText("Add or edit servers", { exact: true }).click();
   await page.getByText("Configuration example", { exact: true }).click();
-  await expect(page.locator("pre code")).toBeVisible();
-  await page.getByRole("button", { name: "Copy Project config path" }).scrollIntoViewIfNeeded();
+  await expect(page.locator("pre code")).toHaveCount(2);
+  await expect(page.locator("pre code").last()).toBeVisible();
+  const copyInstruction = page.getByRole("button", { name: "Copy instruction", exact: true });
+  await copyInstruction.scrollIntoViewIfNeeded();
   const overflow = await page.locator("managed-mcp-panel").evaluate((panel) => panel.scrollWidth > panel.clientWidth);
   expect(overflow).toBe(false);
   // Keyboard can reach the configuration actions after the responsive scope stack.
-  await page.getByRole("button", { name: "Copy Project config path" }).focus();
-  await expect(page.getByRole("button", { name: "Copy Project config path" })).toBeFocused();
+  await copyInstruction.focus();
+  await expect(copyInstruction).toBeFocused();
   await page.screenshot({ path: testInfo.outputPath("managed-mcp.png"), fullPage: true });
 });
 
-test("empty state exposes setup paths without opening a disclosure", async ({ page }, testInfo) => {
+test("empty state offers one complete copyable instruction with secondary manual guidance", async ({ page }, testInfo) => {
   await page.route("**/mcp-fixture", (route) => route.fulfill({ json: managedMcpView({ servers: [] }) }));
+  // Clipboard permissions vary across engines; capture the browser API boundary.
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+      writeText: (text: string) => { document.documentElement.dataset["copiedInstruction"] = text; return Promise.resolve(); },
+    } });
+  });
   await page.goto("/managed-mcp.html");
-  await expect(page.getByRole("button", { name: "Copy Global config path" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Copy Project config path" })).toBeVisible();
-  await expect(page.getByText("/workspace/.pi/mcp-manager.json", { exact: true })).toBeVisible();
-  await expect(page.locator("pre code")).not.toBeVisible();
+  const instruction = page.locator("#agent-instruction");
+  const copy = page.getByRole("button", { name: "Copy instruction", exact: true });
+  await expect(instruction).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Copy/ })).toHaveCount(1);
+  await expect(page.locator("pre").last()).not.toBeVisible();
+  await expect(instruction).toContainText("/workspace/.pi/mcp-manager.json");
+  await copy.click();
+  await expect(page.getByRole("status").filter({ hasText: "Instruction copied" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.dataset["copiedInstruction"])).toBe(await instruction.textContent());
+  const geometry = await instruction.evaluate((block) => {
+    const bounds = block.getBoundingClientRect();
+    return { left: bounds.left, right: bounds.right, width: window.innerWidth, fits: block.scrollWidth <= block.clientWidth };
+  });
+  expect(geometry.left).toBeGreaterThanOrEqual(0);
+  expect(geometry.right).toBeLessThanOrEqual(geometry.width);
+  expect(geometry.fits).toBe(true);
+  const blockBox = await instruction.boundingBox();
+  const buttonBox = await copy.boundingBox();
+  if (!blockBox || !buttonBox) throw new Error("Missing instruction geometry");
+  expect(buttonBox.y).toBeGreaterThanOrEqual(blockBox.y + blockBox.height);
+  await instruction.scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath("managed-mcp-empty.png"), fullPage: true });
 });

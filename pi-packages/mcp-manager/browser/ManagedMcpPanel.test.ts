@@ -44,6 +44,11 @@ function button(panel: ManagedMcpPanel, label: string): HTMLButtonElement {
   if (!result) throw new Error(`Missing ${label}`);
   return result;
 }
+function copyInstructionButton(panel: ManagedMcpPanel): HTMLButtonElement {
+  const result = [...panel.shadowRoot?.querySelectorAll("button") ?? []].find((item) => item.textContent === managedMcpMessages.t("copy"));
+  if (!result) throw new Error("Missing instruction copy action");
+  return result;
+}
 function refresh(panel: ManagedMcpPanel): void {
   panel.shadowRoot?.querySelector<HTMLButtonElement>("header button")?.click();
 }
@@ -253,12 +258,64 @@ it("rejects events from the old rendered view before a context switch has render
   expect(managedMcpApi.update).not.toHaveBeenCalled();
 });
 
-it("ignores a response after removal and copies the exact machine config path", async () => {
+it.each([context, { machineId: "remote" }])("copies the visible instruction with actual paths for context %j", async (origin) => {
   const copy = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
-  const panel = await mount();
-  button(panel, "Copy Global config path").click();
+  const panel = await mount(origin);
+  panel.machineLabel = "Build machine";
   await settle(panel);
-  expect(copy).toHaveBeenCalledWith("/home/fixture/.pi/agent/mcp-manager/config.json");
+  const instruction = panel.shadowRoot?.querySelector("#agent-instruction code")?.textContent;
+  expect(instruction).toContain("https://pi-web.dev/config#managed-mcp");
+  expect(instruction).toContain("Build machine");
+  expect(instruction).toContain(managedMcpView().globalConfigPath);
+  if ("workspaceId" in origin) expect(instruction).toContain(managedMcpView().projectConfigPath);
+  else expect(instruction).not.toContain(managedMcpView().projectConfigPath);
+  expect(instruction).not.toContain("undefined");
+  expect(instruction?.endsWith("MCP server to configure:\n[Paste the server name, URL, or installation instructions here]")).toBe(true);
+  copyInstructionButton(panel).click();
+  await settle(panel);
+  expect(copy).toHaveBeenCalledExactlyOnceWith(instruction);
+  expect(panel.shadowRoot?.textContent).toContain(managedMcpMessages.t("copied"));
+});
+
+it("shows clipboard failure and clears it after a successful retry", async () => {
+  const copy = vi.spyOn(navigator.clipboard, "writeText").mockRejectedValueOnce(new Error("Clipboard blocked")).mockResolvedValue();
+  const panel = await mount();
+  copyInstructionButton(panel).click();
+  await settle(panel);
+  expect(panel.shadowRoot?.querySelector('[role="alert"]')?.textContent).toContain("Clipboard blocked");
+  expect(panel.shadowRoot?.textContent).not.toContain(managedMcpMessages.t("copied"));
+  copyInstructionButton(panel).click();
+  await settle(panel);
+  expect(copy).toHaveBeenCalledTimes(2);
+  expect(panel.shadowRoot?.querySelector('[role="alert"]')).toBeNull();
+  expect(panel.shadowRoot?.textContent).toContain(managedMcpMessages.t("copied"));
+});
+
+it.each(["success", "failure"])("ignores stale clipboard %s and rejects old copy events during context changes", async (result) => {
+  const pending = deferred<undefined>();
+  const copy = vi.spyOn(navigator.clipboard, "writeText").mockReturnValueOnce(pending.promise).mockResolvedValue();
+  const panel = await mount();
+  copyInstructionButton(panel).click();
+  panel.context = { machineId: "other" };
+  // A click may arrive before Lit has replaced the previous context's controls.
+  copyInstructionButton(panel).click();
+  await settle(panel);
+  expect(copy).toHaveBeenCalledOnce();
+  if (result === "success") pending.resolve(undefined);
+  else pending.reject(new Error("Old clipboard failure"));
+  await settle(panel);
+  expect(panel.shadowRoot?.querySelector('[role="alert"]')).toBeNull();
+  expect(panel.shadowRoot?.textContent).not.toContain(managedMcpMessages.t("copied"));
+  const instruction = panel.shadowRoot?.querySelector("#agent-instruction code")?.textContent;
+  expect(instruction).toContain("other");
+  expect(instruction).not.toContain(managedMcpView().projectConfigPath);
+  copyInstructionButton(panel).click();
+  await settle(panel);
+  expect(copy).toHaveBeenLastCalledWith(instruction);
+});
+
+it("ignores a response after removal", async () => {
+  const panel = await mount();
   const pending = deferred<ManagedMcpView>();
   vi.mocked(managedMcpApi.get).mockReturnValueOnce(pending.promise);
   refresh(panel);

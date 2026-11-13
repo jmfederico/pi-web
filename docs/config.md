@@ -489,6 +489,8 @@ The **MCP** tab belongs to the `@jmfederico/pi-mcp-manager` Pi package (plugin I
 
 ### Define a server
 
+For agent-assisted setup, open **Add or edit servers** in the MCP tab and select **Copy instruction**. Replace the placeholder at the end with the server's name, URL, or installation instructions, then send it to your agent. The instruction includes the configuration paths and this reference so the agent can choose the appropriate scope.
+
 Put shared definitions in `<Pi agent dir>/mcp-manager/config.json` and workspace-only definitions in `<workspace>/.pi/mcp-manager.json`. Both files use the same JSON root, without an `mcp` wrapper:
 
 ```json

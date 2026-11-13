@@ -41,7 +41,7 @@ export class ManagedMcpPanel extends LitElement {
   @state() private saving: Draft | undefined;
   @state() private drafts: Draft[] = [];
   @state() private failure: { kind: "loadError" | "saveError" | "copyError"; error: string; serverName?: string } | undefined;
-  @state() private feedback: { kind: "saved"; serverName: string; scope: ManagedMcpScope } | { kind: "copied"; path: string } | undefined;
+  @state() private feedback: { kind: "saved"; serverName: string; scope: ManagedMcpScope } | { kind: "copied" } | undefined;
   private generation = 0;
   private viewContext: ManagedMcpPanelContext | undefined;
 
@@ -152,13 +152,15 @@ export class ManagedMcpPanel extends LitElement {
       if (this.current(generation, context)) this.saving = undefined;
     }
   }
-  private async copyPath(path: string): Promise<void> {
+  private async copyInstruction(instruction: string): Promise<void> {
     if (!sameContext(this.viewContext, this.context) || this.context === undefined) return;
     const context = { ...this.context };
     const generation = this.generation;
+    this.failure = undefined;
+    this.feedback = undefined;
     try {
-      await navigator.clipboard.writeText(path);
-      if (this.current(generation, context)) this.feedback = { kind: "copied", path };
+      await navigator.clipboard.writeText(instruction);
+      if (this.current(generation, context)) this.feedback = { kind: "copied" };
     } catch (error) {
       if (this.current(generation, context)) this.failure = { kind: "copyError", error: errorMessage(error) };
     }
@@ -194,11 +196,18 @@ export class ManagedMcpPanel extends LitElement {
         </div>`}
     </td>`;
   }
-  private configPath(scope: "global" | "project", path: string): TemplateResult {
+  private setupInstruction(view: ManagedMcpView): string {
     const m = this.messages;
-    return html`<div class="config-path"><strong>${m.t(scope)}</strong><code class="ui-settings-path" dir="ltr">${path}</code>
-      <button class="ui-button ui-button--action" aria-label=${m.t("copyAria", { scope: m.t(scope) })} @click=${() => this.copyPath(path)}>${m.t("copy")}</button>
-      ${this.feedback?.kind === "copied" && this.feedback.path === path ? html`<span role="status">${m.t("copied")}</span>` : null}</div>`;
+    return [
+      m.t("instruction"),
+      m.t("instructionMachine", { machine: this.machineLabel || (this.context?.machineId ?? "") }),
+      [
+        m.t("globalConfigPath", { path: view.globalConfigPath }),
+        ...(this.context?.workspaceId === undefined || view.projectConfigPath === undefined ? []
+          : [m.t("projectConfigPath", { path: view.projectConfigPath })]),
+      ].join("\n"),
+      m.t("instructionPlaceholder"),
+    ].join("\n\n");
   }
   private answerRefresh(confirmed: boolean): void {
     const resolve = this.confirmRefresh;
@@ -210,6 +219,7 @@ export class ManagedMcpPanel extends LitElement {
     const m = this.messages;
     const localization = this.localization;
     const view = this.view;
+    const instruction = view === undefined ? "" : this.setupInstruction(view);
     return html`<header>
       <div><h2>${m.t("title")}</h2><p>${m.t("description")}</p></div>
       <button class="ui-button" ?disabled=${this.loading || this.saving !== undefined || this.context === undefined}
@@ -222,7 +232,7 @@ export class ManagedMcpPanel extends LitElement {
           ${this.context.sessionId === undefined ? null : html`<div><dt>${m.t("session")}</dt><dd><bdi>${this.sessionLabel || this.context.sessionId}</bdi></dd></div>`}
         </dl>`}
 
-        ${this.failure === undefined || this.failure.serverName !== undefined ? null : html`<p class="ui-notice error" role="alert">${m.t(this.failure.kind, { error: this.failure.error })}</p>`}
+        ${this.failure === undefined || this.failure.kind === "copyError" || this.failure.serverName !== undefined ? null : html`<p class="ui-notice error" role="alert">${m.t(this.failure.kind, { error: this.failure.error })}</p>`}
         ${this.loading ? html`<p role="status">${m.t("loading")}</p>` : null}
         ${view === undefined ? null : html`
           ${view.projectTrusted || this.context?.cwd === undefined ? null : html`<p class="ui-notice warning">${m.t("untrusted")}</p>`}
@@ -248,8 +258,13 @@ export class ManagedMcpPanel extends LitElement {
       </section>
       ${view === undefined ? null : html`<section class="ui-settings-section"><details .open=${view.servers.length === 0}><summary>${m.t("config")}</summary>
         <p>${m.t("configHelp")}</p>
-        ${this.configPath("global", view.globalConfigPath)}
-        ${view.projectConfigPath === undefined ? null : this.configPath("project", view.projectConfigPath)}
+        <pre class="ui-settings-path" id="agent-instruction" aria-label=${m.t("instructionLabel")} dir="auto"><code>${instruction}</code></pre>
+        <div class="ui-settings-actions">
+          <button class="ui-button ui-button--action ui-button--primary" @click=${() => this.copyInstruction(instruction)}>${m.t("copy")}</button>
+        </div>
+        ${this.feedback?.kind === "copied" ? html`<p role="status">${m.t("copied")}</p>` : null}
+        ${this.failure?.kind === "copyError" ? html`<p class="ui-notice error" role="alert">${m.t("copyError", { error: this.failure.error })}</p>` : null}
+        <p>${m.t("afterSetup")}</p>
         <details><summary>${m.t("nativeConfig")}</summary><p>${m.t("nativeWarning")}</p></details>
         <details><summary>${m.t("example")}</summary>
           <p>${m.t("exampleHelp")}</p>
@@ -302,8 +317,6 @@ export class ManagedMcpPanel extends LitElement {
     .scope-help, .scope-description { font-size: 0.9em; color: var(--pi-muted); }
     .scope-description { display: block; margin-block-start: 4px; }
     .server-state { font-weight: bold; }
-    .config-path { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-block: 12px; }
-    .config-path code { flex: 1 1 240px; min-width: 0; }
     summary { cursor: pointer; padding-block: 8px; }
     a { color: var(--pi-accent); }
     @container (max-width: 650px) {
