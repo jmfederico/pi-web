@@ -13,6 +13,22 @@ describe("buildApp local machine aliases", () => {
     expect(appTestContext.sessionDaemonRequests).toEqual([{ method: "GET", path: `/sessions?cwd=${encodeURIComponent(appTestContext.projectDir)}` }]);
   });
 
+  it.each(["/api", "/api/machines/local"])("forwards MCP reads and toggles from %s to the local daemon", async (prefix) => {
+    const path = `/mcp/managed?cwd=${encodeURIComponent(appTestContext.projectDir)}&sessionId=session-1`;
+    const read = await appTestContext.app.inject({ method: "GET", url: `${prefix}${path}` });
+    expect(read.statusCode).toBe(200);
+    expect(read.json()).toEqual({ method: "GET", path });
+
+    const body = { cwd: appTestContext.projectDir, sessionId: "session-1", scope: "session", serverName: "docs", enabled: true, revision: "revision-1" };
+    const write = await appTestContext.app.inject({ method: "POST", url: `${prefix}/mcp/managed`, payload: body });
+    expect(write.statusCode).toBe(200);
+    expect(write.json()).toEqual({ method: "POST", path: "/mcp/managed", body });
+    expect(appTestContext.sessionDaemonRequests).toEqual([
+      { method: "GET", path },
+      { method: "POST", path: "/mcp/managed", body },
+    ]);
+  });
+
   it("serves local projects and workspaces through machine-scoped aliases", async () => {
     const addResponse = await appTestContext.app.inject({
       method: "POST",

@@ -133,6 +133,8 @@ export function registerSessionProxyRoutes(
   app.all(`${prefix}/notices`, (request, reply) => proxy(request, reply));
   app.all(`${prefix}/notices/dismiss`, (request, reply) => proxy(request, reply));
   app.get(`${prefix}/models`, (request, reply) => proxy(request, reply));
+  app.get(`${prefix}/mcp/managed`, (request, reply) => proxy(request, reply));
+  app.post(`${prefix}/mcp/managed`, (request, reply) => proxy(request, reply));
   app.all(`${prefix}/auth`, (request, reply) => proxy(request, reply));
   app.all(`${prefix}/auth/*`, (request, reply) => proxy(request, reply));
   app.all(`${prefix}/sessions`, (request, reply) => proxy(request, reply));
