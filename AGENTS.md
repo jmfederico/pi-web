@@ -38,6 +38,10 @@ Use `.agents/skills/documentation-guide/SKILL.md` whenever writing, modifying, r
 
 For website design and styling, follow `.interface-design/system.md` and use `docs/design-system.html` as the working reference. Shared website foundations belong in `docs/styles.css`; page-specific homepage composition belongs in `docs/home.css`.
 
+## Architecture and feature placement
+
+Follow `.agents/skills/code-quality-architecture/SKILL.md` for implementation and review. New feature-specific behavior belongs in plugins or Pi packages by default. Extend core only for genuinely generic host capabilities or behavior that cannot reasonably live in a plugin; explain the boundary in the PR. Bundled plugins must use the same supported public contracts as external plugins.
+
 ## Testing guidance
 
 Read and follow [testing policy](docs/testing.md) whenever adding, changing, planning, reviewing, or reassessing tests, triaging failures, or creating test helpers.
