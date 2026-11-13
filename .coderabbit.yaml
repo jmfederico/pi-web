@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+reviews:
+  profile: chill
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 0
+    drafts: false
+    ignore_usernames: []
+  auto_approvals:
+    enabled: true
+    # Approval should follow review, not an author's blanket approve/resolve command.
+    allow_author_approval: false
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    # Guides outside the source tree need explicit application scopes.
+    filePatterns:
+      - files: .agents/skills/code-quality-architecture/SKILL.md
+        applyTo: "**/*"
+      - files: docs/testing.md
+        applyTo: "src/**,pi-web-plugins/**,pi-packages/**,scripts/**,test-fixtures/**"
+      - files: docs/config-architecture.md
+        applyTo: "src/**,pi-web-plugins/**,pi-packages/**"
+      - files: .agents/skills/ux-guide/SKILL.md
+        applyTo: "src/client/**,pi-web-plugins/**,pi-packages/**"
+      - files: .agents/skills/documentation-guide/SKILL.md
+        applyTo: "README.md,docs/**"
+      - files: .agents/skills/changeset-changelog/SKILL.md
+        applyTo: "**/*"

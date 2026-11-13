@@ -11,6 +11,20 @@ For coverage decisions, read [testing policy](../../../docs/testing.md); for hel
 
 Respect the project's existing conventions and the framework/library idioms already in use. If a dependency expects a particular pattern, such as inheritance, decorators, lifecycle hooks, or a registration API, use that pattern deliberately and keep the surrounding project code as simple and composable as possible.
 
+## Plugin and package first
+
+Put new feature-specific behavior in a PI WEB plugin or Pi package by default. Use Pi extensions for agent behavior, PI WEB plugins for web UI and workspace integrations, and a combined package when both are needed. Bundled features follow the same public boundaries as external plugins.
+
+Before extending core:
+
+1. Check whether existing public contributions and capabilities can implement the feature.
+2. If a capability is missing, add the smallest genuinely generic host capability and keep feature-specific policy, state, and UI in the plugin or package. Prefer a concrete reusable contract over speculative extension machinery.
+3. Implement behavior directly in core only when it belongs to host ownership (such as runtime lifecycle, transport, or authorization), or when a plugin cannot reasonably implement it. Explain the specific boundary or limitation in the PR's additional information; convenience alone is not a reason.
+
+Do not bypass this boundary with private-core imports, private routes, feature-specific branches in generic services, or a nominal plugin whose implementation still lives in core. Use [the plugin reference](../../../docs/plugins.md) for supported extension points and compatibility contracts.
+
+This is a placement rule for new behavior, not a demand to extract unrelated existing code. Fix core defects locally when that is the smallest correct change.
+
 ## Values we optimize for
 
 ### Proportionate
@@ -93,6 +107,7 @@ During implementation:
 When reviewing or finishing code, check:
 
 - Is this the simplest design that meets the behavioral contract and finish line, with any edge-case or race handling justified by likelihood or impact?
+- Does new feature behavior live in a plugin or package? If core changes are needed, is the host ownership or missing generic capability explained, with feature-specific policy kept outside core?
 - Can this behavior be reused or combined without copying internals?
 - Are side effects visible, bounded, and cleaned up when needed?
 - Is mutable state ownership clear?
