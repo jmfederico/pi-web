@@ -1,5 +1,5 @@
 import { getAgentDir, ProjectTrustStore, SessionManager, SettingsManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { latestSessionStateEntries } from "../../../src/shared/sessionState.js";
+import { latestSessionStateEntries } from "@jmfederico/pi-web/server-plugin-api";
 import { createManagedMcpConfigService } from "../config.js";
 import { mcpNamespaceKey, readNativeMcpNames } from "../nativeMcpNames.js";
 import { createManagedMcpController } from "../runtime.js";

@@ -1,6 +1,6 @@
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { expect, it } from "vitest";
-import { SESSION_STATE_RESET_CUSTOM_TYPE } from "../../src/shared/sessionState.js";
+import { SESSION_STATE_RESET_CUSTOM_TYPE } from "@jmfederico/pi-web/server-plugin-api";
 import { MANAGED_MCP_SESSION_ENTRY, managedMcpSessionData, parseManagedMcpSessionValue, readManagedMcpSession, writeManagedMcpSession } from "./session.js";
 
 it("stores inheritable generic state and reads latest choices across the whole session", () => {

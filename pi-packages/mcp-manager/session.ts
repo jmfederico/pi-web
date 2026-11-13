@@ -1,4 +1,4 @@
-import { createSessionStateData, readSessionState, SESSION_STATE_CUSTOM_TYPE } from "../../src/shared/sessionState.js";
+import { createSessionStateData, readSessionState, SESSION_STATE_CUSTOM_TYPE } from "@jmfederico/pi-web/server-plugin-api";
 import { requireMcpServerName } from "./mcpConfig.js";
 
 export const MANAGED_MCP_SESSION_ENTRY = SESSION_STATE_CUSTOM_TYPE;

@@ -4,11 +4,30 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createAssistantMessageEventStream, getCurrentTools, type AssistantMessage } from "@earendil-works/pi-ai";
 import { createAgentSessionFromServices, createAgentSessionRuntime, createAgentSessionServices, createEventBus, createMcpExtension, ProjectTrustStore, SessionManager, SettingsManager, type AgentSession } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
+import { build } from "vite";
 import { createTestModelRuntime, stdioServer, testModel } from "../testSupport.js";
 import { readManagedMcpSession, writeManagedMcpSession } from "../session.js";
 import { MCP_MANAGER_REQUEST, MCP_MANAGER_RESPONSE, type McpManagerResponse } from "../shared.js";
-import { SESSION_STATE_RESET_CUSTOM_TYPE } from "../../../src/shared/sessionState.js";
+import { SESSION_STATE_RESET_CUSTOM_TYPE } from "@jmfederico/pi-web/server-plugin-api";
+
+let extensionRoot: string | undefined;
+let extensionPath: string;
+beforeAll(async () => {
+  extensionRoot = await mkdtemp(join(tmpdir(), "mcp-manager-loader-"));
+  extensionPath = join(extensionRoot, "extensions", "index.ts");
+  // The standalone delivery bundles public API helpers; load that same format
+  // rather than requiring an installed PI WEB package beside unbuilt sources.
+  await build({
+    configFile: fileURLToPath(new URL("../vite.companion.config.mjs", import.meta.url)),
+    resolve: { alias: { "@jmfederico/pi-web/server-plugin-api": fileURLToPath(new URL("../../../src/server-plugin-api.ts", import.meta.url)) } },
+    build: { outDir: extensionRoot },
+    logLevel: "silent",
+  });
+});
+afterAll(async () => {
+  if (extensionRoot !== undefined) await rm(extensionRoot, { recursive: true, force: true });
+});
 
 async function fixture(options: { project?: boolean; savedTrust?: boolean; piTrusted?: boolean; globalDefaultTrust?: "always"; projectDefaultTrust?: "always" } = {}) {
   const root = await mkdtemp(join(tmpdir(), "mcp-manager-extension-"));
@@ -77,7 +96,7 @@ async function fixture(options: { project?: boolean; savedTrust?: boolean; piTru
         eventBus: bus,
         // Load the real standalone entry through Pi's public file loader. There is
         // no web server, management service, session host, or plugin in this test.
-        additionalExtensionPaths: [fileURLToPath(new URL("./index.ts", import.meta.url))],
+        additionalExtensionPaths: [extensionPath],
         extensionFactories: [createMcpExtension(), (pi) => {
           pi.on("resources_discover", (_event, ctx) => {
             observations.push({ trusted: ctx.isProjectTrusted(), defaultTrust: pi.getSettings().defaultProjectTrust ?? "ask", names: pi.getMcpServers().map((server) => server.name) });
