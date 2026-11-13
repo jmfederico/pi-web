@@ -1,5 +1,20 @@
 # @jmfederico/pi-web
 
+## 1.202611.3
+
+### Patch Changes
+
+- c93273e: Simplify MCP setup with one copyable agent instruction containing available configuration paths, a documentation link, and a clear placeholder for the server to configure.
+- 0c6e7f2: Apply environment-enforced MCP enablement to trusted project-defined servers as well as global definitions, while preserving project trust checks and enforced server definitions.
+- adb0e09: Add a removable MCP manager package. Its thin Pi extension loads configured servers in both the TUI and PI WEB; its web plugin provides Global, Project, and Session controls, setup guidance, and clear save feedback. Session choices survive resume and are copied to forks and agent-created sessions. Pi retains connection, authentication, and native `mcp.json` ownership.
+
+  Add capability-based APIs for private, inheritable session state and read-only project trust, so plugins can integrate with sessions without feature-specific core routes.
+- fb35fe8: Drag projects, workspaces, and pinned session trees to reorder them in the sidebar. Insertion feedback, edge scrolling, and press-and-hold dragging on touch screens complement the existing Move up and Move down menus. All paths share the saved order across devices. Prevent text selection from competing with row dragging on Safari, and add a copyable project path to the project menu. Unify project, workspace, session, and machine menus into actions, options, and details groups. Keep Copy ID last in Details without displaying the ID value, keep menus open after copying, and label the project action Close project.
+- 9271b42: Provision shipped automatic Pi packages once per agent profile so removals through `pi remove` or manual package-settings edits persist across daemon restarts. Preserve existing Settings dismissals, retry failed initial installs, and keep configured copies aligned with the running PI WEB version without changing resource filters. Explicit reinstall remains available. Older CLI or manual removals without a provisioning record may receive one final automatic reinstall during rollout.
+- 51bd733: Clarify PI WEB's positioning as a remote-first runtime for AI coding agents, with a web interface for managing their work.
+- 1f2d1ca: Restore sessions into the existing newest-modified-first order instead of leaving them at the bottom of the session list.
+- 7cf9a20: Clarify the Swedish retry label when checking whether a project is trusted.
+
 ## 1.202611.2
 
 ### Patch Changes
