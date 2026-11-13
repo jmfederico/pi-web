@@ -5,6 +5,7 @@ import { MAX_INLINE_PREVIEW_BYTES } from "../../../shared/workspaceFiles";
 import { PAIRED_PLUGIN_BACKEND_CHANNEL_ROUTE_PATHS, PAIRED_PLUGIN_BACKEND_RESOURCE_ROUTE_PATHS, PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATHS, PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES, PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES } from "../../../shared/pluginBackendProtocol";
 import { configApi, filesApi, machineStatusApi, noticesApi, piPackagesApi, piWebApi, pluginsApi, projectsApi, sessionsApi, trustApi, workspacesApi } from "./clients";
 import { globalSessionEvents, realtimeEvents, sessionEvents } from "./sockets";
+import { managedMcpApi } from "./managedMcp";
 import { requestPairedPluginBackend } from "./pluginBackends";
 import { sessionMediaUrl, workspaceFilePreviewUrl } from "./urls";
 import { createPluginSessionLifecycle } from "../plugins/sessionLifecycle";
@@ -245,6 +246,8 @@ describe("federated route contract", () => {
       ignoreParseFailure(sessionsApi.authProviders({ mode: "login", authType: "oauth", machineId })),
       ignoreParseFailure(sessionsApi.startInteractiveApiKeyLogin("amazon-bedrock", machineId)),
       ignoreParseFailure(sessionsApi.logoutProvider("openai", machineId)),
+      ignoreParseFailure(managedMcpApi.get({ cwd: session.cwd, sessionId: session.id }, machineId)),
+      ignoreParseFailure(managedMcpApi.update({ cwd: session.cwd, sessionId: session.id, scope: "session", serverName: "docs", enabled: true, revision: "r1" }, machineId)),
       ignoreParseFailure(sessionsApi.mcpAuthServers(session, machineId)),
       ignoreParseFailure(sessionsApi.startMcpAuth(session, "login", machineId, "Budgeter")),
       ignoreParseFailure(sessionsApi.mcpAuthFlow("flow 1", machineId)),

@@ -1,3 +1,4 @@
+import type { PiWebMcpConfig } from "./mcpConfig.js";
 import type { ServerNoticePresentation } from "./serverNoticePresentation.js";
 import type { CommandResultPresentation } from "./commandResultPresentation.js";
 import type { CommandOutputPresentation } from "./commandOutputPresentation.js";
@@ -200,6 +201,8 @@ export interface PiWebConfigValues {
   hostAccess?: PiWebHostAccess;
   shortcuts?: PiWebShortcutConfig;
   plugins?: PiWebPluginConfigMap;
+  /** Manually managed MCP definitions and additive enablement; definitions are omitted from generic config responses. */
+  mcp?: PiWebMcpConfig;
   /** Deployment base roots; combined with independently configurable path additions. */
   basePaths?: string[];
   /** Additional external filesystem roots PI WEB may expose outside a workspace. */

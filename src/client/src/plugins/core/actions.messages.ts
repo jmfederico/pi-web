@@ -21,6 +21,8 @@ export default {
   auth_login_description: message<{ command: string }>("Run {command} without tying authentication to a session", "Core authentication action description; command is unchanged /login"),
   auth_logout_title: message("Remove Provider Authentication", "Core action auth.logout: title"),
   auth_logout_description: message<{ command: string }>("Run {command} for stored pi credentials", "Core authentication removal description; command is unchanged /logout"),
+  mcp_manage_title: message("Manage MCP servers", "Core action mcp.manage: title"),
+  mcp_manage_description: message("Choose global, project, and session enablement in the MCP tab", "Core action mcp.manage: description"),
   mcp_login_title: message("MCP login", "Core action mcp.login: title"),
   mcp_login_description: message("Choose an MCP server for the selected session and sign in", "Core action mcp.login: description"),
   groupMCP: message("MCP", "Command palette action group: MCP"),

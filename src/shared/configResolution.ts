@@ -6,7 +6,7 @@ export const PI_WEB_CONFIG_DEFINITIONS = {
   shortcuts: "json", defaultTheme: "json", defaultLocalization: "json",
   defaultStreamingBehavior: "string", quietMode: "boolean", plugins: "json",
   basePaths: "json", pathAccess: "json", uploads: "json", attachments: "json",
-  maxUploadBytes: "number", sessionArchive: "json",
+  maxUploadBytes: "number", sessionArchive: "json", mcp: "json",
   spawnSessions: "boolean", sessionMessages: "boolean", subsessions: "boolean", askUser: "boolean",
   environmentFacts: "boolean", extensionDialogsTimeoutMs: "number",
 } as const satisfies Record<Exclude<keyof PiWebConfigValues, "agent">, string>;
@@ -18,6 +18,7 @@ const PI_WEB_CONFIG_NAMESPACES = {
   attachments: ["defaultFolder"],
   sessionArchive: ["directory"],
   pathAccess: ["allowedPaths"],
+  mcp: ["servers", "enabledServers"],
 } as const satisfies { [Key in keyof PiWebConfigValues]?: readonly (keyof NonNullable<PiWebConfigValues[Key]>)[] };
 
 export function piWebConfigNamespaceFields(key: string): readonly string[] | undefined {

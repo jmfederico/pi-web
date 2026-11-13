@@ -30,6 +30,46 @@ function start(env: NodeJS.ProcessEnv = {}): void {
 }
 
 describe("layered config updates", () => {
+  it.each(["/api/config", "/api/machines/local/config"])("redacts MCP definitions and preserves them during roundtrips/resets through %s", async (url) => {
+    const servers = { private: { command: "secret-command", env: { TOKEN: "secret-env" } }, remote: { url: "https://example.test", headers: { Authorization: "secret-header" }, oauth: { clientSecret: "secret-oauth" } } };
+    writeFileSync(defaults, JSON.stringify({ mcp: { servers, enabledServers: ["remote"] } }));
+    writeFileSync(writable, JSON.stringify({ mcp: { servers, enabledServers: ["private"] } }));
+    start();
+    const read = await app.inject({ method: "GET", url });
+    expect(read.statusCode).toBe(200);
+    expect(read.body).not.toMatch(/secret-command|secret-env|secret-header|secret-oauth/);
+    expect(read.json<PiWebConfigResponse>().config.mcp).toEqual({ enabledServers: ["private"] });
+    const replacement = await app.inject({ method: "PUT", url, payload: { config: read.json<PiWebConfigResponse>().config } });
+    expect(replacement.statusCode).toBe(200);
+    expect(replacement.body).not.toContain("secret-");
+    expect(JSON.parse(readFileSync(writable, "utf8"))).toEqual({ mcp: { servers, enabledServers: ["private"] } });
+    const reset = await app.inject({ method: "PATCH", url, payload: { unset: ["/mcp/enabledServers"] } });
+    expect(reset.statusCode).toBe(200);
+    expect(reset.json<PiWebConfigResponse>().effectiveConfig.mcp).toEqual({ enabledServers: ["remote"] });
+    expect(JSON.parse(readFileSync(writable, "utf8"))).toEqual({ mcp: { servers } });
+    for (const [method, payload] of [
+      ["PUT", { config: { mcp: { servers: {} } } }],
+      ["PATCH", { set: { mcp: { servers: {} } } }],
+      ["PATCH", { unset: ["/mcp/servers"] }],
+      ["PATCH", { unset: ["/mcp"] }],
+    ] as const) {
+      expect((await app.inject({ method, url, payload })).statusCode).toBe(400);
+      expect(JSON.parse(readFileSync(writable, "utf8"))).toEqual({ mcp: { servers } });
+    }
+  });
+
+  it("reports MCP leaf enforcement without exposing environment definitions", async () => {
+    writeFileSync(defaults, "{}");
+    writeFileSync(writable, JSON.stringify({ mcp: { enabledServers: ["saved"] } }));
+    start({ PI_WEB_MCP: JSON.stringify({ servers: { remote: { url: "https://example.test", headers: { Authorization: "secret-env-header" } } }, enabledServers: [] }) });
+    const read = await app.inject({ method: "GET", url: "/api/config" });
+    expect(read.body).not.toContain("secret-env-header");
+    expect(read.json<PiWebConfigResponse>().enforcedSettings).toEqual({ "/mcp/servers": "PI_WEB_MCP", "/mcp/enabledServers": "PI_WEB_MCP" });
+    const denied = await app.inject({ method: "PATCH", url: "/api/config", payload: { unset: ["/mcp/enabledServers"] } });
+    expect(denied.statusCode).toBe(400);
+    expect(JSON.parse(readFileSync(writable, "utf8"))).toEqual({ mcp: { enabledServers: ["saved"] } });
+  });
+
   it.each(["/api/config", "/api/machines/local/config"])("rejects legacy core sessionNaming updates through %s without touching persistence", async (url) => {
     const deployment = JSON.stringify({ uploads: { defaultFolder: "deployed" } });
     const saved = JSON.stringify({ askUser: false });

@@ -1565,8 +1565,16 @@ function parsePiWebConfigValues(value: unknown): PiWebConfigValues {
     ...optionalField("environmentFacts", optionalBoolean(record, "environmentFacts")),
     ...optionalField("extensionDialogsTimeoutMs", optionalNumber(record, "extensionDialogsTimeoutMs")),
     ...optionalField("sessionArchive", optionalSessionArchive(record["sessionArchive"])),
+    ...optionalField("mcp", optionalMcpEnablement(record["mcp"])),
   };
   return config;
+}
+
+function optionalMcpEnablement(value: unknown): PiWebConfigValues["mcp"] {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || Array.isArray(value)) throw new Error("Invalid PI WEB mcp field");
+  if (Object.hasOwn(value, "servers")) throw new Error("MCP server definitions must not appear in browser configuration");
+  return { ...optionalField("enabledServers", optionalStringArray(value["enabledServers"], "mcp.enabledServers")) };
 }
 
 function optionalSessionArchive(value: unknown): PiWebConfigValues["sessionArchive"] {

@@ -177,6 +177,8 @@ export const FEDERATED_HTTP_ROUTES = [
   { method: "POST", path: "/sessions/:sessionId/warnings/dismiss" },
   { method: "POST", path: "/sessions/:sessionId/attachments" },
   { method: "POST", path: "/sessions/:sessionId/shell" },
+  { method: "GET", path: "/mcp/managed" },
+  { method: "POST", path: "/mcp/managed" },
   { method: "GET", path: "/sessions/:sessionId/mcp/auth/servers" },
   { method: "POST", path: "/sessions/:sessionId/mcp/auth" },
   { method: "POST", path: "/sessions/:sessionId/commands/run" },

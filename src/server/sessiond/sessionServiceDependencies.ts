@@ -8,6 +8,7 @@ import type { PiSessionServiceDependencies } from "../sessions/piSessionService.
  * session service.
  */
 export interface SessionServiceDependencyInput {
+  managedMcpConfig?: PiSessionServiceDependencies["managedMcpConfig"];
   agentDir: string;
   /** Session-local package event connections and companion backend bindings. */
   sessionEvents: NonNullable<PiSessionServiceDependencies["sessionEvents"]>;
@@ -80,6 +81,7 @@ export function sessionServiceDependencies(input: SessionServiceDependencyInput)
     // model lists are refreshing at the same time.
     catalogRefreshStatus: input.catalogRefreshStatus,
     config: input.config,
+    ...(input.managedMcpConfig === undefined ? {} : { managedMcpConfig: input.managedMcpConfig }),
     sessionManager: input.sessionManager,
   };
 }

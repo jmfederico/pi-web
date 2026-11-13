@@ -18,6 +18,8 @@ import { AuthService } from "./sessions/authService.js";
 import { bootstrapAndFreezeGlobalExtensionProviders } from "./sessions/globalProviderPolicy.js";
 import { registerAuthRoutes } from "./sessions/authRoutes.js";
 import { registerMcpAuthRoutes } from "./sessions/mcpAuthRoutes.js";
+import { registerManagedMcpRoutes } from "./mcp/managedMcpRoutes.js";
+import { createManagedMcpConfigService } from "./mcp/managedMcpConfig.js";
 import { ModelCatalogRefresher } from "./sessions/modelCatalogRefresher.js";
 import { PiSessionService } from "./sessions/piSessionService.js";
 import { createPiSessionManagerGateway } from "./sessions/piSessionManagerGateway.js";
@@ -362,6 +364,7 @@ async function createSessionDaemonRuntime() {
       subsessionsEnabled: config.subsessions,
       askUserEnabled: config.askUser,
       config: configService,
+      managedMcpConfig: createManagedMcpConfigService({ env: daemonEnvironment }),
       appendSystemPromptSections: [
         // Sessions always run nested in this daemon, so they always get the
         // session environment facts; Docker deployments add their container
@@ -509,6 +512,7 @@ function registerSessionDaemonRoutes({ eventHub, machineStatus, statusAttributio
   registerServerNoticeRoutes(app, serverNotices);
   registerAuthRoutes(app, auth);
   registerMcpAuthRoutes(app, sessions);
+  registerManagedMcpRoutes(app, sessions);
   registerSessionRoutes(app, sessions, eventHub);
   registerSessionLocationRoutes(app, { sessions, workspaces: statusAttribution });
   registerWorkspaceCatalogRoutes(app, {

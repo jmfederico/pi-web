@@ -90,6 +90,7 @@
 <a href="#plugin-config">Plugins</a>
 <a href="#network">Networking</a>
 <a href="#storage">Storage</a>
+<a href="#managed-mcp">MCP servers</a>
 <a href="#providers">Providers &amp; trust</a>
 <a href="#environment">Environment overrides</a>
 <a href="#worktree-pre-remove-hook">Cleanup hook</a>
@@ -815,6 +816,32 @@
 </details>
 <details class="config-details"><summary>Changing directories or running a second instance</summary><ul><li><strong>State migration:</strong> a new PI WEB data directory starts with empty registries and no archive index. Changing paths does not migrate data; archive records retain their stored paths. See <a href="#session-archive-directory">archive path rules</a>.</li><li><strong>Second instance:</strong> use a distinct data directory, daemon endpoint, and web port. One live session daemon owns each data directory.</li><li><strong>Agent state:</strong> uses the bundled Pi SDK’s data layout. PI WEB does not convert profiles or move PI WEB-managed archives when the agent directory changes.</li><li><strong>Active paths:</strong> changing Pi state or session paths requires a sessiond restart; web/API-only restarts do not apply it. Sessions, terminals, and package operations use the daemon’s active paths. If those paths are unavailable, profile-dependent operations are unavailable too.</li></ul></details>
 <details class="config-details"><summary>Environment inherited by agent processes</summary><ul><li>Agent shells, terminals, and child sessions inherit the daemon environment, including its Pi state paths.</li><li><code>NODE_ENV</code> and <code>PORT</code> are removed so they do not interfere with development commands.</li><li><code>PI_WEB_SESSION=1</code> marks nested processes. Inherited <code>PI_WEB_*</code> values still point to the hosting instance. Use a separate data directory, daemon endpoint, and web port for a second instance.</li><li>Do not restart the hosting session daemon from inside an active session you need to preserve.</li><li><code>environmentFacts</code> includes nesting and deployment guidance in session system prompts by default. Set it to <code>false</code>, or use <code>PI_WEB_ENVIRONMENT_FACTS=false</code>, to omit that guidance. Restart sessiond after changing it.</li></ul></details>
+</section>
+<section id="managed-mcp"><h2>Managed MCP servers</h2>
+<p>Use the <strong>MCP</strong> tab to enable servers globally, for the selected workspace, or for one session. All applicable scopes appear together and stack on narrow screens. The tab manages enablement only; edit definitions manually or ask an agent to edit the paths shown under <strong>Configure servers</strong>.</p>
+<p>Put shared definitions in <code>$PI_WEB_CONFIG</code> (normally <code>~/.config/pi-web/config.json</code>, respecting <code>XDG_CONFIG_HOME</code>). Put workspace-only definitions in <code>&lt;workspace&gt;/.pi-web/config.json</code>. For MCPs, Project means this workspace, including its own worktree configuration. Merge this example into the existing file:</p>
+<pre><code>{
+  "mcp": {
+    "servers": {
+      "browser": {
+        "command": "npx",
+        "args": ["-y", "@playwright/mcp@latest"]
+      }
+    },
+    "enabledServers": []
+  }
+}</code></pre>
+<p>This defines Browser without enabling it. Add <code>"browser"</code> to <code>enabledServers</code> or use the tab. A project can enable a global definition with <code>{"mcp":{"enabledServers":["browser"]}}</code>. Project definitions cannot be enabled globally. Use Pi connection fields, but omit the per-definition <code>enabled</code> property; the scope lists own enablement. Prefer environment references over committed credentials. Definitions and credentials are omitted from browser config responses.</p>
+<ul>
+<li><strong>Additive:</strong> Global OR Project OR Session keeps a server enabled. Turning one scope off does not cancel another. Global/project changes require Save; session choices save immediately.</li>
+<li><strong>Session persistence:</strong> choices survive resume and tree navigation. Forks, subsessions, and independent agent-created sessions copy them automatically and then evolve independently. Ordinary new sessions start without session grants.</li>
+<li><strong>Activation:</strong> changes wait until the current agent run settles. Tab saves refresh affected loaded sessions. Manual file edits apply on Refresh, startup/reload, or before the next run. Enablement changes need no daemon restart after installing the feature. Displayed enablement is not connection health.</li>
+<li><strong>Trust:</strong> project definitions and grants require Pi project trust, even when only <code>.pi-web/config.json</code> supplies executable resources. An empty workspace's automatic trust does not approve later-added commands. Save trust in Pi or use its global trust policy.</li>
+<li><strong>Native Pi files:</strong> <code>mcp.json</code> entries remain authoritative, even disabled ones. Colliding rows show Managed by Pi and cannot be toggled here. To obtain session controls, move the definition into PI WEB config, omit <code>enabled</code>, remove the native entry, and reload Pi resources. Keep the same name and URL to retain OAuth identity.</li>
+<li><strong>Conflicts:</strong> duplicate managed names are errors, not overrides. Hyphens and underscores share Pi's tool namespace. Fix conflicting definitions in the files.</li>
+</ul>
+<p><code>mcp.servers</code> and <code>mcp.enabledServers</code> are independent atomic settings across deployment defaults and writable machine config. Trusted project definitions are separate additions. <code>PI_WEB_MCP</code> accepts JSON: supplying <code>servers</code> enforces that catalog and excludes project additions; supplying <code>enabledServers</code> enforces enablement across all scopes, including sessions. Saved choices remain intact. <code>PI_WEB_MCP='{"enabledServers":[]}'</code> disables managed MCPs, not native Pi servers. Environment changes require a daemon restart.</p>
+<p>Stale edits fail with a refresh-and-retry message. PI WEB writers use an advisory lock and atomic replacement; avoid concurrent external writes. After a crash, remove an abandoned <code>&lt;config-path&gt;.pi-web-lock</code> only after verifying that no writer is active. Pi still owns connections, authentication, tools, and resources. <a href="config.md#managed-mcp">Detailed reference →</a></p>
 </section>
 <section id="providers"><h2>Providers, catalogs & project trust</h2>
 <div class="table-scroll" role="region" aria-label="Provider and trust configuration" tabindex="0">
