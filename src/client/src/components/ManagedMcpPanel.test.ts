@@ -1,10 +1,14 @@
 // @vitest-environment happy-dom
+import { installNativeDialogFake } from "./nativeDialog.testSupport";
+installNativeDialogFake();
+
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ManagedMcpView } from "../../../shared/managedMcp";
 import { managedMcpApi } from "../api/managedMcp";
 import { managedMcpView } from "../api/managedMcp.testSupport";
 import { deferred } from "./SettingsDialog.testSupport";
-import { ManagedMcpPanel, type ManagedMcpPanelContext } from "./ManagedMcpPanel";
+import { ManagedMcpPanel, managedMcpMessages, type ManagedMcpPanelContext } from "./ManagedMcpPanel";
+import type { ConfirmationDialog } from "./ConfirmationDialog";
 
 const context = { machineId: "remote", cwd: "/workspace", sessionId: "session-a" };
 beforeEach(() => {
@@ -41,6 +45,14 @@ function button(panel: ManagedMcpPanel, label: string): HTMLButtonElement {
 function refresh(panel: ManagedMcpPanel): void {
   panel.shadowRoot?.querySelector("settings-panel-frame")?.shadowRoot?.querySelector("button")?.click();
 }
+async function answerRefresh(panel: ManagedMcpPanel, answer: "confirm" | "cancel"): Promise<void> {
+  const dialog = panel.shadowRoot?.querySelector<ConfirmationDialog>("confirmation-dialog");
+  await dialog?.updateComplete;
+  const choice = dialog?.shadowRoot?.querySelector<HTMLButtonElement>(`#confirmation-${answer}`);
+  if (!choice) throw new Error("Missing refresh confirmation");
+  choice.click();
+  await settle(panel);
+}
 
 it("shows disabled definitions and only the scopes available in the current context", async () => {
   const panel = await mount({ machineId: "remote" });
@@ -71,10 +83,12 @@ it("shows explicit context and saved enablement sources without treating drafts 
   expect(header?.textContent).toContain("/workspace");
   expect(header?.textContent).toContain("Documentation review");
   const row = panel.shadowRoot?.querySelector("tbody tr");
-  expect(row?.textContent).toContain("Enabled by Global and Project");
+  const savedChoices = managedMcpMessages.t("enabledBy", { scopes: "Global and Project" });
+  expect(row?.textContent).toContain(savedChoices);
   checkbox(panel, "docs", "Project").click();
   await settle(panel);
-  expect(row?.textContent).toContain("Enabled by Global and Project");
+  expect(row?.textContent).toContain(savedChoices);
+  expect(row?.textContent).toContain(managedMcpMessages.t("remainsEnabled", { scopes: "Global" }));
   expect(managedMcpApi.update).not.toHaveBeenCalled();
   // Presentation changes must not reload the snapshot or discard an unsaved draft.
   panel.sessionLabel = "Renamed session";
@@ -103,6 +117,37 @@ it("stages ancestor changes with explicit save, cancels drafts, and saves sessio
   checkbox(panel, "docs", "Session").click();
   await settle(panel);
   expect(managedMcpApi.update).toHaveBeenLastCalledWith({ cwd: context.cwd, sessionId: context.sessionId, serverName: "docs", scope: "session", enabled: true, revision: "revision-2" }, "remote");
+  expect(checkbox(panel, "docs", "Session").closest("td")?.querySelector('[role="status"]')).not.toBeNull();
+  expect(checkbox(panel, "docs", "Global").closest("td")?.querySelector('[role="status"]')).toBeNull();
+});
+
+it("keeps drafts when refresh is cancelled and reloads only after confirmation", async () => {
+  const panel = await mount();
+  checkbox(panel, "docs", "Project").click();
+  await settle(panel);
+  refresh(panel);
+  await answerRefresh(panel, "cancel");
+  expect(managedMcpApi.get).toHaveBeenCalledOnce();
+  expect(checkbox(panel, "docs", "Project").checked).toBe(true);
+  refresh(panel);
+  await answerRefresh(panel, "confirm");
+  expect(managedMcpApi.get).toHaveBeenCalledTimes(2);
+  expect(checkbox(panel, "docs", "Project").checked).toBe(false);
+  expect(managedMcpApi.update).not.toHaveBeenCalled();
+});
+
+it("does not discard a new context's drafts when an old refresh prompt is confirmed", async () => {
+  const panel = await mount();
+  checkbox(panel, "docs", "Project").click();
+  await settle(panel);
+  refresh(panel);
+  panel.context = { ...context, sessionId: "session-b" };
+  await settle(panel);
+  checkbox(panel, "docs", "Project").click();
+  await settle(panel);
+  await answerRefresh(panel, "confirm");
+  expect(managedMcpApi.get).toHaveBeenCalledTimes(2);
+  expect(checkbox(panel, "docs", "Project").checked).toBe(true);
 });
 
 it("enforces writable flags and project trust without hiding definitions or native conflicts", async () => {

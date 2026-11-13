@@ -37,6 +37,12 @@ test("all scope controls remain reachable in desktop columns and a narrow scroll
   await project.check();
   await expect(page.getByRole("button", { name: "Save Project change for docs" })).toBeVisible();
   expect(updates).toHaveLength(0);
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  const keepEditing = page.getByRole("button", { name: "Keep editing", exact: true });
+  await expect(keepEditing).toBeFocused();
+  await keepEditing.click();
+  await expect(project).toBeChecked();
+  await page.screenshot({ path: testInfo.outputPath("managed-mcp-unsaved.png"), fullPage: true });
   await page.getByRole("button", { name: "Save Project change for docs" }).click();
   await expect(project).toBeEnabled();
   await session.check();
@@ -55,7 +61,7 @@ test("all scope controls remain reachable in desktop columns and a narrow scroll
     expect(g.x).toBeLessThan(p.x);
     expect(p.x).toBeLessThan(s.x);
   }
-  await page.getByText("Configure server definitions", { exact: true }).click();
+  await page.getByText("Add or edit servers", { exact: true }).click();
   await page.getByText("Configuration example", { exact: true }).click();
   await expect(page.locator("pre code")).toBeVisible();
   await page.getByRole("button", { name: "Copy Project config path" }).scrollIntoViewIfNeeded();
@@ -65,4 +71,14 @@ test("all scope controls remain reachable in desktop columns and a narrow scroll
   await page.getByRole("button", { name: "Copy Project config path" }).focus();
   await expect(page.getByRole("button", { name: "Copy Project config path" })).toBeFocused();
   await page.screenshot({ path: testInfo.outputPath("managed-mcp.png"), fullPage: true });
+});
+
+test("empty state exposes setup paths without opening a disclosure", async ({ page }, testInfo) => {
+  await page.route("**/api/machines/fixture/mcp/managed**", (route) => route.fulfill({ json: managedMcpView({ servers: [] }) }));
+  await page.goto("/managed-mcp.html");
+  await expect(page.getByRole("button", { name: "Copy Global config path" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Copy Project config path" })).toBeVisible();
+  await expect(page.getByText("/workspace/.pi-web/config.json", { exact: true })).toBeVisible();
+  await expect(page.locator("pre code")).not.toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("managed-mcp-empty.png"), fullPage: true });
 });

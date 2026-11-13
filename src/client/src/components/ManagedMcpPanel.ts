@@ -10,6 +10,8 @@ import { uiSettingsStyles } from "./ui/settingsStyles";
 import { uiNoticeStyles } from "./ui/noticeStyles";
 import source from "./managedMcp.messages";
 import "./settings/SettingsPanelFrame";
+import type { ConfirmationDialog } from "./ConfirmationDialog";
+import "./ConfirmationDialog";
 
 export const managedMcpMessages = localization.registerMessages("core.managedMcp", source);
 const m = managedMcpMessages;
@@ -37,7 +39,7 @@ export class ManagedMcpPanel extends LitElement {
   @state() private saving: Draft | undefined;
   @state() private drafts: Draft[] = [];
   @state() private failure: { kind: "loadError" | "saveError" | "copyError"; error: string; serverName?: string } | undefined;
-  @state() private feedback: "saved" | "copied" | undefined;
+  @state() private feedback: { kind: "saved"; serverName: string; scope: ManagedMcpScope } | { kind: "copied"; path: string } | undefined;
   private generation = 0;
   private viewContext: ManagedMcpPanelContext | undefined;
 
@@ -56,6 +58,19 @@ export class ManagedMcpPanel extends LitElement {
   }
   private current(generation: number, context: ManagedMcpPanelContext): boolean {
     return this.isConnected && generation === this.generation && sameContext(context, this.context);
+  }
+  private async refresh(): Promise<void> {
+    if (this.context === undefined || this.loading || this.saving !== undefined) return;
+    const context = { ...this.context };
+    const generation = this.generation;
+    if (this.drafts.length > 0) {
+      const confirmed = await this.shadowRoot?.querySelector<ConfirmationDialog>("confirmation-dialog")?.request({
+        title: () => m.t("discardTitle"), message: () => m.t("discardHelp"),
+        confirmLabel: () => m.t("discardConfirm"), cancelLabel: () => m.t("keepEditing"),
+      });
+      if (confirmed !== true || !this.current(generation, context)) return;
+    }
+    await this.reload();
   }
   private async reload(): Promise<void> {
     const generation = ++this.generation;
@@ -115,7 +130,7 @@ export class ManagedMcpPanel extends LitElement {
       if (!this.current(generation, context)) return;
       this.view = view;
       this.drafts = this.drafts.filter((item) => item.serverName !== draft.serverName || item.scope !== draft.scope);
-      this.feedback = "saved";
+      this.feedback = { kind: "saved", serverName: draft.serverName, scope: draft.scope };
     } catch (error) {
       if (this.current(generation, context)) this.failure = { kind: "saveError", error: errorMessage(error), serverName: draft.serverName };
     } finally {
@@ -128,7 +143,7 @@ export class ManagedMcpPanel extends LitElement {
     const generation = this.generation;
     try {
       await navigator.clipboard.writeText(path);
-      if (this.current(generation, context)) this.feedback = "copied";
+      if (this.current(generation, context)) this.feedback = { kind: "copied", path };
     } catch (error) {
       if (this.current(generation, context)) this.failure = { kind: "copyError", error: errorMessage(error) };
     }
@@ -138,16 +153,21 @@ export class ManagedMcpPanel extends LitElement {
     const saving = this.saving?.serverName === server.name && this.saving.scope === scope;
     const reason = this.lockedReason(server, scope);
     const checked = saving ? this.saving?.enabled : draft?.enabled ?? server.enabled[scope] ?? false;
+    const otherScopes = this.scopes().filter((other) => other !== scope && server.enabled[other] === true);
+    const saved = this.feedback?.kind === "saved" && this.feedback.serverName === server.name && this.feedback.scope === scope;
     return html`<td>
       <label class="ui-checkbox-field" title=${reason ?? ""}>
         <input type="checkbox" .checked=${checked} ?disabled=${reason !== undefined || this.saving !== undefined}
           aria-label=${m.t("checkbox", { name: server.name, scope: m.t(scope) })}
+          aria-description=${reason ?? m.t(`${scope}Help`)}
           @change=${(event: Event) => { if (event.target instanceof HTMLInputElement) this.change(server, scope, event.target.checked); }}>
-        <span>${m.t(scope)}</span>
+        <span>${m.t(scope)}<span class="scope-description">${m.t(`${scope}Help`)}</span></span>
       </label>
       ${reason === undefined || server.nativeConflict === true ? null : html`<p class="scope-help">${reason}</p>`}
-      ${saving ? html`<p role="status">${m.t("saving")}</p>` : null}
-      ${draft === undefined ? null : html`<p class="scope-help">${m.t(scope === "global" ? "globalImpact" : "projectImpact")}</p>
+      ${saving ? html`<p role="status">${m.t("saving")}</p>` : saved ? html`<p role="status">${m.t("saved")}</p>` : null}
+      ${draft === undefined ? null : html`<p role="status">${m.t("unsaved")}</p>
+        <p class="scope-help">${m.t(scope === "global" ? "globalImpact" : "projectImpact")}</p>
+        ${draft.enabled || otherScopes.length === 0 ? null : html`<p class="scope-help">${m.t("remainsEnabled", { scopes: localization.list(otherScopes.map((other) => m.t(other))) })}</p>`}
         <div class="ui-settings-actions">
           <button class="ui-button ui-button--action ui-button--primary" ?disabled=${this.saving !== undefined || reason !== undefined}
             aria-label=${m.t("saveAria", { name: server.name, scope: m.t(scope) })} @click=${() => this.save(draft)}>${m.t("save")}</button>
@@ -159,36 +179,37 @@ export class ManagedMcpPanel extends LitElement {
   }
   private configPath(scope: "global" | "project", path: string): TemplateResult {
     return html`<div class="config-path"><strong>${m.t(scope)}</strong><code class="ui-settings-path" dir="ltr">${path}</code>
-      <button class="ui-button ui-button--action" aria-label=${m.t("copyAria", { scope: m.t(scope) })} @click=${() => this.copyPath(path)}>${m.t("copy")}</button></div>`;
+      <button class="ui-button ui-button--action" aria-label=${m.t("copyAria", { scope: m.t(scope) })} @click=${() => this.copyPath(path)}>${m.t("copy")}</button>
+      ${this.feedback?.kind === "copied" && this.feedback.path === path ? html`<span role="status">${m.t("copied")}</span>` : null}</div>`;
   }
   override render(): TemplateResult {
     const view = this.view;
     return html`<settings-panel-frame .heading=${m.t("title")} .description=${m.t("description")}
       .actionLabel=${m.t("refresh")} .actionDisabled=${this.loading || this.saving !== undefined || this.context === undefined}
-      .onAction=${() => this.reload()}>
+      .onAction=${() => this.refresh()}>
       <section class="ui-settings-section">
         ${this.context === undefined ? null : html`<dl class="ui-settings-summary context" aria-label=${m.t("context")}>
           <div><dt>${m.t("machine")}</dt><dd><bdi>${this.machineLabel || this.context.machineId}</bdi></dd></div>
           ${this.context.cwd === undefined ? null : html`<div><dt>${m.t("workspace")}</dt><dd><bdi dir="ltr">${this.context.cwd}</bdi></dd></div>`}
           ${this.context.sessionId === undefined ? null : html`<div><dt>${m.t("session")}</dt><dd><bdi>${this.sessionLabel || this.context.sessionId}</bdi></dd></div>`}
         </dl>`}
-        <p>${m.t("intentHelp")}</p>
+
         ${this.failure === undefined || this.failure.serverName !== undefined ? null : html`<p class="ui-notice error" role="alert">${m.t(this.failure.kind, { error: this.failure.error })}</p>`}
-        ${this.feedback === undefined ? null : html`<p role="status">${m.t(this.feedback)}</p>`}
         ${this.loading ? html`<p role="status">${m.t("loading")}</p>` : null}
         ${view === undefined ? null : html`
           ${view.projectTrusted || this.context?.cwd === undefined ? null : html`<p class="ui-notice warning">${m.t("untrusted")}</p>`}
           ${view.issues.map((issue) => html`<p class="ui-notice warning">${issue}</p>`)}
           ${view.servers.length === 0 ? html`<p role="status">${m.t("empty")}</p>` : html`
+            <p>${m.t("scopeHelp")}</p>
             <table aria-label=${m.t("title")}><thead><tr><th>${m.t("server")}</th>${this.scopes().map((scope) => html`<th>${m.t(scope)}</th>`)}</tr></thead>
               <tbody>${view.servers.map((server) => html`<tr>
                 <th scope="row"><strong dir="auto">${server.name}</strong>
                   ${server.description === undefined ? null : html`<p dir="auto">${server.description}</p>`}
-                  <p>${m.t("source", { scope: m.t(server.definitionScope) })}</p>
-                  <p>${m.t(server.nativeConflict === true ? "native" : server.effectiveEnabled ? "enabled" : "disabled")}</p>
-                  ${server.nativeConflict === true ? html`<p class="scope-help">${m.t("nativeHelp")}</p>` : server.effectiveEnabled ? html`
-                    <p>${m.t("enabledBy", { scopes: localization.list(this.scopes().filter((scope) => server.enabled[scope] === true).map((scope) => m.t(scope))) })}</p>
-                  ` : null}
+                  <p class="server-state">${server.nativeConflict === true ? m.t("native") : server.effectiveEnabled
+                    ? m.t("enabledBy", { scopes: localization.list(this.scopes().filter((scope) => server.enabled[scope] === true).map((scope) => m.t(scope))) })
+                    : m.t("disabled")}</p>
+                  ${server.nativeConflict === true ? html`<p class="scope-help">${m.t("nativeHelp")}</p>` : null}
+                  <p class="scope-help">${m.t("source", { scope: m.t(server.definitionScope) })}</p>
                   ${server.pending === true ? html`<p role="status">${m.t("pending")}</p>` : null}
                   ${server.error === undefined ? null : html`<p class="ui-notice error">${server.error}</p>`}
                   ${this.failure?.serverName === server.name ? html`<p role="alert" class="ui-notice error">${m.t(this.failure.kind, { error: this.failure.error })}</p>` : null}
@@ -197,19 +218,24 @@ export class ManagedMcpPanel extends LitElement {
             </table>`}
         `}
       </section>
-      ${view === undefined ? null : html`<section class="ui-settings-section"><details><summary>${m.t("config")}</summary>
+      ${view === undefined ? null : html`<section class="ui-settings-section"><details .open=${view.servers.length === 0}><summary>${m.t("config")}</summary>
         <p>${m.t("configHelp")}</p>
         ${this.configPath("global", view.globalConfigPath)}
         ${view.projectConfigPath === undefined ? null : this.configPath("project", view.projectConfigPath)}
-        <p class="ui-notice warning">${m.t("nativeWarning")}</p>
+        <details><summary>${m.t("nativeConfig")}</summary><p>${m.t("nativeWarning")}</p></details>
         <details><summary>${m.t("example")}</summary>
           <p>${m.t("exampleHelp")}</p>
           <pre class="ui-settings-path" dir="ltr"><code>${configExample}</code></pre>
         </details>
         <p><a href="https://pi-web.dev/config#managed-mcp" target="_blank" rel="noopener noreferrer">${m.t("configReference")}</a></p>
-        <p>${m.t("auth")}</p>
-      </details></section>`}
-    </settings-panel-frame>`;
+      </details></section>
+      ${view.servers.length === 0 ? null : html`<section class="ui-settings-section"><details><summary>${m.t("usageHelp")}</summary>
+        <p>${m.t("connectionHelp")}</p>
+        <p>${m.t("deferredHelp")}</p>
+        <p>${m.t("inheritanceHelp")}</p>
+      </details></section>`}`}
+    </settings-panel-frame>
+    <confirmation-dialog></confirmation-dialog>`;
   }
   static override styles = [uiButtonStyles, uiFormStyles, uiSettingsStyles, uiNoticeStyles, css`
     :host { display: block; min-width: 0; overflow-wrap: anywhere; container-type: inline-size; }
@@ -223,7 +249,9 @@ export class ManagedMcpPanel extends LitElement {
     th, td { text-align: start; vertical-align: top; padding: 12px 8px; border-bottom: 1px solid var(--pi-border-muted); }
     tbody th { font-weight: normal; }
     th p, td p { margin: 8px 0; }
-    .scope-help { font-size: 0.9em; color: var(--pi-muted); }
+    .scope-help, .scope-description { font-size: 0.9em; color: var(--pi-muted); }
+    .scope-description { display: block; margin-block-start: 4px; }
+    .server-state { font-weight: bold; }
     .config-path { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-block: 12px; }
     .config-path code { flex: 1 1 240px; min-width: 0; }
     summary { cursor: pointer; padding-block: 8px; }
