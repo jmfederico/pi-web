@@ -261,11 +261,8 @@ it("rejects events from the old rendered view before a context switch has render
 it.each([context, { machineId: "remote" }])("copies the visible instruction with actual paths for context %j", async (origin) => {
   const copy = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
   const panel = await mount(origin);
-  panel.machineLabel = "Build machine";
-  await settle(panel);
   const instruction = panel.shadowRoot?.querySelector("#agent-instruction code")?.textContent;
   expect(instruction).toContain("https://pi-web.dev/config#managed-mcp");
-  expect(instruction).toContain("Build machine");
   expect(instruction).toContain(managedMcpView().globalConfigPath);
   if ("workspaceId" in origin) expect(instruction).toContain(managedMcpView().projectConfigPath);
   else expect(instruction).not.toContain(managedMcpView().projectConfigPath);
@@ -307,7 +304,6 @@ it.each(["success", "failure"])("ignores stale clipboard %s and rejects old copy
   expect(panel.shadowRoot?.querySelector('[role="alert"]')).toBeNull();
   expect(panel.shadowRoot?.textContent).not.toContain(managedMcpMessages.t("copied"));
   const instruction = panel.shadowRoot?.querySelector("#agent-instruction code")?.textContent;
-  expect(instruction).toContain("other");
   expect(instruction).not.toContain(managedMcpView().projectConfigPath);
   copyInstructionButton(panel).click();
   await settle(panel);

@@ -200,7 +200,6 @@ export class ManagedMcpPanel extends LitElement {
     const m = this.messages;
     return [
       m.t("instruction"),
-      m.t("instructionMachine", { machine: this.machineLabel || (this.context?.machineId ?? "") }),
       [
         m.t("globalConfigPath", { path: view.globalConfigPath }),
         ...(this.context?.workspaceId === undefined || view.projectConfigPath === undefined ? []
