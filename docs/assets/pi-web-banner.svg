@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">PI WEB — A remote-first runtime for AI coding agents.</title>
+  <desc id="desc">The teal bar mark and uppercase PI WEB wordmark on a dark navy background.</desc>
+  <!-- Editable source for pi-web-banner.png. Export at 1200 × 630 with IBM Plex
+       Mono Bold and IBM Plex Sans Regular installed. Colors and typography
+       match docs/styles.css; the bar matches the website header and favicon. -->
+  <rect width="1200" height="630" fill="#070912" />
+  <rect x="144" y="230" width="144" height="24" fill="#00f0d8" />
+  <text x="344" y="300" fill="#f7f4ff" font-family="IBM Plex Mono, monospace" font-size="176" font-weight="700" letter-spacing="14.08">PI WEB</text>
+  <g fill="#aaa4bd" font-family="IBM Plex Sans, sans-serif" font-size="52" text-anchor="middle">
+    <text x="600" y="380">A remote-first runtime</text>
+    <text x="600" y="446">for AI coding agents.</text>
+  </g>
+</svg>
