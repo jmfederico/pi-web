@@ -3,6 +3,9 @@ import { afterEach, expect, it, vi } from "vitest";
 import { html } from "lit";
 import type { TranscriptToolRenderer, TranscriptToolRendererInput, TranscriptMessageRendererInput } from "../../../plugin-api";
 import type { RegisteredTranscriptRenderer } from "../plugins/transcriptRenderers";
+import { PluginRegistry } from "../plugins/registry";
+import { adaptPublicPlugin } from "../plugins/publicContext";
+import * as backendTransport from "../api/pluginBackends";
 import { TranscriptRendererHost } from "./TranscriptRendererHost";
 import { ChatView } from "./ChatView";
 import { normalizeMessages } from "../chatMessages";
@@ -56,6 +59,36 @@ it("lets the reader switch to the host view, cancels work, and retains that choi
   expect(host.shadowRoot?.querySelector("strong")?.textContent).toBe("success");
   host.remove();
   expect(inputs[1]?.signal.aborted).toBe(true);
+});
+
+it("cancels paired backend work on entry changes, default view and unmount", async () => {
+  const requestBackend = vi.spyOn(backendTransport, "requestPairedPluginBackend").mockResolvedValue(null);
+  const inputs: TranscriptToolRendererInput[] = [];
+  const registry = new PluginRegistry();
+  await registry.register({ id: "paired", backendRevision: "r1", pairedRequestVersion: 1,
+    plugin: adaptPublicPlugin({ apiVersion: 5, name: "Paired", activate: () => ({ contributions: { transcriptRenderers: [{ id: "tool", target: "tool",
+      resolve: () => ({ render: (input) => { inputs.push(input); return html`paired`; } }),
+    }] } }) }) });
+  const host = mount(() => undefined);
+  const request = required(host.request);
+  if (request.kind !== "tool") throw new Error("Expected tool");
+  host.request = { ...request, renderers: registry.getTranscriptRenderers(scope.machineId) };
+  await host.updateComplete;
+  const verifyCancellation = async (cancel: () => void) => {
+    const backend = required(inputs.at(-1)?.backend);
+    const peer = backend.forScope({ kind: "machine" });
+    await peer.request?.("status", null);
+    const signal = required(requestBackend.mock.calls.at(-1)?.[3]?.signal);
+    expect(signal.aborted).toBe(false);
+    cancel(); await host.updateComplete;
+    expect(signal.aborted).toBe(true);
+    expect(() => peer.request?.("status", null)).toThrow();
+  };
+  await verifyCancellation(() => { host.request = { ...request, renderers: registry.getTranscriptRenderers(scope.machineId), entry: { ...request.entry, status: "success" } }; });
+  await verifyCancellation(() => { button(host).click(); });
+  button(host).click(); await host.updateComplete;
+  await verifyCancellation(() => { host.remove(); });
+  await registry.dispose();
 });
 
 it("retires old failure callbacks and renders each new snapshot without remounting unrelated state", async () => {

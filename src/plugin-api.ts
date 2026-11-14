@@ -283,6 +283,8 @@ export interface TranscriptMessageEntry {
 
 export interface TranscriptRendererInput {
   readonly scope: TranscriptRendererScope;
+  /** This renderer's paired backend on the entry's machine; revoked with signal. */
+  readonly backend?: PluginBackend;
   /** Aborted when the entry, selection, mounting, or plugin lifetime changes. */
   readonly signal: AbortSignal;
   /** Report asynchronous failure; calls from obsolete renders are ignored. */

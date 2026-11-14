@@ -1,7 +1,8 @@
 import { html } from "lit";
-import { describe, expect, it, vi } from "vitest";
-import type { TranscriptRendererContribution, TranscriptToolRenderer, TranscriptToolRendererInput, TranscriptToolRendererResolver } from "../../../plugin-api";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { TranscriptRendererContribution, TranscriptRendererInput, TranscriptToolRenderer, TranscriptToolRendererInput, TranscriptToolRendererResolver } from "../../../plugin-api";
 import { PluginRegistry } from "./registry";
+import * as backendTransport from "../api/pluginBackends";
 import { adaptPublicPlugin } from "./publicContext";
 import { resolveTranscriptToolRenderer, snapshotTranscriptRenderer, transcriptRenderingCapability, transcriptRenderingCapabilityToken, type RegisteredTranscriptRenderer } from "./transcriptRenderers";
 
@@ -9,6 +10,8 @@ const tool = (id = "tool", name = "read"): TranscriptRendererContribution => ({ 
 const custom = (id: string, customType = "notice"): TranscriptRendererContribution => ({ id, target: "custom-message", customType, render: () => undefined });
 const plugin = (transcriptRenderers = [tool()]) => adaptPublicPlugin({ apiVersion: 5, name: "Test", activate: () => ({ contributions: { transcriptRenderers } }) });
 const input = (): TranscriptToolRendererInput => ({ scope: { machineId: "local", sessionId: "session" }, entry: { toolName: "read", status: "success" }, signal: new AbortController().signal, fail: vi.fn() });
+
+afterEach(() => { vi.restoreAllMocks(); });
 
 function asTool(renderer: TranscriptRendererContribution | undefined) {
   if (renderer?.target !== "tool") throw new Error("Expected tool renderer");
@@ -81,6 +84,58 @@ describe("tool resolution chain", () => {
 });
 
 describe("transcript renderer registry", () => {
+  it.each(["tool", "custom-message"] as const)("binds %s backend access to the source package, entry machine and render lifetime", async (target) => {
+    const request = vi.spyOn(backendTransport, "requestPairedPluginBackend").mockResolvedValue(null);
+    const registry = new PluginRegistry();
+    const retained: TranscriptRendererInput[] = [];
+    const render = (value: TranscriptRendererInput) => { retained.push(value); return html`body`; };
+    await registry.register({ id: "remote.owner", sourcePluginId: "owner", machineId: "remote", backendRevision: "r1", pairedRequestVersion: 1,
+      plugin: plugin([target === "tool" ? { id: "body", target, resolve: () => ({ render }) } : { id: "body", target, customType: "notice", render }]) });
+    const contribution = registry.getTranscriptRenderers("remote")[0];
+    const first = { ...input(), scope: { machineId: "remote", sessionId: "session", projectId: "p", workspaceId: "w" } };
+    const draw = (value: TranscriptToolRendererInput) => {
+      if (contribution?.target === "tool") contribution.resolve("read", () => undefined)?.render(value);
+      else contribution?.render({ ...value, entry: { customType: "notice", content: "notice" } });
+    };
+    draw(first);
+    const backend = retained[0]?.backend;
+    expect(backend?.machineId).toBe("remote");
+    const peer = backend?.forScope({ kind: "workspace", projectId: "p", workspaceId: "w" });
+    await peer?.request?.("status", null);
+    expect(request.mock.calls[0]?.[0]).toEqual({ pluginId: "owner", backendRevision: "r1", machineId: "remote", scope: "workspace", projectId: "p", workspaceId: "w" });
+    draw({ ...first, scope: { machineId: "other", sessionId: "other-session" } });
+    expect(retained[1]?.backend?.machineId).toBe("other");
+    expect(backend?.machineId).toBe("remote");
+    await registry.dispose();
+    expect(request.mock.calls[0]?.[3]?.signal?.aborted).toBe(true);
+    expect(() => peer?.request?.("status", null)).toThrow();
+    expect(() => backend?.forScope({ kind: "machine" })).toThrow();
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives chained renderers only their own backend, including browser-only wrappers and delegates", async () => {
+    const request = vi.spyOn(backendTransport, "requestPairedPluginBackend").mockResolvedValue(null);
+    const registry = new PluginRegistry();
+    const retained = new Map<string, TranscriptToolRendererInput>();
+    for (const id of ["outer", "browser-only", "inner"]) {
+      await registry.register({ id, ...(id === "browser-only" ? {} : { backendRevision: `${id}-r1`, pairedRequestVersion: 1 as const }),
+        plugin: plugin([{ id: "tool", target: "tool", resolve: (_name, next) => {
+          const downstream = next();
+          return { render: (value) => { retained.set(id, value); return html`${downstream?.render(value)}`; } };
+        } }]) });
+    }
+    // Unchanged delegation must not replace the downstream renderer's paired backend.
+    await registry.register({ id: "delegate", backendRevision: "delegate-r1", pairedRequestVersion: 1,
+      plugin: plugin([{ id: "tool", target: "tool", resolve: (_name, next) => next() }]) });
+    const renderers = registry.getTranscriptRenderers("local");
+    const delegate = renderers.find(({ pluginId }) => pluginId === "delegate");
+    if (delegate === undefined) throw new Error("Missing delegate");
+    resolveTranscriptToolRenderer("read", [delegate, ...renderers.filter((value) => value !== delegate)])?.render(input());
+    expect(retained.get("browser-only")).not.toHaveProperty("backend");
+    for (const id of ["outer", "inner"]) await retained.get(id)?.backend?.forScope({ kind: "machine" }).request?.("status", null);
+    expect(request.mock.calls.map(([target]) => target)).toEqual(["outer", "inner"].map((id) => ({ pluginId: id, backendRevision: `${id}-r1`, machineId: "local", scope: "machine" })));
+    await registry.dispose();
+  });
   it("activates the detection capability, retains all tools and first custom matches, and snapshots callbacks", async () => {
     const registry = new PluginRegistry();
     const source = tool();
