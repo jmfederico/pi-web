@@ -211,6 +211,34 @@ describe("plugin delivery artifacts", () => {
     expect(await execUtf8(process.execPath, [probe], standalone, 10_000)).toContain("standalone MCP manager passed");
   });
 
+  it("ships a standalone private-input backend and model-only companion", async () => {
+    const source = join(repoRoot, "dist", "pi-packages", "private-input");
+    const standalone = join(tempDir, "private-input");
+    await mkdir(join(standalone, "extensions"), { recursive: true });
+    for (const path of ["package.json", "extensions/index.js", "server-plugin.js"]) await cp(join(source, path), join(standalone, path));
+    const loader = new DefaultResourceLoader({
+      cwd: tempDir, agentDir: tempDir,
+      settingsManager: SettingsManager.inMemory({ packages: [standalone] }),
+      noThemes: true, noPromptTemplates: true,
+    });
+    await loader.reload();
+    expect(loader.getExtensions().errors).toEqual([]);
+    const tools = loader.getExtensions().extensions.flatMap((extension) => [...extension.tools.values()]);
+    expect(tools.map((tool) => tool.definition.name)).toEqual(["request_private_input"]);
+    expect(tools[0].definition.exposure).toBe("model-only");
+    const probe = join(standalone, "probe.mjs");
+    await writeFile(probe, `
+      import plugin from "./server-plugin.js";
+      const signal = new AbortController().signal;
+      const activation = plugin.activate({ lifetimeSignal: signal });
+      activation.start({ capabilities: { resolve() { return { version: 1 }; } } });
+      const result = await activation.peer.request({ scope: { kind: "machine" }, operation: "available", input: null, signal });
+      if (result.available !== true) throw new Error("Private input backend unavailable");
+      console.log("standalone private input passed");
+    `);
+    expect(await execUtf8(process.execPath, [probe], standalone, 10_000)).toContain("standalone private input passed");
+  });
+
   it("ships an optional disabled scheduler with standalone SQLite and cron dispatch", async () => {
     const source = join(repoRoot, "dist", "pi-packages", "scheduled-tasks");
     const metadata = JSON.parse(await readFile(join(source, "package.json"), "utf8"));
