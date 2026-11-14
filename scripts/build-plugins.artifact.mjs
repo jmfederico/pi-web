@@ -211,8 +211,14 @@ describe("plugin delivery artifacts", () => {
     expect(await execUtf8(process.execPath, [probe], standalone, 10_000)).toContain("standalone MCP manager passed");
   });
 
-  it("ships a standalone private-input backend and model-only companion", async () => {
+  it("ships private-input with an isolated browser bundle, standalone backend and model-only companion", async () => {
     const source = join(repoRoot, "dist", "pi-packages", "private-input");
+    const metadata = JSON.parse(await readFile(join(source, "package.json"), "utf8"));
+    expect(metadata.piWeb.plugins).toEqual([{ id: "private-input", defaultEnabled: false, machineSpecific: true,
+      serverModule: "server-plugin.js", browserRoot: "browser", module: "browser/pi-web-plugin.js" }]);
+    const browserEntry = await readFile(join(source, "browser", "pi-web-plugin.js"), "utf8");
+    expect(moduleSpecifiers(browserEntry)).toEqual([]);
+    expect(await readdir(join(source, "browser"))).toEqual(["pi-web-plugin.js"]);
     const standalone = join(tempDir, "private-input");
     await mkdir(join(standalone, "extensions"), { recursive: true });
     for (const path of ["package.json", "extensions/index.js", "server-plugin.js"]) await cp(join(source, path), join(standalone, path));

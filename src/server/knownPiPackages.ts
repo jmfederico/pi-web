@@ -7,6 +7,12 @@ export type KnownPiPackage = KnownAutoInstallablePiPackage;
 export const KNOWN_PI_PACKAGES: readonly KnownPiPackage[] = [
   ...KNOWN_AUTO_INSTALLABLE_PI_PACKAGES,
   {
+    id: "@jmfederico/pi-web-private-input",
+    label: "Private input",
+    description: "Save a secret to a new file without including its value in the conversation. Disabled by default.",
+    shippedPathSegments: ["dist", "pi-packages", "private-input"],
+  },
+  {
     id: "@jmfederico/pi-web-scheduled-tasks",
     label: "Scheduled agent tasks (beta)",
     description: "Agent-managed schedules and a persistent execution ledger. Disabled by default.",

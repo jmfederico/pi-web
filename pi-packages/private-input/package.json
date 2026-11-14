@@ -12,6 +12,8 @@
       "id": "private-input",
       "defaultEnabled": false,
       "serverModule": "server-plugin.js",
+      "module": "browser/pi-web-plugin.js",
+      "browserRoot": "browser",
       "machineSpecific": true
     }]
   }
