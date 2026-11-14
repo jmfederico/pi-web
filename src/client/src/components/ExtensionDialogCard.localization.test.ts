@@ -140,6 +140,23 @@ it("keeps the countdown regional, display-only and on the same deadline across l
   expect(vi.getTimerCount()).toBe(0);
 });
 
+it("localizes the dismissal countdown without restarting it", async () => {
+  vi.useFakeTimers();
+  const card = await mount();
+  const dismiss = vi.fn();
+  card.onDismiss = dismiss;
+  card.outcome = { dialog, reason: "cancelled" };
+  await card.updateComplete;
+  await vi.advanceTimersByTimeAsync(2_000);
+  await language(card, "ar-XB");
+  const root = required(card.shadowRoot);
+  expect(root.querySelector(".auto-dismiss span")?.textContent).toBe(extensionDialogMessages.t("autoDismiss", { seconds: 8 }));
+  expect(root.querySelector(".auto-dismiss button")?.textContent).toBe(extensionDialogMessages.t("keepVisible"));
+  expect(root.querySelector("[aria-live], [role=status]")).toBeNull();
+  await vi.advanceTimersByTimeAsync(8_000);
+  expect(dismiss).toHaveBeenCalledExactlyOnceWith("dialog-id");
+});
+
 it("refreshes all settled reasons and summaries, preserving raw answers and dismiss identity", async () => {
   const card = await mount();
   const dismiss = vi.fn();

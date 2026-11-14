@@ -13,8 +13,8 @@ import {
 } from "./ExtensionDialogCard";
 
 afterEach(() => {
-  vi.useRealTimers();
   document.body.replaceChildren();
+  vi.useRealTimers();
   localStorage.clear();
 });
 
@@ -271,6 +271,113 @@ describe("extension-dialog-card closed outcome", () => {
 
     expect(root.querySelector(".header-status")?.textContent).toBe("Timed out");
     expect(root.querySelector(".closed-summary")?.textContent).toContain("timed out");
+  });
+});
+
+describe("extension-dialog-card auto-dismiss", () => {
+  it.each(["answered", "cancelled", "timeout", "aborted", "session-ended"] as const)("dismisses a %s outcome once after ten seconds, not while open", async (reason) => {
+    vi.useFakeTimers();
+    const card = await mountOpenDialog(openDialog());
+    const onDismiss = vi.fn<ExtensionDialogDismissCallback>();
+    card.onDismiss = onDismiss;
+    await card.updateComplete;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(onDismiss).not.toHaveBeenCalled();
+
+    card.outcome = closedDialog(reason, true);
+    await card.updateComplete;
+    await vi.advanceTimersByTimeAsync(9_000);
+    expect(onDismiss).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(onDismiss).toHaveBeenCalledExactlyOnceWith("dlg-1");
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(onDismiss).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("keeps the card after revealing or hiding the answer until manually dismissed", async () => {
+    vi.useFakeTimers();
+    const card = await mountOpenDialog(openDialog({ kind: "input" }));
+    const onDismiss = vi.fn<ExtensionDialogDismissCallback>();
+    card.onDismiss = onDismiss;
+    card.outcome = closedDialog("answered", "Read this answer", card.dialog);
+    await card.updateComplete;
+    const root = renderRoot(card);
+    await vi.advanceTimersByTimeAsync(2_000);
+    const toggle = requiredElement(root.querySelector<HTMLButtonElement>(".answer-visibility"), "answer toggle");
+    toggle.focus();
+    toggle.click();
+    await card.updateComplete;
+    expect(root.querySelector(".closed-summary")?.textContent).toContain("Read this answer");
+    expect(root.activeElement).toBe(toggle);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(onDismiss).not.toHaveBeenCalled();
+    expect(root.querySelector(".auto-dismiss")).toBeNull();
+    toggle.click();
+    await card.updateComplete;
+    expect(root.querySelector(".closed-summary")?.textContent).not.toContain("Read this answer");
+    card.outcome = { ...card.outcome };
+    await card.updateComplete;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(onDismiss).not.toHaveBeenCalled();
+    expect(root.querySelector(".auto-dismiss")).toBeNull();
+    buttonWithText(root, "Dismiss").click();
+    expect(onDismiss).toHaveBeenCalledExactlyOnceWith("dlg-1");
+  });
+
+  it("does not restart the countdown when the same outcome is re-projected", async () => {
+    vi.useFakeTimers();
+    const card = await mountOpenDialog(openDialog());
+    const onDismiss = vi.fn<ExtensionDialogDismissCallback>();
+    card.onDismiss = onDismiss;
+    card.outcome = closedDialog("cancelled");
+    await card.updateComplete;
+    await vi.advanceTimersByTimeAsync(3_000);
+    card.outcome = { ...card.outcome };
+    await card.updateComplete;
+    await vi.advanceTimersByTimeAsync(7_000);
+    expect(onDismiss).toHaveBeenCalledExactlyOnceWith("dlg-1");
+  });
+
+  it("stops on detach, resumes mounted time, and resets cancellation for a different dialog", async () => {
+    vi.useFakeTimers();
+    const card = await mountOpenDialog(openDialog());
+    const onDismiss = vi.fn<ExtensionDialogDismissCallback>();
+    card.onDismiss = onDismiss;
+    card.outcome = closedDialog("cancelled");
+    await card.updateComplete;
+    await vi.advanceTimersByTimeAsync(2_000);
+    card.remove();
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(onDismiss).not.toHaveBeenCalled();
+    document.body.append(card);
+    await card.updateComplete;
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(onDismiss).toHaveBeenCalledExactlyOnceWith("dlg-1");
+
+    card.outcome = closedDialog("cancelled", undefined, openDialog({ dialogId: "dlg-2" }));
+    await card.updateComplete;
+    buttonWithText(renderRoot(card), "Keep visible").click();
+    await card.updateComplete;
+    card.outcome = closedDialog("cancelled", undefined, openDialog({ dialogId: "dlg-3" }));
+    await card.updateComplete;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(onDismiss.mock.calls).toEqual([["dlg-1"], ["dlg-3"]]);
+  });
+
+  it("clears an active countdown on manual dismissal", async () => {
+    vi.useFakeTimers();
+    const card = await mountOpenDialog(openDialog());
+    const onDismiss = vi.fn<ExtensionDialogDismissCallback>();
+    card.onDismiss = onDismiss;
+    card.outcome = closedDialog("cancelled");
+    await card.updateComplete;
+    await vi.advanceTimersByTimeAsync(2_000);
+    buttonWithText(renderRoot(card), "Dismiss").click();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(onDismiss).toHaveBeenCalledExactlyOnceWith("dlg-1");
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 

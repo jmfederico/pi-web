@@ -9,6 +9,8 @@ export default {
   send: message("Send", "Submit an extension dialog answer, including an empty answer"),
   sending: message("Sending…", "Extension dialog answer submission in progress"),
   dismiss: message("Dismiss", "Remove a settled extension dialog outcome from the transcript"),
+  autoDismiss: message<{ seconds: number }>("Dismisses in {seconds, number}s", "Countdown before removing a settled extension dialog card; s is a localized unit abbreviation"),
+  keepVisible: message("Keep visible", "Cancel automatic dismissal of this settled extension dialog card"),
   seeAnswer: message("See answer", "Accessible label and tooltip of the eye icon that reveals an input answer"),
   hideAnswer: message("Hide answer", "Accessible label and tooltip of the crossed-out eye icon that hides an input answer"),
   hiddenAnswer: message("Answer hidden.", "Settled input-dialog summary before the user chooses to reveal the answer"),
