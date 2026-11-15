@@ -10,7 +10,7 @@ Keep implementation walkthroughs, file inventories, and detailed verification in
 optional section below. See CONTRIBUTING.md for the description policy. -->
 
 <details>
-<summary>Technical details — optional reading</summary>
+<summary>Additional information</summary>
 
 <!-- Optional: extended implementation notes, detailed verification results, and AI
 context. Keep essential decisions and risks in the opening. Remove this whole section
