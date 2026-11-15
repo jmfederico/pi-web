@@ -45,6 +45,30 @@ it("keeps command details and complete output while updating live status and err
   expect(details.open).toBe(true);
 });
 
+it("strips terminal formatting from live, final and error output without changing the execution", async () => {
+  const view = new ToolExecutionView();
+  const command = "printf '\\033[31mred\\033[0m'";
+  const output = "\x1b[31mred\x1b[0m\n<img src=x>";
+  view.execution = { type: "toolExecution", toolName: "bash", summary: command, args: { command }, status: "running", resultText: output };
+  document.body.append(view);
+  await view.updateComplete;
+  const details = view.renderRoot.querySelector<HTMLDetailsElement>(".text-body");
+  if (details === null) throw new Error("Expected text disclosure");
+  details.open = true;
+  details.dispatchEvent(new Event("toggle"));
+  await view.updateComplete;
+
+  for (const status of ["running", "success", "error"] as const) {
+    view.execution = { ...view.execution, status };
+    await view.updateComplete;
+    expect(view.renderRoot.querySelector(".detail-result pre")?.textContent).toBe("red\n<img src=x>");
+    expect(view.renderRoot.querySelector(".detail-result img")).toBeNull();
+    expect(view.renderRoot.querySelector(".detail-target-value")?.textContent).toBe(command);
+    expect(view.execution.resultText).toBe(output);
+  }
+  expect(view.renderRoot.querySelector(".error-text")?.textContent).toBe("red\n<img src=x>");
+});
+
 it("retains diff disclosure state, expands long diffs, and copies the full diff", async () => {
   vi.useFakeTimers();
   const view = new ToolExecutionView();

@@ -1,5 +1,6 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { resolveAppUrl } from "../appUrl";
+import { stripTerminalFormatting } from "../formatting/terminalText";
 import { sessionMessagePresentation } from "../chatSessionMessages";
 import { localizedArgumentSummary, localizedChatText } from "../localizedChatPresentation";
 import { chatTranscriptMessages as messages } from "../chatTranscriptMessages";
@@ -319,7 +320,7 @@ export function renderPart(context: TranscriptRenderContext, part: ChatPart, mes
       return html`
       <details class=${`part tool-result ui-transcript-surface ui-transcript-activity ui-transcript-tool${part.isError ? " error" : ""}`} ?open=${live(open)} @toggle=${(event: Event) => { context.disclosure.toggle(key, event, part.isError); }}>
         <summary class="ui-transcript-disclosure ui-transcript-heading">${part.isError ? "✖" : "✓"} ${messages.t("toolResult", { name: part.toolName, failed: part.isError ? "yes" : "no" })}</summary>
-        ${open ? html`<formatted-text .imagesEnabled=${context.behaviors.loadImages} .codeBlocks=${context.behaviors.codeBlocks} .intentKey=${intentKey} .contentRendering=${context.contentRendering} .machineId=${context.machineId} .workspaceContext=${context.workspaceContext} .text=${part.text}></formatted-text>` : nothing}
+        ${open ? html`<formatted-text .imagesEnabled=${context.behaviors.loadImages} .codeBlocks=${context.behaviors.codeBlocks} .intentKey=${intentKey} .contentRendering=${context.contentRendering} .machineId=${context.machineId} .workspaceContext=${context.workspaceContext} .text=${stripTerminalFormatting(part.text)}></formatted-text>` : nothing}
       </details>
     `;
     }
