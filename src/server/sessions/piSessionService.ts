@@ -54,6 +54,7 @@ import type { SessionEventHub } from "../realtime/sessionEventHub.js";
 import { BUILTIN_COMMANDS } from "./builtinCommands.js";
 import { SessionCommandService } from "./sessionCommandService.js";
 import { SessionActivityMarker } from "./sessionActivityMarker.js";
+import { SessionStatistics } from "./sessionStatistics.js";
 import { projectSessionTree, type ProjectableSessionTreeNode } from "./sessionTreeProjection.js";
 import { messageHistoryTargetId } from "./messageHistoryTarget.js";
 import { SessionArchiveStore, type ArchivedSessionRecord, type ArchiveSessionInput } from "./sessionArchiveStore.js";
@@ -424,6 +425,7 @@ export interface PiSessionManager {
   getEntries?(): readonly unknown[];
   getTree?(): readonly ProjectableSessionTreeNode[];
   getLeafId(): string | null;
+  getEntryCount?(): number;
   branch(branchFromId: string): void;
   resetLeaf(): void;
   getHeader?(): { parentSession?: string; timestamp?: string } | null | undefined;
@@ -522,6 +524,7 @@ export interface PiAgentSession {
    */
   readonly state: { readonly streamingMessage?: unknown };
   model: AgentModel | undefined;
+  readonly routedModel?: { model: AgentModel } | undefined;
   thinkingLevel: ClientThinkingLevel;
   isStreaming: boolean;
   isCompacting: boolean;
@@ -539,7 +542,7 @@ export interface PiAgentSession {
   bindExtensions(bindings: PiExtensionBindings): Promise<void>;
   compact(instructions?: string): Promise<{ summary: string; tokensBefore: number }>;
   getUserMessagesForForking(): readonly { entryId: string; text: string }[];
-  getSessionStats(): { sessionId: string; totalMessages: number; userMessages: number; assistantMessages: number; toolCalls: number; tokens: ClientSessionStatus["tokens"]; cost: number };
+  getSessionStats(): { sessionId: string; totalMessages: number; userMessages: number; assistantMessages: number; toolCalls: number; tokens: ClientSessionStatus["tokens"]; cost: number; contextUsage?: ClientSessionStatus["contextUsage"] | undefined };
   reload(options?: { beforeSessionStart?: () => void | Promise<void> }): Promise<void>;
   waitForIdle(): Promise<void>;
   getContextUsage(): ClientSessionStatus["contextUsage"] | undefined;
@@ -1238,6 +1241,7 @@ export class PiSessionService implements SessionRouteService {
   private readonly startupSessions = new Map<string, PiAgentSession>();
   private readonly activities = new Map<string, Omit<SessionActivity, "sessionId" | "runtimePresentation"> & { runtimePresentation: RuntimeActivityPresentation }>();
   private readonly heartbeat: NodeJS.Timeout;
+  private readonly statistics = new SessionStatistics();
   private readonly commandService: SessionCommandService<PiAgentSession>;
   /** Runtime-identity gate held while Pi may await abandoned-branch summarization. */
   private readonly treeNavigations = new WeakSet<PiAgentSession>();
@@ -1630,12 +1634,12 @@ export class PiSessionService implements SessionRouteService {
         // live runtime's classification. Disk rows otherwise use the scanner.
         if (session.sessionFile !== undefined && sessionPathsEqual(listed.path, session.sessionFile)) {
           if (tracked) listed.agentSubsession = true;
-          listed.interventionRequired = this.statusFromSession(session).interventionRequired === true;
+          listed.interventionRequired = this.statusInterventionRequired(session);
         }
         continue;
       }
       const info = clientSessionFromActiveSession(session);
-      info.interventionRequired = this.statusFromSession(session).interventionRequired === true;
+      info.interventionRequired = this.statusInterventionRequired(session);
       if (tracked) info.agentSubsession = true;
       unarchivedById.set(session.sessionId, info);
     }
@@ -5089,6 +5093,7 @@ export class PiSessionService implements SessionRouteService {
     this.reconcileRuntimeMessageCount(session);
     this.interventionStates.set(session, sessionInterventionRequired(session.sessionManager.getEntries?.() ?? session.sessionManager.getBranch()));
     this.publishedSessionNames.set(session, { sessionId: session.sessionId, name: session.sessionName });
+    this.statistics.initialize(session);
     const unsubscribe = session.subscribe((event) => {
       const eventType = getString(event, "type");
       if (eventType === "session_info_changed") this.publishSessionName(session);
@@ -5155,7 +5160,10 @@ export class PiSessionService implements SessionRouteService {
       }
       if (eventType === "compaction_end" || eventType === "bash_execution_end") this.scheduleSubsessionDelivery(session);
       if (eventType === "agent_start" || eventType === "agent_end") this.scheduleCompactionQueueDrain(session.sessionId);
-      this.publishStatus(session);
+      // Content progress is delivered above; it does not change operational status.
+      if (eventType !== "message_update" && eventType !== "tool_execution_update" && eventType !== "bash_execution_update") {
+        this.publishStatus(session);
+      }
       this.updateSubsessionTracking(session, eventType === "agent_start", eventType === "agent_settled");
     });
     active.unsubscribe = () => {
@@ -5415,15 +5423,27 @@ export class PiSessionService implements SessionRouteService {
       // the session still reports active work transiently, so the event-driven
       // latch may not fire. The heartbeat re-checks once the session settles.
       this.updateSubsessionTracking(session);
+      // Idle sessions also need the final committed usage after message_end.
+      // Operational publications only read this snapshot; they never refresh it.
+      const statisticsChanged = this.refreshStatistics(session);
       void this.refreshActivityMarker(session);
       const activity = this.activities.get(session.sessionId);
       if (!this.hasActiveWork(session)) {
-        if (activity?.phase === "active") this.publishStatus(session);
+        if (statisticsChanged || activity?.phase === "active") this.publishStatus(session);
         continue;
       }
       this.publishStatus(session);
       if (activity?.phase === "active") this.publishActivity(session, activity.runtimePresentation, "active", activity.detail);
       else this.publishActivity(session, this.activityPresentationFromStatus(session), "active");
+    }
+  }
+
+  private refreshStatistics(session: PiAgentSession): boolean {
+    try {
+      return this.statistics.refresh(session);
+    } catch (error: unknown) {
+      this.logger.info({ sessionId: session.sessionId, error: errorMessage(error) }, "could not refresh session statistics; keeping the previous snapshot");
+      return false;
     }
   }
 
@@ -5544,6 +5564,7 @@ export class PiSessionService implements SessionRouteService {
     if (eventType === "agent_end") {
       this.publishActivity(session, { kind: "idle" }, "idle");
       setTimeout(() => {
+        if (!this.isCurrentActiveSession(session)) return;
         this.publishActivity(session, { kind: "idle" }, "idle");
         this.publishStatus(session);
       }, 250);
@@ -5650,6 +5671,10 @@ export class PiSessionService implements SessionRouteService {
       ?? sessionInterventionRequired(session.sessionManager.getEntries?.() ?? session.sessionManager.getBranch());
   }
 
+  private statusInterventionRequired(session: PiAgentSession): boolean {
+    return this.interventionRequired(session) || this.pendingExtensionDialogStore.pendingDialogs(session.sessionId).length > 0;
+  }
+
   private setInterventionRequired(session: PiAgentSession, required: boolean): void {
     const previous = this.interventionRequired(session);
     if (previous === required) return;
@@ -5707,9 +5732,9 @@ export class PiSessionService implements SessionRouteService {
 
   // session.messages is the compacted model context, not the browser transcript.
   private statusFromSession(session: PiAgentSession, messageCount = this.runtimeMessageCount(session)): ClientSessionStatus {
-    const stats = session.getSessionStats();
+    const stats = this.statistics.read(session);
     const model = session.model === undefined ? undefined : modelToClientModel(session.model);
-    const contextUsage = session.getContextUsage();
+    const contextUsage = stats.contextUsage;
     const warnings = this.warningsForSession(session);
     const pendingDialogs = this.pendingExtensionDialogStore.pendingDialogs(session.sessionId);
     const suggestedInput = this.suggestedInputs.get(session.sessionId);
