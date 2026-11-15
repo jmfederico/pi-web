@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Private secret capture into a new file, with non-secret conversation outcomes.",
   "keywords": ["pi-package"],
-  "peerDependencies": { "@earendil-works/pi-coding-agent": "*" },
+  "peerDependencies": { "@earendil-works/pi-coding-agent": "*", "typebox": "*" },
   "pi": { "extensions": ["./extensions/index.js"] },
   "piWeb": {
     "plugins": [{

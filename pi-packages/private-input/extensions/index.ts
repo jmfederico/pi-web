@@ -14,13 +14,33 @@ import {
 export default function privateInputExtension(pi: ExtensionAPI): void {
   let current: ExtensionContext | undefined;
   let unsubscribe: (() => void)[] = [];
-  const delivered = new Set<string>();
+  const pending = new Map<string, { nonce: string; timeout: ReturnType<typeof setTimeout> }>();
+  const finish = (id: string, accepted: boolean) => {
+    const receipt = pending.get(id);
+    if (receipt === undefined) return;
+    pending.delete(id);
+    clearTimeout(receipt.timeout);
+    pi.events.emit(REPLY_EVENT, { nonce: receipt.nonce, accepted });
+  };
+  const confirm = (ctx: ExtensionContext, settled: boolean) => {
+    if (pending.size === 0) return;
+    const branch = ctx.sessionManager.getBranch();
+    for (const id of pending.keys()) {
+      const persisted = branch.some((entry) => entry.type === "custom_message"
+        && entry.customType === OUTCOME_TYPE && matchesRequest(entry.details, id));
+      if (persisted || settled) finish(id, persisted);
+    }
+  };
   const stop = () => {
     for (const off of unsubscribe) off();
     unsubscribe = [];
+    for (const id of pending.keys()) finish(id, false);
     current = undefined;
-    delivered.clear();
   };
+  // sendMessage is void; message_end runs before persistence. These hooks only
+  // wake confirmation: the authoritative branch, not the event, proves delivery.
+  pi.on("context", (_event, ctx) => { confirm(ctx, false); });
+  pi.on("agent_settled", (_event, ctx) => { confirm(ctx, true); });
   pi.on("session_shutdown", stop);
   pi.on("session_start", (_event, ctx) => {
     stop();
@@ -51,13 +71,18 @@ export default function privateInputExtension(pi: ExtensionAPI): void {
       if (!requested) return;
       if (!notify) { accepted = ctx.isIdle() && record.status === "waiting"; return; }
       if (!isFinished(record)) return;
-      const alreadyDelivered = delivered.has(id) || branch.some((entry) => entry.type === "custom_message"
+      const alreadyDelivered = branch.some((entry) => entry.type === "custom_message"
         && entry.customType === OUTCOME_TYPE && matchesRequest(entry.details, id));
       if (alreadyDelivered) { accepted = true; return; }
-      if (!ctx.isIdle()) return;
-      pi.sendMessage({ customType: OUTCOME_TYPE, content: outcomeText(record), display: true, details: { requestId: id, status: record.status } }, { triggerTurn: true, deliverAs: "followUp" });
-      delivered.add(id);
-      accepted = true;
+      if (!ctx.isIdle() || pending.has(id)) return;
+      // Bound local receipts too: a failure before a run starts need not emit
+      // agent_settled. The peer times out independently; local expiry must not
+      // call a session-bound API after disposal.
+      pending.set(id, { nonce, timeout: setTimeout(() => { pending.delete(id); }, 3000) });
+      nonce = undefined; // The pending receipt now owns the acknowledgement.
+      try {
+        pi.sendMessage({ customType: OUTCOME_TYPE, content: outcomeText(record), display: true, details: { requestId: id, status: record.status } }, { triggerTurn: true, deliverAs: "followUp" });
+      } catch { finish(id, false); }
     } catch { /* Reply with a fixed negative acknowledgement, never raw event data. */ }
     finally { if (nonce !== undefined) pi.events.emit(REPLY_EVENT, { nonce, accepted }); }
   }

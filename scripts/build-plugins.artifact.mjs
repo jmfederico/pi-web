@@ -77,7 +77,7 @@ describe("plugin delivery artifacts", () => {
     expect(distFiles.filter(isTestArtifact)).toEqual([]);
     expect(packagedFiles.filter(isTestArtifact)).toEqual([]);
     expect(packagedFiles).toEqual(expect.arrayContaining([
-      "docs/scheduled-tasks.md",
+      "docs/private-input.md", "docs/scheduled-tasks.md",
       "dist/cli.js", "dist/server/app.js", "dist/server/index.js", "dist/server/sessiond.js",
       "dist/bin/pi-web.sh", "dist/bin/pi-web-server.sh", "dist/bin/pi-web-sessiond.sh", "dist/runtimePreflight.js",
       "dist/plugin-api.d.ts", "dist/server-plugin-api.d.ts", "dist/server-plugin-api.js",
@@ -230,6 +230,7 @@ describe("plugin delivery artifacts", () => {
     await loader.reload();
     expect(loader.getExtensions().errors).toEqual([]);
     const tools = loader.getExtensions().extensions.flatMap((extension) => [...extension.tools.values()]);
+    expect(loader.getExtensions().warnings ?? []).toEqual([]);
     expect(tools.map((tool) => tool.definition.name)).toEqual(["request_private_input"]);
     expect(tools[0].definition.exposure).toBe("model-only");
     const probe = join(standalone, "probe.mjs");
