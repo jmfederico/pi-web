@@ -48,6 +48,7 @@ The input is cleared on submission, cancellation, removal of the form, request a
 - Use an absolute path, a workspace-relative path, or `~/` for the session host user's home. Files may be created inside or outside the workspace, subject to the daemon user's filesystem permissions.
 - The parent directory must already exist and be accessible. Parent symlinks are resolved before showing the destination for confirmation.
 - Creation is exclusive: existing files and final-path symlinks are never overwritten. Replacing an existing file requires a separate workflow.
+- On Windows, the destination filesystem must support hard links, such as NTFS. An empty temporary sibling is removed before the secret is written. If interrupted before that removal, an empty `.pi-web-private-input-*` file may remain; the workflow never writes a secret through that temporary name.
 - The backend checks the resolved destination again before writing. It requests owner-only permissions (`0600`) on systems that support Unix permission modes; platform permissions and ACLs still apply.
 - Success is recorded only after writing, syncing, and closing the file. The saved file contains the value itself; it is not encrypted by this plugin.
 

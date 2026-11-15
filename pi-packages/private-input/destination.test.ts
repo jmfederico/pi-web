@@ -1,6 +1,6 @@
-import { mkdtemp, mkdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { createPrivateFile, resolveDestination } from "./destination.js";
 
@@ -18,24 +18,27 @@ describe("private file creation", () => {
     const secret = "  fake-private-value\nsecond line\n";
     for (const input of ["new.txt", "../outside.txt"]) {
       const path = await resolveDestination(input, cwd);
+      const before = await readdir(dirname(path));
       expect(await createPrivateFile(path, secret, new AbortController().signal)).toEqual({ status: "saved" });
       expect(await readFile(path, "utf8")).toBe(secret);
+      expect((await readdir(dirname(path))).sort()).toEqual([...before, basename(path)].sort());
       if (process.platform !== "win32") expect((await stat(path)).mode & 0o777).toBe(0o600);
     }
   });
 
-  it("never overwrites files or follows destination symlinks", async () => {
+  it.each(["file", "symlink", "dangling symlink"])("rejects an existing %s without changing it or leaving temporary files", async (kind) => {
     const root = await fixture();
     const target = join(root, "target");
+    const missing = join(root, "missing");
     await writeFile(target, "original");
-    const link = join(root, "link");
-    const dangling = join(root, "dangling");
-    await symlink(target, link);
-    await symlink(join(root, "missing"), dangling);
-    for (const path of [target, link, dangling]) {
-      expect(await createPrivateFile(path, "new", new AbortController().signal)).toEqual({ status: "failed", failure: "exists" });
-    }
+    const destination = kind === "file" ? target : join(root, "link");
+    if (kind !== "file") await symlink(kind === "symlink" ? target : missing, destination);
+    const before = await readdir(root);
+    expect(await createPrivateFile(destination, "new", new AbortController().signal)).toEqual({ status: "failed", failure: "exists" });
     expect(await readFile(target, "utf8")).toBe("original");
+    if (kind !== "file") expect((await lstat(destination)).isSymbolicLink()).toBe(true);
+    await expect(lstat(missing)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readdir(root)).toEqual(before);
   });
 
   it("requires an existing parent, resolves parent aliases, and rejects a destination whose parent changed", async () => {
@@ -57,5 +60,6 @@ describe("private file creation", () => {
     controller.abort(new Error("fake-secret-abort-reason"));
     expect(await createPrivateFile(join(root, "cancelled"), "new", controller.signal)).toEqual({ status: "failed", failure: "write_failed" });
     await expect(stat(join(root, "cancelled"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await readdir(root)).sort()).toEqual(["race", "workspace"]);
   });
 });
