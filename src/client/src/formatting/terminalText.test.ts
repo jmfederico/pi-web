@@ -7,6 +7,10 @@ it("removes terminal colours, styles and cursor controls without losing output",
   expect(stripTerminalFormatting("\x9b32mgreen\x9b0m")).toBe("green");
 });
 
+it("removes the character-set reset in xterm sgr0 output", () => {
+  expect(stripTerminalFormatting("\x1b[31mred\x1b(B\x1b[m")).toBe("red");
+});
+
 it("removes OSC metadata and hyperlink wrappers but keeps the label", () => {
   expect(stripTerminalFormatting("\x1b]0;window title\x07\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\")).toBe("link");
   expect(stripTerminalFormatting("\x9d8;;https://example.com\x9clink\x9d8;;\x9c")).toBe("link");
