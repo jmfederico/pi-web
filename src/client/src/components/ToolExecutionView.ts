@@ -5,6 +5,7 @@ import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, css, html, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { writeClipboardText } from "../clipboard";
+import { stripTerminalFormatting } from "../formatting/terminalText";
 import type { ToolExecutionPart } from "../chatTypes";
 import { uiButtonStyles } from "./ui/controlStyles";
 import { uiTranscriptStyles } from "./ui/transcriptStyles";
@@ -73,7 +74,7 @@ export class ToolExecutionView extends LitElement {
         </div>
 
         ${previewMismatch ? html`<p class="notice">${messages.t("mismatch")}</p>` : null}
-        ${errorText === undefined || errorText === "" ? null : html`<pre class="error-text">${errorText}</pre>`}
+        ${errorText === undefined || errorText === "" ? null : html`<pre class="error-text">${stripTerminalFormatting(errorText)}</pre>`}
         ${visibleDiff === undefined ? this.renderTextBody(bodyText, execution.status === "error", target) : this.renderDiffBody(visibleDiff, messages.t(actualDiff === undefined ? "previewDiff" : "appliedDiff"), target)}
       </section>
     `;
@@ -107,7 +108,7 @@ export class ToolExecutionView extends LitElement {
         ${text === undefined || text === "" ? null : html`
           <div class="detail-result">
             <span class="detail-label">${messages.t("result")}</span>
-            <pre>${text}</pre>
+            <pre>${stripTerminalFormatting(text)}</pre>
           </div>
         `}` : null}
       </details>
