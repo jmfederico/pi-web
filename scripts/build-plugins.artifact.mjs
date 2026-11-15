@@ -77,7 +77,7 @@ describe("plugin delivery artifacts", () => {
     expect(distFiles.filter(isTestArtifact)).toEqual([]);
     expect(packagedFiles.filter(isTestArtifact)).toEqual([]);
     expect(packagedFiles).toEqual(expect.arrayContaining([
-      "docs/scheduled-tasks.md",
+      "docs/private-input.md", "docs/scheduled-tasks.md",
       "dist/cli.js", "dist/server/app.js", "dist/server/index.js", "dist/server/sessiond.js",
       "dist/bin/pi-web.sh", "dist/bin/pi-web-server.sh", "dist/bin/pi-web-sessiond.sh", "dist/runtimePreflight.js",
       "dist/plugin-api.d.ts", "dist/server-plugin-api.d.ts", "dist/server-plugin-api.js",
@@ -209,6 +209,41 @@ describe("plugin delivery artifacts", () => {
       await activation.dispose();
     `);
     expect(await execUtf8(process.execPath, [probe], standalone, 10_000)).toContain("standalone MCP manager passed");
+  });
+
+  it("ships private-input with an isolated browser bundle, standalone backend and model-only companion", async () => {
+    const source = join(repoRoot, "dist", "pi-packages", "private-input");
+    const metadata = JSON.parse(await readFile(join(source, "package.json"), "utf8"));
+    expect(metadata.piWeb.plugins).toEqual([{ id: "private-input", defaultEnabled: false, machineSpecific: true,
+      serverModule: "server-plugin.js", browserRoot: "browser", module: "browser/pi-web-plugin.js" }]);
+    const browserEntry = await readFile(join(source, "browser", "pi-web-plugin.js"), "utf8");
+    expect(moduleSpecifiers(browserEntry)).toEqual([]);
+    expect(await readdir(join(source, "browser"))).toEqual(["pi-web-plugin.js"]);
+    const standalone = join(tempDir, "private-input");
+    await mkdir(join(standalone, "extensions"), { recursive: true });
+    for (const path of ["package.json", "extensions/index.js", "server-plugin.js"]) await cp(join(source, path), join(standalone, path));
+    const loader = new DefaultResourceLoader({
+      cwd: tempDir, agentDir: tempDir,
+      settingsManager: SettingsManager.inMemory({ packages: [standalone] }),
+      noThemes: true, noPromptTemplates: true,
+    });
+    await loader.reload();
+    expect(loader.getExtensions().errors).toEqual([]);
+    const tools = loader.getExtensions().extensions.flatMap((extension) => [...extension.tools.values()]);
+    expect(loader.getExtensions().warnings ?? []).toEqual([]);
+    expect(tools.map((tool) => tool.definition.name)).toEqual(["request_private_input"]);
+    expect(tools[0].definition.exposure).toBe("model-only");
+    const probe = join(standalone, "probe.mjs");
+    await writeFile(probe, `
+      import plugin from "./server-plugin.js";
+      const signal = new AbortController().signal;
+      const activation = plugin.activate({ lifetimeSignal: signal });
+      activation.start({ capabilities: { resolve() { return { version: 1 }; } } });
+      const result = await activation.peer.request({ scope: { kind: "machine" }, operation: "available", input: null, signal });
+      if (result.available !== true) throw new Error("Private input backend unavailable");
+      console.log("standalone private input passed");
+    `);
+    expect(await execUtf8(process.execPath, [probe], standalone, 10_000)).toContain("standalone private input passed");
   });
 
   it("ships an optional disabled scheduler with standalone SQLite and cron dispatch", async () => {

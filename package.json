@@ -40,6 +40,7 @@
     "!examples/**/node_modules",
     "!examples/**/dist",
     "docs/plugins.md",
+    "docs/private-input.md",
     "docs/scheduled-tasks.md",
     "docs/config.md",
     "docs/assets",

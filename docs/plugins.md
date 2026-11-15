@@ -167,6 +167,10 @@ Each contribution has a unique local `id`. Declare the host capability `pi-web/t
 
 `next()` returns renderer callbacks, not HTML. Treat the returned renderer as read-only; return a new renderer object to replace or wrap it. The web transcript supplies its core default renderer at the end of the chain, so wrappers can decorate the normal tool card as well as another plugin's renderer. Delegating unchanged all the way to that default keeps the normal view without a custom-view toggle. The resolver type still permits `undefined` for contexts without a supplied default. Returning `undefined` from a resolver ends selection; the host does not automatically try later resolvers and instead shows the core fallback. Returning `undefined` from a selected renderer's `render` also shows that fallback without restarting selection.
 
+A resolved tool renderer may set `placement: "activity" | "standalone"`. Omission means `"activity"`, retaining normal grouping. `"standalone"` keeps the tool entry outside collapsed activity, including quiet mode, its default view, and fallback after a declined or failed render. Placement belongs to the returned renderer, not the contribution: unchanged delegation preserves downstream placement; a wrapper chooses its own placement or copies the downstream renderer's property. Older hosts ignore placement, so update PI WEB before relying on standalone visibility; `transcript-rendering@1` alone does not detect this addition.
+
+The host resolves tools before grouping, including entries in collapsed activity, and reuses that selection when rendering the same entry snapshot. Keep resolvers side-effect-free and repeatable; do not rely on a resolver running on every render or view toggle. Selection can repeat when entry snapshots, eligible contributions, or transcript scope change. A resolver failure uses normal grouping and the core fallback; a render failure retains the selected placement.
+
 **Custom messages** contribute `{ id, target: "custom-message", customType, render }`. The first eligible contribution in discovery order with an exact, case-sensitive `customType` wins, like TUI custom-message rendering. Messages have no `next` callback. Declining or failing does not try a later matching message renderer.
 
 The [standalone example](https://github.com/jmfederico/pi-web/tree/main/examples/transcript-renderer-plugin) demonstrates actual tool chaining: a wrapper resolver precedes the checks renderer in the same contribution array. Its core pattern is:
@@ -180,6 +184,7 @@ The [standalone example](https://github.com/jmfederico/pi-web/tree/main/examples
     const downstream = next();
     if (!downstream) return undefined;
     return {
+      ...downstream, // Preserve placement when wrapping.
       render(input) {
         const body = downstream.render(input);
         return body === undefined ? undefined : html`
@@ -193,7 +198,9 @@ The [standalone example](https://github.com/jmfederico/pi-web/tree/main/examples
 
 `scope` contains `machineId` and `sessionId`, with optional `projectId` and `workspaceId`. A tool `entry` contains `toolName`, `status` (`pending`, `running`, `success`, or `error`), and optional `toolCallId`, `args`, `content`, `details`, and `resultText`. A custom-message `entry` contains `customType`, `content`, and optional `entryId` and `details`. Treat opaque `args`, `content`, and `details` as untrusted data: validate your own schema before using them.
 
-Both tool and message `render` callbacks receive `{ scope, entry, signal, fail }`. Rendering is synchronous and returns a Lit `TemplateResult` or `undefined`; returning a Promise is unsupported. Unlike resolver delegation through `next()`, returning `undefined` from `render` declines the current body and retains the existing view without restarting selection. An empty template deliberately renders an empty body. A thrown error or `fail(error)` restores the existing view. The host's default-view control also lets the user bypass the custom body.
+Both tool and message `render` callbacks receive `{ scope, entry, signal, fail }` and, when available, their own paired `backend`. The backend uses the [scoped backend interface](#read-only-catalogs-and-scoped-backends-v5) on `scope.machineId`, not the currently selected machine. Each renderer in a tool wrapper chain receives its own package's backend, even when a wrapper forwards its input downstream. Browser-only plugins have no backend; older hosts may also omit it, so check availability before offering backend-dependent actions. Requests and channels are cancelled with the render's `signal`, and retained backend handles cannot start new work after cancellation.
+
+Rendering is synchronous and returns a Lit `TemplateResult` or `undefined`; returning a Promise is unsupported. Unlike resolver delegation through `next()`, returning `undefined` from `render` declines the current body and retains the existing view without restarting selection. An empty template deliberately renders an empty body. A thrown error or `fail(error)` restores the existing view. The host's default-view control also lets the user bypass the custom body.
 
 Rendering may repeat as inputs change. Keep it repeatable and do not execute tools or session operations as a side effect of rendering. Honor `signal` for asynchronous work and release resources: it aborts when inputs change, the entry unmounts, the plugin is disabled, or the user selects the default view. Report asynchronous failures through `fail`; obsolete calls are ignored.
 
@@ -582,6 +589,7 @@ Keep gateways and targets compatible. During this plugin API transition, upgrade
 - **Updates** shows update/restart guidance when relevant and offers a manual update check. Run uses the selected machine's maintenance terminal in `$PI_WEB_DATA_DIR/maintenance` (default `~/.pi-web/maintenance`), whether or not a workspace is selected. It requires an available Terminal provider on that machine; guidance and Copy remain available without one.
 - **Workspace Tasks** turns project commands into runnable buttons.
 - **Scheduled agent tasks (beta)** is an optional, disabled-by-default package for agent-managed schedules and a read-only **Scheduled tasks** dashboard. See [installation, timezone settings, and execution behavior](scheduled-tasks.md).
+- **Private input** is an optional, disabled-by-default package that lets an agent request a secret through an inline form and save it to a new file without including its value in the conversation. See [installation, use, recovery, and privacy boundaries](private-input.md).
 - **Spanish / Español** and **Swedish / Svenska** are optional interface language packs, included but disabled by default. See [Language packs](#language-packs) to enable them.
 
 ### Language packs

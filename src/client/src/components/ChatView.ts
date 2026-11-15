@@ -17,8 +17,8 @@ import { chatQueuedMessageSections, renderQueuedMessageSection, type QueuedMessa
 export { chatQueuedMessageSections, chatQueuedSectionShowsClearAction, type QueuedMessageSection } from "./chat/QueuedMessages";
 import type { DisplayedMessageActionAvailabilityContext, MessageActionAvailabilityContext, MessageActionResult } from "../../../plugin-api";
 import type { RegisteredMessageAction } from "../plugins/messageActions";
-import type { RegisteredTranscriptRenderer } from "../plugins/transcriptRenderers";
-import type { TranscriptRendererScope } from "../../../plugin-api";
+import { selectTranscriptToolRenderer, type RegisteredTranscriptRenderer, type TranscriptToolRendererSelection } from "../plugins/transcriptRenderers";
+import type { TranscriptRendererScope, TranscriptToolEntry } from "../../../plugin-api";
 import { machineSessionKey } from "../machineKeys";
 import { canonicalEntryActionHeaders, groupChatMessages, groupConsecutiveImageOutputs, type ChatDisplayGroup, type ChatGroup } from "../chatGroups";
 import { openTranscriptQuestion, transcriptQuestionOutcomes } from "../chatQuestions";
@@ -199,9 +199,10 @@ export class ChatView extends LitElement {
   private lastOpenQuestionId: string | undefined;
   private questionOutcomes = transcriptQuestionOutcomes([]);
   private questionIds: ReadonlySet<string> = new Set();
-  private groupedMessagesInput?: ChatLine[];
+  private groupedMessagesInput: ChatLine[] | undefined;
   private groupedMessagesStart = 0;
   private groupedRenderers: readonly RegisteredTranscriptRenderer[] | undefined;
+  private toolRendererSelections = new WeakMap<TranscriptToolEntry, TranscriptToolRendererSelection>();
   private groupedMessagesCache: ChatGroup[] = [];
   private messageMetaCache = new WeakMap<ChatLine, string>();
   private navigationLocalizationChanged = false;
@@ -294,6 +295,10 @@ export class ChatView extends LitElement {
   }
 
   protected override willUpdate(changed: Map<string, unknown>): void {
+    if (changed.has("transcriptRenderers") || changed.has("machineId") || changed.has("sessionId") || changed.has("workspaceContext")) {
+      this.toolRendererSelections = new WeakMap();
+      this.groupedMessagesInput = undefined;
+    }
     if (changed.has("messages")) {
       this.questionOutcomes = transcriptQuestionOutcomes(this.messages);
       this.questionIds = new Set(this.messages.flatMap((line) => line.parts.flatMap((part) => part.type === "askUserQuestion" ? [part.ask.askId] : [])));
@@ -424,8 +429,18 @@ export class ChatView extends LitElement {
     this.groupedRenderers = this.transcriptRenderers;
     this.groupedMessagesCache = groupChatMessages(this.messages, this.messageStart,
       (customType) => customType === "session.message"
-        || this.transcriptRenderers.some((renderer) => renderer.target === "custom-message" && renderer.customType === customType));
+        || this.transcriptRenderers.some((renderer) => renderer.target === "custom-message" && renderer.customType === customType),
+      (part) => this.toolRendererSelection(part).renderer?.placement === "standalone");
     return this.groupedMessagesCache;
+  }
+
+  private toolRendererSelection(entry: TranscriptToolEntry): TranscriptToolRendererSelection {
+    let selection = this.toolRendererSelections.get(entry);
+    if (selection === undefined) {
+      selection = selectTranscriptToolRenderer(entry.toolName, this.transcriptRenderers);
+      this.toolRendererSelections.set(entry, selection);
+    }
+    return selection;
   }
 
   private isLiveTailGroup(groups: readonly ChatDisplayGroup[], index: number): boolean {
@@ -560,6 +575,7 @@ export class ChatView extends LitElement {
       behaviors: this.behaviors,
       contentRendering: this.contentRendering,
       transcriptRenderers: this.transcriptRenderers,
+      toolRendererSelection: (entry) => this.toolRendererSelection(entry),
       rendererScope: this.rendererScope,
       workspaceContext: this.workspaceContext,
       anchors: { message: chatMessageAnchorKey, event: chatEventAnchorKey },

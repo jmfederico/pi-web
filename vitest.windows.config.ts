@@ -35,6 +35,7 @@ export default defineConfig({
       "src/server/piWebPluginService.test.ts",
       "src/server/sessiond/autoInstallPiPackageSources.test.ts",
       "pi-web-plugins/audio/server.test.ts",
+      "pi-packages/private-input/destination.test.ts",
       // Real Git processes, worktrees, and canonical repository paths.
       "pi-web-plugins/git/git-backend.test.ts",
       "pi-web-plugins/git/server-plugin.test.ts",

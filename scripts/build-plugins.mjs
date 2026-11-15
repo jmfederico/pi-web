@@ -66,6 +66,9 @@ async function buildAll() {
     } else {
       for (const [packageName, config] of [
         ["workflows", "vite.config.mjs"],
+        ["private-input", "vite.config.mjs"],
+        ["private-input", "vite.companion.config.mjs"],
+        ["private-input", "vite.browser.config.mjs"],
         ["scheduled-tasks", "vite.config.mjs"],
         ["scheduled-tasks", "vite.companion.config.mjs"],
         ["scheduled-tasks", "vite.browser.config.mjs"],

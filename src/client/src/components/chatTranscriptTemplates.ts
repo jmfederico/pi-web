@@ -20,8 +20,8 @@ import type { MarkdownWorkspaceContext } from "../formatting/workspaceLinks";
 import type { ChatLine, ChatPart } from "../chatTypes";
 import type { ImageOpenDetail } from "./ImagePresentation";
 import type { ChatMessageActionController } from "./ChatMessageActionController";
-import type { RegisteredTranscriptRenderer } from "../plugins/transcriptRenderers";
-import type { TranscriptRendererScope } from "../../../plugin-api";
+import type { RegisteredTranscriptRenderer, TranscriptToolRendererSelection } from "../plugins/transcriptRenderers";
+import type { TranscriptRendererScope, TranscriptToolEntry } from "../../../plugin-api";
 
 export interface TranscriptGroupDisclosure {
   open: boolean;
@@ -39,6 +39,7 @@ export interface TranscriptRenderContext {
   behaviors: ChatBehaviors;
   contentRendering: ChatContentRendering | undefined;
   transcriptRenderers: readonly RegisteredTranscriptRenderer[];
+  toolRendererSelection: (entry: TranscriptToolEntry) => TranscriptToolRendererSelection;
   rendererScope: TranscriptRendererScope;
   workspaceContext: MarkdownWorkspaceContext | undefined;
   anchors: {
@@ -310,7 +311,7 @@ export function renderPart(context: TranscriptRenderContext, part: ChatPart, mes
       const fallback = html`<tool-execution-view class="part" .execution=${part}></tool-execution-view>`;
       if (!context.transcriptRenderers.some((candidate) => candidate.target === "tool")) return fallback;
       return html`<pi-web-transcript-renderer class="part" .itemKey=${intentKey} .scope=${context.rendererScope}
-        .request=${{ kind: "tool", renderers: context.transcriptRenderers, entry: part }}>${fallback}</pi-web-transcript-renderer>`;
+        .request=${{ kind: "tool", renderers: context.transcriptRenderers, entry: part, selection: context.toolRendererSelection(part) }}>${fallback}</pi-web-transcript-renderer>`;
     }
     if (part.type === "toolResult") {
       const key = `tool-result:${intentKey}`;

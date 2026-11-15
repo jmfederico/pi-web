@@ -216,6 +216,8 @@ export interface TranscriptMessageEntry {
 }
 export interface TranscriptRendererInput {
     readonly scope: TranscriptRendererScope;
+    /** This renderer's paired backend on the entry's machine; revoked with signal. */
+    readonly backend?: PluginBackend;
     /** Aborted when the entry, selection, mounting, or plugin lifetime changes. */
     readonly signal: AbortSignal;
     /** Report asynchronous failure; calls from obsolete renders are ignored. */
@@ -232,6 +234,8 @@ export interface TranscriptMessageRendererInput extends TranscriptRendererInput 
  * Treat inputs as read-only and honor signal for component-owned asynchronous work.
  */
 export interface TranscriptToolRenderer {
+    /** Defaults to activity. Standalone keeps the entry outside collapsed activity, including its fallback. */
+    readonly placement?: "activity" | "standalone";
     render(input: TranscriptToolRendererInput): TemplateResult | undefined;
 }
 /**

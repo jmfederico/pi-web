@@ -1,6 +1,8 @@
+import { html } from "lit";
 import { isTemplateResult } from "lit/directive-helpers.js";
-import type { TranscriptRendererContribution, TranscriptRendererInput, TranscriptToolRenderer, TranscriptToolRendererInput, TranscriptToolRendererResolver } from "../../../plugin-api";
-import type { PluginCapability } from "./types";
+import type { TranscriptRendererContribution, TranscriptRendererInput, TranscriptToolEntry, TranscriptToolRenderer, TranscriptToolRendererResolver } from "../../../plugin-api";
+import type { PluginCapability, WorkspacePluginBinding } from "./types";
+import { createPluginBackend } from "./pluginPeer";
 
 export type RegisteredTranscriptRenderer = TranscriptRendererContribution & {
   readonly pluginId: string;
@@ -44,6 +46,23 @@ export function resolveTranscriptToolRenderer(
   return resolve(0);
 }
 
+/** Shared by grouping and rendering so a resolver is not called twice for one entry snapshot. */
+export interface TranscriptToolRendererSelection {
+  readonly renderer: TranscriptToolRenderer | undefined;
+  readonly error?: unknown;
+}
+
+export const defaultTranscriptToolRenderer: TranscriptToolRenderer = Object.freeze({ render: () => html`<slot></slot>` });
+
+export function selectTranscriptToolRenderer(toolName: string, renderers: readonly RegisteredTranscriptRenderer[]): TranscriptToolRendererSelection {
+  try {
+    return { renderer: resolveTranscriptToolRenderer(toolName, renderers, () => defaultTranscriptToolRenderer) };
+  } catch (error) {
+    // Grouping must survive resolver failures; the mounted host reports the error and shows its fallback.
+    return { renderer: undefined, error };
+  }
+}
+
 function rejectAsyncResult(value: unknown, message: string): void {
   if (((typeof value === "object" && value !== null) || typeof value === "function") && "then" in value && typeof value.then === "function") {
     // Consume rejected async results before the synchronous host reports the contract violation.
@@ -55,7 +74,13 @@ function rejectAsyncResult(value: unknown, message: string): void {
 function validateToolRenderer(value: unknown): TranscriptToolRenderer | undefined {
   if (value === undefined) return undefined;
   rejectAsyncResult(value, "Transcript tool resolver must return synchronously");
-  if (isToolRenderer(value)) return value;
+  if (isToolRenderer(value)) {
+    const placement: unknown = value.placement;
+    if (placement !== undefined && placement !== "activity" && placement !== "standalone") {
+      throw new Error("Transcript tool renderer placement must be activity or standalone");
+    }
+    return value;
+  }
   throw new Error("Transcript tool resolver must return an object with a render callback or undefined");
 }
 
@@ -63,11 +88,18 @@ function isToolRenderer(value: unknown): value is TranscriptToolRenderer {
   return typeof value === "object" && value !== null && "render" in value && typeof value.render === "function";
 }
 
-export function snapshotTranscriptRenderer(contribution: TranscriptRendererContribution, lifetime: AbortSignal): TranscriptRendererContribution {
-  const wrap = <Input extends TranscriptRendererInput,>(render: (input: Input) => import("lit").TemplateResult | undefined) => (input: Input) => {
+export function snapshotTranscriptRenderer(
+  contribution: TranscriptRendererContribution,
+  lifetime: AbortSignal,
+  binding?: WorkspacePluginBinding,
+): TranscriptRendererContribution {
+  const wrap = <Entry,>(render: (input: TranscriptRendererInput & { readonly entry: Entry }) => import("lit").TemplateResult | undefined) => (input: TranscriptRendererInput & { readonly entry: Entry }) => {
     const signal = AbortSignal.any([input.signal, lifetime]);
     if (signal.aborted) return undefined;
-    return render({ ...input, signal, fail: (error: unknown) => { if (!signal.aborted) input.fail(error); } });
+    // A wrapper may forward its input to another plugin. Never forward its backend.
+    const backend = binding === undefined ? undefined : createPluginBackend(binding, input.scope.machineId, signal);
+    return render({ scope: input.scope, entry: input.entry, ...(backend === undefined ? {} : { backend }), signal,
+      fail: (error: unknown) => { if (!signal.aborted) input.fail(error); } });
   };
   if (contribution.target === "tool") {
     if (typeof contribution.resolve !== "function") throw new Error("Transcript tool renderer must have a synchronous resolve callback");
@@ -84,7 +116,7 @@ export function snapshotTranscriptRenderer(contribution: TranscriptRendererContr
       }));
       if (renderer === undefined || delegated.has(renderer)) return renderer;
       const render = renderer.render.bind(renderer);
-      return Object.freeze({ render: wrap<TranscriptToolRendererInput>((input) => {
+      return Object.freeze({ ...(renderer.placement === undefined ? {} : { placement: renderer.placement }), render: wrap<TranscriptToolEntry>((input) => {
         const result = render(input);
         rejectAsyncResult(result, `Transcript tool renderer ${id} must return a Lit template or undefined synchronously`);
         if (result !== undefined && !isTemplateResult(result)) throw new Error(`Transcript tool renderer ${id} must return a Lit template or undefined synchronously`);
