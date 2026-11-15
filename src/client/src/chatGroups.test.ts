@@ -46,6 +46,23 @@ describe("groupChatMessages", () => {
     expect(groupChatMessages([pending, askUser]).map((group) => group.kind)).toEqual(["group"]);
   });
 
+  it("keeps selected standalone tools between activity groups without changing other tools or metadata", () => {
+    const execution = (toolName: string): ChatLine => ({ role: "tool", entryId: toolName,
+      meta: { timestamp: "2026-07-20T10:00:00.000Z" },
+      parts: [{ type: "toolExecution", toolName, status: "success", summary: "" }],
+    });
+    const before = execution("before");
+    const standalone = execution("plugin_tool");
+    const after = execution("after");
+    const messages = [before, standalone, after];
+    expect(groupChatMessages(messages, 10).map((group) => group.kind)).toEqual(["group"]);
+    expect(groupChatMessages(messages, 10, undefined, (part) => part === standalone.parts[0])).toEqual([
+      { kind: "group", startIndex: 10, endIndex: 10, messages: [{ message: before, index: 10 }] },
+      { kind: "message", index: 11, message: standalone },
+      { kind: "group", startIndex: 12, endIndex: 12, messages: [{ message: after, index: 12 }] },
+    ]);
+  });
+
   it("groups technical parts until a readable message is encountered", () => {
     const messages: ChatLine[] = [
       { role: "assistant", parts: [{ type: "thinking", text: "plan" }, { type: "toolCall", toolName: "read", summary: "file" }] },

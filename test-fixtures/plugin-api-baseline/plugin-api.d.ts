@@ -234,6 +234,8 @@ export interface TranscriptMessageRendererInput extends TranscriptRendererInput 
  * Treat inputs as read-only and honor signal for component-owned asynchronous work.
  */
 export interface TranscriptToolRenderer {
+    /** Defaults to activity. Standalone keeps the entry outside collapsed activity, including its fallback. */
+    readonly placement?: "activity" | "standalone";
     render(input: TranscriptToolRendererInput): TemplateResult | undefined;
 }
 /**

@@ -73,6 +73,24 @@ describe("tool resolution chain", () => {
     expect(next).toHaveBeenCalledTimes(2);
   });
 
+  it("snapshots placement, preserves delegation, and lets wrappers choose their own placement", () => {
+    const source: { placement: "activity" | "standalone"; render: TranscriptToolRenderer["render"] } = { placement: "standalone", render: () => html`body` };
+    const inner = asTool(snapshotTranscriptRenderer({ id: "inner", target: "tool", resolve: () => source }, new AbortController().signal));
+    const selected = inner.resolve("any_tool", () => undefined);
+    source.placement = "activity";
+    expect(selected?.placement).toBe("standalone");
+    expect(Object.isFrozen(selected)).toBe(true);
+    const delegate = asTool(snapshotTranscriptRenderer({ id: "delegate", target: "tool", resolve: (_name, next) => next() }, new AbortController().signal));
+    expect(delegate.resolve("any_tool", () => selected)).toBe(selected);
+    const wrapper = (preserve: boolean) => asTool(snapshotTranscriptRenderer({ id: "wrapper", target: "tool", resolve: (_name, next) => {
+      const downstream = next();
+      return { ...(preserve && downstream?.placement !== undefined ? { placement: downstream.placement } : {}), render: (value) => html`${downstream?.render(value)}` };
+    } }, new AbortController().signal));
+    expect(wrapper(false).resolve("any_tool", () => selected)?.placement).toBeUndefined();
+    expect(wrapper(true).resolve("any_tool", () => selected)?.placement).toBe("standalone");
+    expect(inner.resolve("any_tool", () => undefined)?.placement).toBe("activity");
+  });
+
   it("gives the first resolver refusal and does not delegate implicitly", () => {
     const downstream = vi.fn(() => ({ render: () => html`later` }));
     const replacement = { render: () => html`first` };
@@ -276,6 +294,14 @@ it.each([null, false, "renderer", {}, { render: true }])("rejects invalid resolv
   const resolve: TranscriptToolRendererResolver = () => result;
   const renderer = asTool(snapshotTranscriptRenderer({ id: "tool", target: "tool", resolve }, new AbortController().signal));
   expect(() => renderer.resolve("read", () => undefined)).toThrow("render callback or undefined");
+});
+
+it.each([null, false, "outside", 1])("rejects invalid renderer placement %j", (placement) => {
+  const result = { placement, render: () => html`body` };
+  // @ts-expect-error Exercise invalid untyped placement at the runtime boundary.
+  const resolve: TranscriptToolRendererResolver = () => result;
+  const renderer = asTool(snapshotTranscriptRenderer({ id: "tool", target: "tool", resolve }, new AbortController().signal));
+  expect(() => renderer.resolve("read", () => undefined)).toThrow("placement must be activity or standalone");
 });
 
 it("rejects and consumes rejected asynchronous resolutions", async () => {

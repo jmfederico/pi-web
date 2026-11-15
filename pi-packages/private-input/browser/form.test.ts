@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { html, render } from "lit";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { JsonValue, PluginPeerRequestOptions, TranscriptToolRendererInput } from "@jmfederico/pi-web/plugin-api";
 import { stylesheetIntegrationCapability } from "../../../src/client/src/plugins/styles.js";
 import { PrivateInputForm } from "./form.js";
@@ -12,9 +12,14 @@ const record = {
 };
 const sentinel = "  private-sentinel-⛄\nsecond line\n";
 const cleanup: (() => void)[] = [];
+beforeEach(() => {
+  // happy-dom exposes CSS via a getter; keep one instance for feature-detection overrides.
+  vi.stubGlobal("CSS", CSS);
+  vi.spyOn(CSS, "supports").mockReturnValue(true);
+});
 afterEach(() => {
   cleanup.splice(0).forEach((dispose) => { dispose(); });
-  document.body.replaceChildren(); localStorage.clear(); sessionStorage.clear(); vi.restoreAllMocks();
+  document.body.replaceChildren(); localStorage.clear(); sessionStorage.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals();
 });
 function setup(request = vi.fn<(operation: string, input: JsonValue, options?: PluginPeerRequestOptions) => Promise<JsonValue>>(
   () => Promise.resolve({ record, active: false }),
@@ -44,22 +49,22 @@ function root(target: ReturnType<typeof setup>): ShadowRoot {
   return target.element.shadowRoot;
 }
 function button(target: ReturnType<typeof setup>, name: string): HTMLButtonElement {
-  const control = [...root(target).querySelectorAll("button")].find((node) => node.textContent.trim() === name);
+  const control = [...root(target).querySelectorAll("button")].find((node) => (node.getAttribute("aria-label") ?? node.textContent.trim()) === name);
   if (!control) throw new Error(`Missing ${name}`);
   return control;
 }
-function field(target: ReturnType<typeof setup>): HTMLTextAreaElement {
-  const control = root(target).querySelector("textarea");
+function field(target: ReturnType<typeof setup>): HTMLInputElement | HTMLTextAreaElement {
+  const control = root(target).querySelector<HTMLInputElement | HTMLTextAreaElement>(".secret:not([hidden])");
   if (!control) throw new Error("Missing input");
   return control;
 }
 async function ready(target: ReturnType<typeof setup>): Promise<void> {
   await vi.waitFor(() => { expect(field(target).disabled).toBe(false); });
 }
-async function confirm(target: ReturnType<typeof setup>): Promise<void> {
-  const checkbox = root(target).querySelector<HTMLInputElement>('input[type="checkbox"]');
-  if (!checkbox) throw new Error("Missing confirmation");
-  checkbox.checked = true; checkbox.dispatchEvent(new Event("change"));
+async function format(target: ReturnType<typeof setup>, value: "single-line" | "multiline"): Promise<void> {
+  const name = value === "multiline" ? "Use multiline" : "Use single line";
+  const control = [...root(target).querySelectorAll("button")].find((node) => node.textContent.trim() === name);
+  control?.click();
   await target.element.updateComplete;
 }
 function submit(target: ReturnType<typeof setup>): void {
@@ -67,16 +72,18 @@ function submit(target: ReturnType<typeof setup>): void {
 }
 
 describe("inline private input", () => {
-  it("loads the originating workspace, requires confirmation, and sends exact text only to its backend", async () => {
+  it("uses Save to confirm the displayed destination and sends exact text only to its backend", async () => {
     const target = setup(); await ready(target);
     expect(target.forScope).toHaveBeenCalledWith({ kind: "workspace", projectId: "project", workspaceId: "workspace" });
     expect(target.request).toHaveBeenCalledExactlyOnceWith("status", { sessionId: record.sessionId, requestId: record.requestId }, expect.anything());
     expect(root(target).textContent).toContain(record.destination);
     expect(root(target).querySelector("private")).toBeNull();
-    field(target).value = sentinel; submit(target);
+    await format(target, "multiline");
+    field(target).value = sentinel;
     expect(target.request).toHaveBeenCalledTimes(1);
-    expect(button(target, "Save file").disabled).toBe(true);
-    await confirm(target);
+    expect(button(target, "Save file").disabled).toBe(false);
+    expect(root(target).querySelector('input[type="checkbox"]')).toBeNull();
+    expect([...root(target).querySelectorAll("button")].some((node) => node.textContent.trim() === "Check status")).toBe(false);
     let finish!: (value: JsonValue) => void;
     target.request.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     submit(target);
@@ -95,7 +102,7 @@ describe("inline private input", () => {
   });
 
   it("clears a rejected submission, suppresses unsafe errors, and recovers status without replay", async () => {
-    const target = setup(); await ready(target); await confirm(target);
+    const target = setup(); await ready(target);
     const log = vi.spyOn(console, "error");
     target.request.mockRejectedValueOnce(new Error(sentinel));
     field(target).value = sentinel; submit(target);
@@ -105,7 +112,7 @@ describe("inline private input", () => {
     expect(root(target).textContent).not.toContain(sentinel);
     expect(log).not.toHaveBeenCalled(); expect(target.context.fail).not.toHaveBeenCalled();
     target.request.mockResolvedValueOnce({ record: { ...record, status: "saved" }, active: false });
-    button(target, "Refresh status").click();
+    button(target, "Check status").click();
     await vi.waitFor(() => { expect(root(target).querySelector("textarea")).toBeNull(); });
     expect(target.request.mock.calls.map(([operation]) => operation)).toEqual(["status", "submit", "status"]);
     target.request.mockResolvedValueOnce({ record: { ...record, status: "saved" }, delivered: true });
@@ -115,29 +122,30 @@ describe("inline private input", () => {
     }, expect.anything()); });
   });
 
-  it("cancels without confirmation or forwarding the entered value", async () => {
+  it("cancels without forwarding the entered value or leaving recovery controls", async () => {
     const target = setup(); await ready(target);
     field(target).value = sentinel;
     target.request.mockResolvedValueOnce({ record: { ...record, status: "cancelled" }, delivered: true });
-    button(target, "Cancel request").click();
+    button(target, "Cancel").click();
     expect(field(target).value).toBe("");
     await vi.waitFor(() => { expect(root(target).querySelector("textarea")).toBeNull(); });
     expect(target.request.mock.calls[1]?.slice(0, 2)).toEqual(["cancel", { sessionId: record.sessionId, requestId: record.requestId }]);
+    expect(root(target).querySelectorAll("button")).toHaveLength(0);
   });
 
-  it("drops values on pagehide, removal and signal revocation, and ignores obsolete replies", async () => {
-    const target = setup(); await ready(target); await confirm(target);
+  it.each(["single-line", "multiline"] as const)("drops %s values on pagehide, removal and signal revocation, and ignores obsolete replies", async (mode) => {
+    const target = setup(); await ready(target); await format(target, mode);
     field(target).value = sentinel;
     window.dispatchEvent(new Event("pagehide"));
     expect(field(target).value).toBe("");
     await target.element.updateComplete;
-    expect(button(target, "Save file").disabled).toBe(true);
+    expect(button(target, "Show secret")).toBeDefined();
     field(target).value = sentinel;
     const retained = field(target);
     target.element.remove();
     expect(retained.value).toBe("");
-    document.body.append(target.element); await ready(target);
-    await confirm(target); field(target).value = sentinel;
+    document.body.append(target.element); await ready(target); await format(target, mode);
+    field(target).value = sentinel;
     let finish!: (value: JsonValue) => void;
     target.request.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     submit(target);
@@ -151,20 +159,91 @@ describe("inline private input", () => {
 
   it("offers explicit recovery for interrupted writes, never a second secret submission", async () => {
     const target = setup(vi.fn(() => Promise.resolve({ record: { ...record, status: "writing" }, active: false })));
-    await vi.waitFor(() => { expect(button(target, "Recover outcome").disabled).toBe(false); });
+    await vi.waitFor(() => { expect(button(target, "Report interruption").disabled).toBe(false); });
     expect(root(target).querySelector("textarea")).toBeNull();
     target.request.mockResolvedValueOnce({ record: { ...record, status: "failed", failure: "write_uncertain" }, delivered: true });
-    button(target, "Recover outcome").click();
+    button(target, "Report interruption").click();
     await vi.waitFor(() => { expect(target.request.mock.calls).toHaveLength(2); });
     expect(target.request.mock.calls[1]?.[0]).toBe("notify");
   });
 
   it("enforces the UTF-8 size limit without sending the value", async () => {
-    const target = setup(); await ready(target); await confirm(target);
+    const target = setup(); await ready(target);
     field(target).value = "⛄".repeat(24_000); submit(target);
     await target.element.updateComplete;
     expect(target.request).toHaveBeenCalledTimes(1);
     expect(root(target).querySelector('[role="alert"]')).not.toBeNull();
+  });
+
+  it("keeps values only in the active field and blocks lossy format changes", async () => {
+    const target = setup(); await ready(target);
+    const password = field(target);
+    expect(password).toBeInstanceOf(HTMLInputElement);
+    expect(password.type).toBe("password");
+    password.value = "  synthetic-one-line  ";
+    button(target, "Show secret").click(); await target.element.updateComplete;
+    expect(password.type).toBe("text");
+    await format(target, "multiline");
+    expect(password.value).toBe("");
+    expect(field(target).value).toBe("  synthetic-one-line  ");
+    expect(button(target, "Show secret")).toBeDefined();
+    field(target).value = sentinel;
+    await format(target, "single-line");
+    expect(button(target, "Use single line")).toBeDefined();
+    expect(field(target)).toBeInstanceOf(HTMLTextAreaElement);
+    expect(field(target).value).toBe(sentinel);
+    expect(password.value).toBe("");
+    expect(root(target).querySelector('[role="alert"]')).not.toBeNull();
+    field(target).value = "  safe-to-transfer  ";
+    const textarea = field(target);
+    await format(target, "single-line");
+    expect(password.value).toBe("  safe-to-transfer  ");
+    expect(password.type).toBe("password");
+    expect(textarea.value).toBe("");
+  });
+
+  it("requires explicit reveal when multiline masking is unavailable, without a plaintext fallback", async () => {
+    vi.mocked(CSS.supports).mockReturnValue(false);
+    const target = setup(); await ready(target);
+    field(target).value = "synthetic-transfer";
+    await format(target, "multiline");
+    const textarea = root(target).querySelector("textarea");
+    expect(textarea?.hidden).toBe(true);
+    expect(textarea?.value).toBe("synthetic-transfer");
+    expect(root(target).querySelector(".secret:not([hidden])")).toBeNull();
+    button(target, "Show secret").click(); await target.element.updateComplete;
+    expect(textarea?.hidden).toBe(false);
+    expect(field(target).value).toBe("synthetic-transfer");
+    button(target, "Hide secret").click();
+    expect(textarea?.hidden).toBe(true);
+    target.lifetime.abort();
+    expect(textarea?.value).toBe("");
+  });
+
+  it("hides revealed values on leaving the tab without changing the value", async () => {
+    const target = setup(); await ready(target);
+    const password = field(target);
+    password.value = "synthetic-secret";
+    button(target, "Show secret").click(); await target.element.updateComplete;
+    vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(password.type).toBe("password");
+    expect(password.value).toBe("synthetic-secret");
+    await target.element.updateComplete;
+    expect(button(target, "Show secret")).toBeDefined();
+  });
+
+  it("offers status recovery only when needed and preserves an unsent value", async () => {
+    const target = setup(vi.fn(() => Promise.resolve({ record, unavailable: true })));
+    await ready(target); await format(target, "multiline");
+    field(target).value = sentinel;
+    target.request.mockResolvedValueOnce({ record });
+    button(target, "Check status").click();
+    await ready(target);
+    expect(field(target).value).toBe(sentinel);
+    expect(target.request.mock.calls.map(([operation]) => operation)).toEqual(["status", "status"]);
+    expect(JSON.stringify(target.request.mock.calls)).not.toContain("private-sentinel");
+    expect([...root(target).querySelectorAll("button")].some((node) => node.textContent.trim() === "Check status")).toBe(false);
   });
 
   it("declines malformed tool details and fails closed without a paired backend", async () => {

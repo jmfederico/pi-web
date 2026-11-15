@@ -1,3 +1,4 @@
+import { html } from "lit";
 import { isTemplateResult } from "lit/directive-helpers.js";
 import type { TranscriptRendererContribution, TranscriptRendererInput, TranscriptToolEntry, TranscriptToolRenderer, TranscriptToolRendererResolver } from "../../../plugin-api";
 import type { PluginCapability, WorkspacePluginBinding } from "./types";
@@ -45,6 +46,23 @@ export function resolveTranscriptToolRenderer(
   return resolve(0);
 }
 
+/** Shared by grouping and rendering so a resolver is not called twice for one entry snapshot. */
+export interface TranscriptToolRendererSelection {
+  readonly renderer: TranscriptToolRenderer | undefined;
+  readonly error?: unknown;
+}
+
+export const defaultTranscriptToolRenderer: TranscriptToolRenderer = Object.freeze({ render: () => html`<slot></slot>` });
+
+export function selectTranscriptToolRenderer(toolName: string, renderers: readonly RegisteredTranscriptRenderer[]): TranscriptToolRendererSelection {
+  try {
+    return { renderer: resolveTranscriptToolRenderer(toolName, renderers, () => defaultTranscriptToolRenderer) };
+  } catch (error) {
+    // Grouping must survive resolver failures; the mounted host reports the error and shows its fallback.
+    return { renderer: undefined, error };
+  }
+}
+
 function rejectAsyncResult(value: unknown, message: string): void {
   if (((typeof value === "object" && value !== null) || typeof value === "function") && "then" in value && typeof value.then === "function") {
     // Consume rejected async results before the synchronous host reports the contract violation.
@@ -56,7 +74,13 @@ function rejectAsyncResult(value: unknown, message: string): void {
 function validateToolRenderer(value: unknown): TranscriptToolRenderer | undefined {
   if (value === undefined) return undefined;
   rejectAsyncResult(value, "Transcript tool resolver must return synchronously");
-  if (isToolRenderer(value)) return value;
+  if (isToolRenderer(value)) {
+    const placement: unknown = value.placement;
+    if (placement !== undefined && placement !== "activity" && placement !== "standalone") {
+      throw new Error("Transcript tool renderer placement must be activity or standalone");
+    }
+    return value;
+  }
   throw new Error("Transcript tool resolver must return an object with a render callback or undefined");
 }
 
@@ -92,7 +116,7 @@ export function snapshotTranscriptRenderer(
       }));
       if (renderer === undefined || delegated.has(renderer)) return renderer;
       const render = renderer.render.bind(renderer);
-      return Object.freeze({ render: wrap<TranscriptToolEntry>((input) => {
+      return Object.freeze({ ...(renderer.placement === undefined ? {} : { placement: renderer.placement }), render: wrap<TranscriptToolEntry>((input) => {
         const result = render(input);
         rejectAsyncResult(result, `Transcript tool renderer ${id} must return a Lit template or undefined synchronously`);
         if (result !== undefined && !isTemplateResult(result)) throw new Error(`Transcript tool renderer ${id} must return a Lit template or undefined synchronously`);

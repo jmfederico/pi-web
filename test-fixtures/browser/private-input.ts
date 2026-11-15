@@ -39,13 +39,12 @@ chat.messages = normalizeMessages([
   { role: "user", entryId: "user", content: "Request private input for a new token file. Do not read the saved file." },
   { role: "assistant", entryId: "call", content: [{ type: "toolCall", id: "capture", name: "request_private_input", arguments: { destination: record.destination, purpose: record.purpose } }] },
   { role: "toolResult", entryId: "result", toolName: "request_private_input", toolCallId: "capture", isError: false,
-    content: "Waiting for private input. No value is included in this request.", details: { privateInput: record } },
+    content: "Waiting for private input. No value is included in this request.", details: { interventionRequired: true, privateInput: record } },
 ]);
 const main = document.createElement("main");
 const header = document.createElement("header");
 header.textContent = "Private input · synthetic browser fixture";
 main.append(header, chat); document.body.append(main);
 await chat.updateComplete;
-for (const details of chat.shadowRoot?.querySelectorAll<HTMLDetailsElement>(".event-group") ?? []) details.open = true;
 window.addEventListener("pagehide", () => { void registry.dispose(); releaseStyles(); }, { once: true });
 document.body.dataset["ready"] = "true";

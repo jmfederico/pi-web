@@ -27,12 +27,21 @@ Ask the agent to request private input, naming the new file and its purpose with
 The agent calls `request_private_input` with only `destination` and `purpose`, alone and last. The request ends its run; saving, cancellation, or failure later produces a non-secret follow-up so it can continue.
 
 1. Review the request's purpose and resolved destination. The purpose and path are conversation content, so keep secrets out of both.
-2. Enter or paste the value in the inline private-input field—not the ordinary chat composer. The multiline field displays its contents; avoid screen sharing or exposing it to bystanders.
-3. Select the destination confirmation checkbox, then choose **Save file**. Choose **Cancel request** instead to decline without writing a file.
+2. Enter or paste the value in the **Secret** field—not the ordinary chat composer. Choose **Use multiline** first if the value needs line breaks.
+3. Choose **Save file** to create the file at the displayed destination. No confirmation checkbox is needed; existing files are never replaced. Choose **Cancel** instead to decline without writing a file.
 
-Values must be nonempty text, at most 64 KiB when UTF-8 encoded. The field supports multiline input. The value submitted by the field is written as UTF-8 without trimming whitespace or appending a newline. This is text entry, not a binary-file upload; browser textareas normalize line endings, so it is not a byte-for-byte file-copy mechanism.
+The form appears directly in the conversation, outside collapsed tool activity. Its **Default view** control still lets you inspect the non-secret tool record instead.
 
-The input is cleared on submission, cancellation, removal of the form, request abort, or leaving the page. No draft is persisted or restored. Clearing the field does not cancel a write already admitted by the backend.
+### Visibility and format
+
+- The form starts with a native password field. **Show** reveals it; **Hide** conceals it again. Native password-field behavior applies, including removal of line breaks when pasted. Choose **Use multiline** first when line breaks matter.
+- Multiline entry starts masked where the browser supports textarea masking. Show and Hide toggle visibility without changing the value. If masking is unavailable, a notice explains that editing will expose the text; the editor stays hidden until you choose Show. Hide then hides the editor itself, retaining the value until submission or cleanup.
+- Changing format hides the value again. **Use single line** is blocked while the value contains line breaks, so the switch cannot silently alter it. Keep multiline entry or deliberately edit the value before switching.
+- Leaving the browser tab hides revealed values. Visibility and format preferences are not saved. Screen masking is only protection against casual viewing, not developer tools, assistive technology, browser extensions, or a compromised device.
+
+Values must be nonempty text, at most 64 KiB when UTF-8 encoded. The value submitted by the field is written as UTF-8 without trimming whitespace or appending a newline. This is text entry, not a binary-file upload; browser textareas normalize line endings, so it is not a byte-for-byte file-copy mechanism.
+
+The input is cleared on submission, cancellation, removal of the form, request abort, or leaving the page. No draft is persisted or restored. **Check status** preserves an unsent value while the request is still waiting. Clearing the field does not cancel a write already admitted by the backend.
 
 ### Destination rules
 
@@ -44,7 +53,7 @@ The input is cleared on submission, cancellation, removal of the form, request a
 
 ## Check or recover an outcome
 
-If the connection fails or the result is unclear, use **Refresh status** before taking another action. Secret submissions are never retried automatically. A disconnected browser does not necessarily stop an admitted write.
+Recovery controls appear only when needed: **Check status** for an unavailable request, uncertain response, or ongoing write; **Notify agent** when notification is unconfirmed; and **Report interruption** for an interrupted write. If Check status appears, use it before submitting again. Secret submissions are never retried automatically. A disconnected browser does not necessarily stop an admitted write.
 
 | Status | What to do |
 | --- | --- |
@@ -56,7 +65,7 @@ If the connection fails or the result is unclear, use **Refresh status** before 
 
 If saving or cancellation completed but the agent did not receive the outcome, use the form's notification action when the conversation is idle. It sends only the recorded non-secret outcome; it does not write the secret again. Status refresh alone does not resume the agent.
 
-After an interrupted write, the recovery action records an uncertain failure rather than guessing that the file was saved. Check the destination's existence and permissions without displaying its contents before requesting another capture. A file may remain if cleanup could not be confirmed. Do not blindly delete it or retry the submission.
+After an interrupted write, **Report interruption** records an uncertain failure and attempts to notify the agent rather than guessing that the file was saved. Check the destination's existence and permissions without displaying its contents before requesting another capture. A file may remain if cleanup could not be confirmed. Do not blindly delete it or retry the submission.
 
 If the form reports that the request is unavailable, check the plugin's status on the conversation's machine and wait for the conversation to become idle. Reload the extension if needed. Requests from another conversation branch cannot be reused; ask for a new request there.
 

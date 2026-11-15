@@ -30,7 +30,7 @@ export default {
           id: "private-input", target: "tool",
           resolve(toolName, next) {
             if (toolName !== PRIVATE_INPUT_TOOL) return next();
-            return { render(input) {
+            return { placement: "standalone", render(input) {
               if (input.entry.status !== "success") return undefined;
               try { parseRecord(recordObject(input.entry.details)["privateInput"]); }
               catch { return undefined; }

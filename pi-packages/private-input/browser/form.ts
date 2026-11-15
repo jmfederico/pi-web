@@ -10,10 +10,14 @@ export class PrivateInputForm extends LitElement {
   @state() private record: PrivateInputRecord | undefined;
   @state() private busy = false;
   @state() private ready = false;
-  @state() private confirmed = false;
+  @state() private needsStatus = false;
   @state() private delivered = false;
   @state() private active = false;
   @state() private notice = "";
+  @state() private multiline = false;
+  @state() private revealed = false;
+  @state() private canMaskMultiline = false;
+  @state() private formatNotice = "";
   private lifetime: AbortController | undefined;
   private releaseStyles: (() => void) | undefined;
   private releaseSignal: (() => void) | undefined;
@@ -22,15 +26,20 @@ export class PrivateInputForm extends LitElement {
     :host { display: block; min-width: 0; color: var(--pi-text); font: inherit; }
     section { padding: 12px; display: grid; gap: 12px; }
     h3, p { margin: 0; font: inherit; }
-    h3 { font-weight: 600; }
+    h3 { font-weight: 600; overflow-wrap: anywhere; }
     .destination { overflow-wrap: anywhere; white-space: pre-wrap; font-family: var(--pi-mono, monospace); }
     .field { display: grid; gap: 6px; }
-    textarea { box-sizing: border-box; width: 100%; min-height: 100px; resize: vertical;
-      padding: 8px; font: inherit; color: var(--pi-text); background: var(--pi-bg);
+    /* Avoid iOS focus zoom without restricting user zoom or larger theme fonts. */
+    .secret { box-sizing: border-box; width: 100%; padding: 8px; font: inherit;
+      font-size: max(16px, 1em); color: var(--pi-text); background: var(--pi-bg);
       border: 1px solid var(--pi-border); border-radius: 4px; }
-    textarea:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 2px; }
-    .confirmation { display: flex; align-items: flex-start; gap: 8px; }
-    .confirmation input { flex: none; margin-top: 3px; }
+    textarea.secret { min-height: 100px; resize: vertical; -webkit-text-security: disc; }
+    .secret:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 2px; }
+    .secret[hidden] { display: none; }
+    .secret-entry { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 8px; }
+    .reveal { grid-column: 2; }
+    .concealed .reveal { grid-column: 1; justify-self: start; }
+    .format-toggle { justify-self: start; }
     .actions { display: flex; flex-wrap: wrap; gap: 8px; }
     .help { color: var(--pi-muted); }
     .notice { color: var(--pi-warning, var(--pi-text)); }
@@ -39,6 +48,8 @@ export class PrivateInputForm extends LitElement {
   override connectedCallback(): void {
     super.connectedCallback();
     window.addEventListener("pagehide", this.clearValue);
+    document.addEventListener("visibilitychange", this.onVisibilityChange);
+    this.canMaskMultiline = typeof CSS !== "undefined" && CSS.supports("-webkit-text-security", "disc");
     // Reconnection can retain the same context property, but never its old request lifetime.
     this.requestUpdate("context");
   }
@@ -48,6 +59,7 @@ export class PrivateInputForm extends LitElement {
     this.releaseStyles?.();
     this.releaseStyles = undefined;
     window.removeEventListener("pagehide", this.clearValue);
+    document.removeEventListener("visibilitychange", this.onVisibilityChange);
     super.disconnectedCallback();
   }
 
@@ -59,12 +71,50 @@ export class PrivateInputForm extends LitElement {
     if (changed.has("context")) this.resetContext();
   }
 
+  private field(): HTMLInputElement | HTMLTextAreaElement | null {
+    return this.renderRoot.querySelector<HTMLInputElement | HTMLTextAreaElement>(this.multiline ? "textarea" : "#secret-single-line");
+  }
+
+  private readonly onVisibilityChange = (): void => {
+    if (document.hidden) this.hideValue();
+  };
+
+  private hideValue(): void {
+    this.revealed = false;
+    // Conceal synchronously too: privacy cleanup must not wait for a Lit update.
+    const password = this.renderRoot.querySelector<HTMLInputElement>("#secret-single-line");
+    if (password) password.type = "password";
+    const textarea = this.renderRoot.querySelector("textarea");
+    if (textarea) {
+      textarea.style.setProperty("-webkit-text-security", "disc");
+      textarea.hidden = !this.multiline || !this.canMaskMultiline;
+    }
+  }
+
+  private readonly changeFormat = (): void => {
+    if (!this.ready || this.busy) return;
+    const nextMultiline = !this.multiline;
+    const source = this.field();
+    // Password fields natively strip CR/LF. Do not silently reformat an existing
+    // multiline value; ordinary typing/paste into password mode stays native.
+    if (!nextMultiline && source && /[\r\n]/u.test(source.value)) {
+      this.formatNotice = "This secret contains line breaks. Remove them before switching to a single line.";
+      return;
+    }
+    const target = this.renderRoot.querySelector<HTMLInputElement | HTMLTextAreaElement>(nextMultiline ? "textarea" : "#secret-single-line");
+    if (!source || !target || source === target) return;
+    this.hideValue();
+    target.value = source.value;
+    source.value = "";
+    source.hidden = true;
+    this.multiline = nextMultiline;
+    this.formatNotice = "";
+  };
+
   private readonly clearValue = (): void => {
-    const field = this.renderRoot.querySelector("textarea");
-    if (field) field.value = "";
-    const checkbox = this.renderRoot.querySelector<HTMLInputElement>('input[type="checkbox"]');
-    if (checkbox) checkbox.checked = false;
-    this.confirmed = false;
+    for (const field of this.renderRoot.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(".secret")) field.value = "";
+    this.hideValue();
+    this.formatNotice = "";
   };
 
   private disposeContext(): void {
@@ -79,9 +129,11 @@ export class PrivateInputForm extends LitElement {
   private resetContext(): void {
     this.disposeContext();
     this.record = undefined;
+    this.multiline = false;
     this.busy = false;
     this.delivered = false;
     this.active = false;
+    this.needsStatus = false;
     this.notice = "";
     const context = this.context;
     if (!context || context.signal.aborted || !this.isConnected) return;
@@ -131,17 +183,19 @@ export class PrivateInputForm extends LitElement {
       this.active = data["active"] === true;
       this.delivered = data["delivered"] === true || this.delivered;
       this.ready = true;
+      this.needsStatus = data["unavailable"] === true || current.status === "writing";
       if (current.status !== "waiting") this.clearValue();
       if (data["unavailable"] === true) {
-        this.notice = "The agent is busy or the request is no longer active. Refresh status when the conversation is idle.";
+        this.notice = "The agent is busy or this request is no longer active. Check status when the conversation is idle.";
       } else if (data["delivered"] === false && isFinished(current)) {
-        this.notice = "The outcome is saved, but agent notification was not confirmed. Retry Notify agent when the conversation is idle.";
+        this.notice = "Agent notification wasn’t confirmed. Choose Notify agent to retry when the conversation is idle.";
       }
     } catch {
       if (this.isCurrent(lifetime)) {
         // Transport errors may contain submitted input. Never render, log, or forward them to fail().
-        this.clearValue();
-        this.notice = "The operation could not be confirmed. Refresh status before trying again; the value will not be resent.";
+        if (operation !== "status") this.clearValue();
+        this.needsStatus = true;
+        this.notice = "Couldn’t confirm the result. Check status before trying again. Your secret won’t be resent.";
       }
     } finally {
       if (this.lifetime === lifetime) this.busy = false;
@@ -150,11 +204,11 @@ export class PrivateInputForm extends LitElement {
 
   private readonly submit = (event: SubmitEvent): void => {
     event.preventDefault();
-    if (!this.ready || this.busy || !this.confirmed || this.record?.status !== "waiting") return;
-    const field = this.renderRoot.querySelector("textarea");
+    if (!this.ready || this.busy || this.record?.status !== "waiting") return;
+    const field = this.field();
     if (!field || field.value.length === 0) return;
     if (new TextEncoder().encode(field.value).byteLength > MAX_SECRET_BYTES) {
-      this.notice = "The value is too large. Enter no more than 64 KiB of UTF-8 text.";
+      this.notice = "This secret is too large. Enter no more than 64 KiB of UTF-8 text.";
       return;
     }
     const value = field.value;
@@ -169,17 +223,17 @@ export class PrivateInputForm extends LitElement {
 
   private statusText(): string {
     switch (this.record?.status) {
-      case "saved": return "File saved. The value was not added to the conversation.";
+      case "saved": return "File saved.";
       case "cancelled": return "Request cancelled. No file was written.";
-      case "writing": return this.active ? "Saving the file. Refresh status to check the outcome."
-        : "The write was interrupted. Recover the outcome without resubmitting the value.";
+      case "writing": return this.active ? "Saving the file. Check status to see if it’s finished."
+        : "Saving was interrupted. Choose Report interruption to inform the agent without sending your secret again.";
       case "waiting":
       case undefined: return "";
       case "failed":
         return {
           exists: "The destination already exists. It was not overwritten.",
           destination_changed: "The destination changed after confirmation. No file was written.",
-          write_uncertain: "The write could not be confirmed. A file may exist; do not resubmit the value.",
+          write_uncertain: "Saving couldn’t be confirmed. The file may exist. Don’t submit the secret again.",
           write_failed: "The file could not be written. Ask the agent for a new request if needed.",
         }[this.record.failure ?? "write_failed"];
     }
@@ -188,36 +242,50 @@ export class PrivateInputForm extends LitElement {
   override render() {
     const record = this.record;
     const waiting = record?.status === "waiting";
-    return html`<section aria-label="Private input" aria-busy=${this.busy}>
-      <h3>Private input</h3>
+    const multilineVisible = this.multiline && (this.canMaskMultiline || this.revealed);
+    const needsVisibilityWarning = this.multiline && !this.canMaskMultiline;
+    const canNotify = record !== undefined && !waiting && !this.delivered;
+    return html`<section aria-label="Save a secret" aria-busy=${this.busy}>
       ${record ? html`
-        <p>${record.purpose}</p>
-        <div><p>Save on machine: ${this.context?.scope.machineId}</p>
-          <p class="destination">${record.destination}</p></div>
+        <h3>${record.purpose}</h3>
+        <p><span class="help">Save to: </span><span class="destination">${record.destination}</span>
+          <span class="help"> (${this.context?.scope.machineId})</span></p>
         ${waiting ? html`<form autocomplete="off" @submit=${this.submit}>
           <div class="field">
-            <label for="private-value">Private value</label>
-            <textarea id="private-value" aria-describedby="privacy-help" autocomplete="off"
-              autocapitalize="off" autocorrect="off" spellcheck="false" required ?disabled=${!this.ready || this.busy}></textarea>
-            <p id="privacy-help" class="help">Saved exactly as entered, up to 64 KiB. No chat message or saved browser draft. Visible while you type.</p>
-            <label class="confirmation"><input type="checkbox" .checked=${this.confirmed}
-              ?disabled=${!this.ready || this.busy} @change=${(event: Event) => {
-                if (event.target instanceof HTMLInputElement) this.confirmed = event.target.checked;
-              }}>I confirm this destination. Create a new file; never overwrite an existing file.</label>
+            ${this.multiline ? html`<label for="secret-multiline">Secret</label>` : html`<label for="secret-single-line">Secret</label>`}
+            ${needsVisibilityWarning ? html`<p id="visibility-help" class="notice">Multiline text is visible while editing in this browser. Choose Show to continue.</p>` : nothing}
+            <div class=${this.multiline && !multilineVisible ? "secret-entry concealed" : "secret-entry"}>
+              <input id="secret-single-line" class="secret" .type=${this.revealed ? "text" : "password"}
+                ?hidden=${this.multiline} ?disabled=${this.multiline || !this.ready || this.busy} required
+                autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+              <textarea id="secret-multiline" class="secret" ?hidden=${!multilineVisible}
+                style=${this.revealed ? "-webkit-text-security: none" : "-webkit-text-security: disc"}
+                ?disabled=${!multilineVisible || !this.ready || this.busy} required
+                aria-describedby=${needsVisibilityWarning ? "visibility-help" : nothing}
+                autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+              <button class="reveal ui-button ui-button--compact" type="button"
+                aria-label=${this.revealed ? "Hide secret" : "Show secret"}
+                aria-describedby=${needsVisibilityWarning ? "visibility-help" : nothing}
+                ?disabled=${!this.ready || this.busy} @click=${() => {
+                  if (this.revealed) this.hideValue(); else this.revealed = true;
+                }}>${this.revealed ? "Hide" : "Show"}</button>
+            </div>
+            <button class="format-toggle ui-button ui-button--compact" type="button"
+              ?disabled=${!this.ready || this.busy} @click=${this.changeFormat}>${this.multiline ? "Use single line" : "Use multiline"}</button>
+            ${this.formatNotice ? html`<p class="notice" role="alert">${this.formatNotice}</p>` : nothing}
             <div class="actions">
-              <button class="ui-button ui-button--primary" type="submit" ?disabled=${!this.ready || this.busy || !this.confirmed}>Save file</button>
-              <button class="ui-button" type="button" ?disabled=${!this.ready || this.busy} @click=${this.cancel}>Cancel request</button>
+              <button class="ui-button ui-button--primary" type="submit" ?disabled=${!this.ready || this.busy}>Save file</button>
+              <button class="ui-button" type="button" ?disabled=${!this.ready || this.busy} @click=${this.cancel}>Cancel</button>
             </div>
           </div>
         </form>` : html`<p role="status">${this.statusText()}</p>`}
-        <div class="actions">
-          <button class="ui-button ui-button--compact" ?disabled=${this.busy || !this.lifetime}
-            @click=${() => { this.clearValue(); void this.perform("status"); }}>Refresh status</button>
-          ${!waiting && !this.delivered ? html`<button class="ui-button ui-button--compact"
+        ${this.needsStatus || canNotify ? html`<div class="actions">
+          ${this.needsStatus ? html`<button class="ui-button ui-button--compact" ?disabled=${this.busy || !this.lifetime}
+            @click=${() => { this.hideValue(); void this.perform("status"); }}>Check status</button>` : nothing}
+          ${canNotify ? html`<button class="ui-button ui-button--compact"
             ?disabled=${!this.ready || this.busy || this.active}
-            @click=${() => { void this.perform("notify"); }}>${record.status === "writing" ? "Recover outcome" : "Notify agent"}</button>` : nothing}
-        </div>
-        ${this.delivered ? html`<p class="help" role="status">Agent notified.</p>` : nothing}
+            @click=${() => { void this.perform("notify"); }}>${record.status === "writing" ? "Report interruption" : "Notify agent"}</button>` : nothing}
+        </div>` : nothing}
       ` : nothing}
       ${this.notice ? html`<p class="notice" role="alert">${this.notice}</p>` : nothing}
     </section>`;
