@@ -55,6 +55,19 @@ it("shows native remote-machine actions and reconciles dismissal before reopenin
 });
 
 describe("machine status indicator", () => {
+  it("retains work inside intervention until the machine goes offline", async () => {
+    const list = await mountMachineList([machine("remote-a", "remote")], {
+      "remote-a": machineStatusSnapshot({ machine: { "core:working": true, "core:intervention-required": true, "core:unread": true } }),
+    });
+    const row = rowFor(list, "remote-a");
+    expect(row.querySelector(".intervention-required .activity-indicator.session")).not.toBeNull();
+
+    list.statuses = { "remote-a": machineHealth("remote-a", "offline") };
+    await list.updateComplete;
+    expect(row.querySelector(".intervention-required, .activity-indicator.session")).toBeNull();
+    expect(unreadDot(row)).not.toBeNull();
+  });
+
   it("shows an unread dot only on machines whose snapshot reports unread, including offline ones", async () => {
     const list = await mountMachineList(
       [machine("local", "local"), machine("remote-a", "remote"), machine("remote-b", "remote")],

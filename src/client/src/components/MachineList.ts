@@ -8,7 +8,7 @@ import type { MachineStatusSnapshot } from "../../../shared/machineStatus";
 import { renderCopyIdAction } from "./copyIdAction";
 import { DetailCopyController } from "./detailCopy";
 import { createActionMenuController } from "./actionMenu";
-import { hasStatusUnread, renderActionActivityIndicator, statusActivityKind } from "./activityBadge";
+import { hasStatusUnread, renderActionActivityIndicator, statusActivityKind, statusWorkKind } from "./activityBadge";
 import type { KeyboardNavigableSection } from "./navigationFocus";
 import { activateSelectableRow, focusSelectedOrFirstSelectableRow, handleSelectableRowKeyboard } from "./selectableRow";
 import { listStyles } from "./shared";
@@ -93,7 +93,8 @@ export class MachineList extends LitElement implements KeyboardNavigableSection 
     // state (stale-but-present still counts), so only the work dot is gated.
     const kind = status === "offline" || status === "error" ? undefined : statusActivityKind(flags);
     const unreadLabel = hasStatusUnread(flags) ? messages.t("unread") : undefined;
-    return renderActionActivityIndicator(kind, kind === "terminal" ? messages.t("terminal") : messages.t("active"), unreadLabel);
+    const workKind = kind === undefined ? undefined : statusWorkKind(flags);
+    return renderActionActivityIndicator(kind, workKind === "terminal" ? messages.t("terminal") : messages.t("active"), unreadLabel, workKind);
   }
 
   private renderMachineMenu(machine: Machine) {

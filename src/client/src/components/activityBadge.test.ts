@@ -2,7 +2,7 @@
 
 import { render, type TemplateResult } from "lit";
 import { afterEach, describe, expect, it } from "vitest";
-import { hasStatusUnread, renderActionActivityIndicator, renderActivityIndicator, statusActivityKind } from "./activityBadge";
+import { hasStatusUnread, renderActionActivityIndicator, renderActivityIndicator, statusActivityKind, statusWorkKind } from "./activityBadge";
 
 afterEach(() => {
   document.body.replaceChildren();
@@ -45,6 +45,24 @@ describe("renderActivityIndicator", () => {
 });
 
 describe("intervention indicator", () => {
+  it.each(["session", "terminal"] as const)("preserves %s work inside intervention, with or without unread", (workKind) => {
+    const container = renderInto(renderActivityIndicator("intervention-required", "Work active", undefined, workKind));
+    const assertWork = () => {
+      expect(container.querySelector(`.intervention-required .activity-indicator.${workKind}`)?.getAttribute("aria-hidden")).toBe("true");
+      expect(container.querySelectorAll('[role="img"]')).toHaveLength(1);
+    };
+    assertWork();
+    expect(container.querySelector('[role="img"]')?.getAttribute("aria-label")).toBe("Needs input · Work active");
+
+    render(renderActivityIndicator("intervention-required", "Work active", "Unread", workKind), container);
+    assertWork();
+    expect(container.querySelector('[role="img"]')?.getAttribute("aria-label")).toBe("Unread · Needs input · Work active");
+
+    render(renderActivityIndicator("intervention-required", "Work active", "Unread"), container);
+    expect(container.querySelector(`.activity-indicator.${workKind}`)).toBeNull();
+    expect(container.querySelector('[role="img"]')?.getAttribute("aria-label")).toBe("Unread · Needs input");
+  });
+
   it("labels intervention consistently and keeps unread separate", () => {
     const container = renderInto(renderActivityIndicator("intervention-required", "Session active", "Unread activity"));
     const ring = container.querySelector(".unread-ring");
@@ -77,6 +95,9 @@ describe("statusActivityKind", () => {
     const flags = { "core:intervention-required": true, "core:working": true, "core:terminal": true, "core:unread": true };
     expect(statusActivityKind(flags)).toBe("intervention-required");
     expect(hasStatusUnread(flags)).toBe(true);
+    expect(statusWorkKind(flags)).toBe("session");
+    expect(statusWorkKind({ "core:intervention-required": true, "core:terminal": true })).toBe("terminal");
+    expect(statusWorkKind({ "core:intervention-required": true, "core:unread": true })).toBeUndefined();
     expect(statusActivityKind({ ...flags, "core:intervention-required": false })).toBe("session");
   });
 

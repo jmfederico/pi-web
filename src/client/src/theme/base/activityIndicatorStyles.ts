@@ -13,6 +13,10 @@ export const activityIndicatorStyles = css`
     /* Unread stays independent: wrap the activity/intervention mark, not its state. */
     .unread-ring { flex: 0 0 auto; box-sizing: border-box; display: inline-grid; place-items: center; width: 9px; height: 9px; border: 1.5px solid var(--pi-accent); border-radius: 50%; }
     .unread-ring .activity-indicator { width: 5px; height: 5px; }
+    /* Keep attention rings static while concurrent work pulses inside them. */
+    .activity-indicator.intervention-required.with-work { display: inline-grid; place-items: center; width: 9px; height: 9px; }
+    .intervention-required.with-work > .activity-indicator { width: 5px; height: 5px; }
+    .unread-ring.with-intervention-work { width: 13px; height: 13px; }
     @keyframes activity-pulse { 0%, 100% { transform: scale(.75); opacity: .55; } 50% { transform: scale(1.2); opacity: 1; } }
   }
 `;

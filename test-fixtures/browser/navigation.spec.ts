@@ -91,13 +91,37 @@ test("intervention is static, independent of unread, and does not intercept navi
       await expect(mark).toHaveCSS("animation-name", "none");
       await expect(cue.getByRole("img", { name: /Needs input/ })).toHaveCount(1);
       await expect(cue.locator(".unread-ring")).toHaveCount(unread ? 1 : 0);
-      // Intervention wins over simultaneous working; it is not another work dot.
-      await expect(cue.locator(".activity-indicator.session")).toHaveCount(0);
+      const isSessionCue = await cue.evaluate((element) => {
+        const root = element.getRootNode();
+        return root instanceof ShadowRoot && root.host.localName === "session-list";
+      });
+      const work = cue.locator(".activity-indicator.session");
+      await expect(work).toHaveCount(isSessionCue ? 0 : 1);
+      if (!isSessionCue) {
+        await expect(work).not.toHaveCSS("animation-name", "none");
+        // Check the composition at the pulse's largest size, not just idle CSS.
+        const geometry = await work.evaluate((element) => {
+          for (const animation of element.getAnimations()) { animation.pause(); animation.currentTime = 500; }
+          const ring = element.parentElement;
+          if (!ring) throw new Error("Missing intervention ring");
+          const dot = element.getBoundingClientRect();
+          const bounds = ring.getBoundingClientRect();
+          return { left: dot.left - bounds.left, right: bounds.right - dot.right, top: dot.top - bounds.top, bottom: bounds.bottom - dot.bottom };
+        });
+        expect(Math.min(...Object.values(geometry))).toBeGreaterThan(0);
+        expect(geometry.left).toBeCloseTo(geometry.right, 1);
+        expect(geometry.top).toBeCloseTo(geometry.bottom, 1);
+      }
     }
     for (const { host } of lists) {
       const row = page.locator(host).locator(".ui-nav-row").first();
       await expect(row).toHaveAttribute("data-activity", "intervention-required");
       await expect(row).toHaveAttribute("data-unread", String(unread));
+    }
+    if (unread) {
+      const screenshot = test.info().outputPath("intervention-work-unread.png");
+      await page.screenshot({ path: screenshot });
+      await test.info().attach("intervention-work-unread", { path: screenshot, contentType: "image/png" });
     }
   }
   const sessionRow = page.locator('session-list [data-session-id="s1"]');

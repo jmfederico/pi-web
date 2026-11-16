@@ -9,7 +9,7 @@ import { CORE_STATUS_FLAGS, type MachineStatusSnapshot } from "../../../shared/m
 import { renderCopyIdAction } from "./copyIdAction";
 import { DetailCopyController } from "./detailCopy";
 import { createActionMenuController } from "./actionMenu";
-import { hasStatusUnread, renderActionActivityIndicator, statusActivityKind } from "./activityBadge";
+import { hasStatusUnread, renderActionActivityIndicator, statusActivityKind, statusWorkKind } from "./activityBadge";
 import type { KeyboardNavigableSection } from "./navigationFocus";
 import { activateSelectableRow, focusSelectedOrFirstSelectableRow, handleSelectableRowKeyboard } from "./selectableRow";
 import { listStyles } from "./shared";
@@ -132,7 +132,7 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
                 >
                   <div class="action-main ui-nav-row-main">
                     <span class="workspace-primary"><span class="workspace-primary-label ui-nav-row-label"><bdi>${project.name}</bdi></span></span><small class="ui-nav-row-meta"><bdi dir="ltr">${project.path}</bdi></small>
-                    ${this.renderActivity(kind, unread)}
+                    ${this.renderActivity(kind, unread, statusWorkKind(flags))}
                   </div>
                   <div class="action-menu ui-nav-row-actions">
                     <button class="ui-button ui-button--icon action-menu-toggle ui-nav-row-action ui-popup-trigger" aria-expanded=${String(this.openMenuProjectId === project.id)} aria-controls=${`project-menu-${encodeURIComponent(project.id)}`} title=${messages.t("projectActions")} aria-label=${messages.t("actionsFor", { name: project.name })} @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleMenu(project); }}>⋯</button>
@@ -184,9 +184,9 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
     return html`<button class="ui-button ui-toolbar-title section-toggle ui-nav-section-toggle" aria-expanded=${String(!this.collapsed)} @click=${() => { this.onToggleCollapsed?.(); }}><span class="section-title"><span class="section-name">${this.collapsed ? "▸" : "▾"} ${messages.t("projects")}</span>${this.collapsed ? html`<small class="section-selected" title=${selectedTitle}>${selectedSummary}</small>` : null}</span><small class="section-count" role=${this.selectionLoading ? "status" : nothing}>${this.selectionLoading ? messages.t("openingProject") : localization.number(this.projects.length)}</small></button>`;
   }
 
-  private renderActivity(kind: ReturnType<typeof statusActivityKind>, unread: boolean) {
+  private renderActivity(kind: ReturnType<typeof statusActivityKind>, unread: boolean, workKind: ReturnType<typeof statusWorkKind>) {
     const unreadLabel = unread ? messages.t("projectUnread") : undefined;
-    return renderActionActivityIndicator(kind, kind === "terminal" ? messages.t("projectTerminal") : messages.t("projectActive"), unreadLabel);
+    return renderActionActivityIndicator(kind, workKind === "terminal" ? messages.t("projectTerminal") : messages.t("projectActive"), unreadLabel, workKind);
   }
 
   private toggleMenu(project: Project) {
