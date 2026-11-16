@@ -28,6 +28,7 @@ export interface SerializedSpawnError {
 }
 
 export type HelperResponse =
+  | { id: number; pid: number }
   | { id: number; result: ServerPluginExecFileResult }
   | { id: number; error: SerializedSpawnError };
 
@@ -57,7 +58,10 @@ function serveCommands(): void {
       children.delete(message.id);
       reply({ id: message.id, ...outcome });
     });
-    if (child !== undefined) children.set(message.id, child);
+    if (child === undefined) return;
+    children.set(message.id, child);
+    // Lets the daemon kill the command if this process dies first.
+    if (child.pid !== undefined) reply({ id: message.id, pid: child.pid });
   });
 }
 

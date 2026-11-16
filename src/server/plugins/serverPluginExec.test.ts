@@ -70,28 +70,34 @@ describe("server plugin execFile helper", () => {
     expect(await parentPid()).toBe(first);
   });
 
-  it("rejects running commands when the helper exits and starts a new helper for later ones", async () => {
+  it("kills and rejects running commands when the helper exits, then starts a new helper", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "pi-web-plugin-exec-helper-"));
+    const pidPath = join(tempDir, "command.pid");
     const execFile = createServerPluginExecFile();
-    const helperPid = Number((await execFile({
-      file: process.execPath,
-      args: ["-e", "process.stdout.write(String(process.ppid))"],
-      signal: new AbortController().signal,
-    })).stdout);
-    // Without its helper nothing can stop the command, so it ends by itself.
     const running = execFile({
       file: process.execPath,
-      args: ["-e", "setTimeout(() => {}, 2000)"],
+      args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(pidPath)}, process.pid + " " + process.ppid); setInterval(() => {}, 1000)`],
       signal: new AbortController().signal,
     });
-
-    process.kill(helperPid, "SIGKILL");
-    await expect(running).rejects.toThrow("helper exited");
+    void running.catch(() => undefined);
+    let commandPid: number | undefined;
+    try {
+      const [command, helper] = (await waitForPidFile(pidPath)).split(" ").map(Number);
+      if (command === undefined || helper === undefined || helper === process.pid) throw new Error("Command fixture published invalid PIDs");
+      commandPid = command;
+      process.kill(helper, "SIGKILL");
+      await expect(running).rejects.toThrow("helper exited");
+      await expectProcessExit(command);
+    } finally {
+      if (commandPid !== undefined && processIsAlive(commandPid)) process.kill(commandPid, "SIGKILL");
+      await rm(tempDir, { recursive: true, force: true });
+    }
     const next = await execFile({
       file: process.execPath,
-      args: ["-e", "process.stdout.write(String(process.ppid))"],
+      args: ["-e", "process.stdout.write('ok')"],
       signal: new AbortController().signal,
     });
-    expect(Number(next.stdout)).not.toBe(helperPid);
+    expect(next.stdout).toBe("ok");
   });
 
   it("reports a missing executable with its spawn error code", async () => {
@@ -203,16 +209,22 @@ describe("server plugin execFile helper", () => {
 });
 
 async function waitForDescendantPid(pidPath: string): Promise<number> {
+  const pid = Number(await waitForPidFile(pidPath));
+  if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("Command fixture published an invalid PID");
+  return pid;
+}
+
+async function waitForPidFile(pidPath: string): Promise<string> {
   for (let attempt = 0; attempt < 500; attempt += 1) {
     try {
-      const pid = Number(await readFile(pidPath, "utf8"));
-      if (Number.isSafeInteger(pid) && pid > 0) return pid;
+      const content = await readFile(pidPath, "utf8");
+      if (content !== "") return content;
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     }
     await waitForIo(10);
   }
-  throw new Error("Command fixture did not publish its descendant PID");
+  throw new Error("Command fixture did not publish its PID");
 }
 
 async function expectProcessExit(pid: number): Promise<void> {

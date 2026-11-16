@@ -43,6 +43,7 @@ type CommandOutcome = { result: ServerPluginExecFileResult } | { error: Error };
 
 interface PendingCommand {
   helper: ChildProcess;
+  pid?: number;
   settle: (outcome: CommandOutcome) => void;
 }
 
@@ -77,23 +78,33 @@ class CommandHelperClient {
       if (!isHelperResponse(message)) return;
       const pending = this.pending.get(message.id);
       if (pending === undefined) return;
+      if ("pid" in message) {
+        pending.pid = message.pid;
+        return;
+      }
       this.pending.delete(message.id);
       this.updateRef(helper);
       pending.settle("error" in message
         ? { error: Object.assign(new Error(message.error.message), message.error) }
         : { result: message.result });
     });
+    let lostHelper = false;
     const lost = (): void => {
+      if (lostHelper) return;
+      lostHelper = true;
       if (this.helper === helper) this.helper = undefined;
       helper.kill();
       for (const [id, pending] of this.pending) {
         if (pending.helper !== helper) continue;
         this.pending.delete(id);
+        // Nothing else can enforce the command's deadline once its helper is gone.
+        if (pending.pid !== undefined) killProcessGroup(pending.pid);
         pending.settle({ error: new Error("Server plugin command helper exited before the command finished") });
       }
     };
     helper.once("exit", lost);
-    helper.once("error", lost);
+    // Every failed send emits an error, so this listener must stay installed.
+    helper.on("error", lost);
     this.helper = helper;
     return helper;
   }
@@ -115,8 +126,17 @@ class CommandHelperClient {
   }
 }
 
+function killProcessGroup(pid: number): void {
+  try {
+    process.kill(process.platform === "win32" ? pid : -pid, "SIGKILL");
+  } catch {
+    // The command may already have exited.
+  }
+}
+
 function isHelperResponse(value: unknown): value is HelperResponse {
   if (typeof value !== "object" || value === null || typeof Reflect.get(value, "id") !== "number") return false;
+  if (Reflect.get(value, "pid") !== undefined) return typeof Reflect.get(value, "pid") === "number";
   const error: unknown = Reflect.get(value, "error");
   if (error !== undefined) return typeof error === "object" && error !== null && typeof Reflect.get(error, "message") === "string";
   return typeof Reflect.get(value, "result") === "object";
