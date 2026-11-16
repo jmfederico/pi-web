@@ -76,13 +76,14 @@ describe("project sidebar styling contract", () => {
     const row = rowFor(list, "first");
     expect(row.getAttribute("data-activity")).toBe("intervention-required");
     expect(row.getAttribute("data-busy")).toBe("true");
-    expect(row.querySelector(".unread-ring .intervention-required")).not.toBeNull();
+    expect(row.querySelector(".unread-ring .intervention-required .activity-indicator.session")).not.toBeNull();
     list.statusSnapshot = machineStatusSnapshot({ projects: { first: { "core:intervention-required": true } } });
     await list.updateComplete;
     expect(row.getAttribute("data-activity")).toBe("intervention-required");
     expect(row.getAttribute("data-busy")).toBe("false");
     expect(row.querySelector(".unread-ring")).toBeNull();
     expect(row.querySelector(".activity-indicator.intervention-required")?.getAttribute("title")).toBe("Needs input");
+    expect(row.querySelector(".activity-indicator.session")).toBeNull();
   });
 
   it("refreshes current, activity, busy and unread hooks without replacing the row", async () => {

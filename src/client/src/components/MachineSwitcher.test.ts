@@ -38,6 +38,23 @@ describe("machine-switcher status indicator", () => {
     expect(option.querySelector("small")?.textContent).toContain("online");
   });
 
+  it("combines intervention and work across other machines and on the selected machine", async () => {
+    const remoteA = machine("remote-a", "remote");
+    const switcher = await mountSwitcher([machine("local", "local"), remoteA, machine("remote-b", "remote")], {
+      "remote-a": machineStatusSnapshot({ machine: { "core:intervention-required": true } }),
+      "remote-b": machineStatusSnapshot({ machine: { "core:working": true } }),
+    });
+    expect(switcherButton(switcher).querySelector(".other-machines-activity .intervention-required .session")).not.toBeNull();
+
+    switcher.selected = remoteA;
+    switcher.statusSnapshots = {
+      "remote-a": machineStatusSnapshot({ machine: { "core:intervention-required": true, "core:terminal": true } }),
+    };
+    await switcher.updateComplete;
+    expect(switcherButton(switcher).querySelector(".intervention-required .terminal")).not.toBeNull();
+    expect(switcherButton(switcher).querySelector(".other-machines-activity")).toBeNull();
+  });
+
   it("does not repeat the selected machine's attention in the other-machines indicator", async () => {
     const switcher = await mountSwitcher([machine("local", "local"), machine("remote-a", "remote")], {
       local: machineStatusSnapshot({ machine: { "core:working": true, "core:unread": true } }),
