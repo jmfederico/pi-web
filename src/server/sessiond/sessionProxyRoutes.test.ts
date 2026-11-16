@@ -127,6 +127,25 @@ describe("daemon-owned session pin proxy", () => {
 });
 
 describe("plugin lifecycle proxy", () => {
+  it.each([
+    { operation: "abort", statusCode: 200 },
+    { operation: "abort", statusCode: 404 },
+    { operation: "close", statusCode: 200 },
+    { operation: "close", statusCode: 404 },
+  ])("preserves $operation status $statusCode and encoded identity without fallback", async ({ operation, statusCode }) => {
+    const request = vi.spyOn(daemon, "request");
+    const path = `/plugin-sessions/projects/p%2F%25/workspaces/w%3F%23/sessions/s%2F%25/${operation}`;
+    const body = statusCode === 200 ? { ok: true } : { error: "Endpoint unavailable" };
+    daemon.respondWith({ statusCode, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const response = await app.inject({ method: "POST", url: `/api/machines/local${path}` });
+    expect(response.statusCode).toBe(statusCode);
+    expect(response.json()).toEqual(body);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    const signal: unknown = expect.any(AbortSignal);
+    expect(request).toHaveBeenCalledExactlyOnceWith("POST", path, undefined, { signal });
+    expect(daemon.requests).toEqual([{ method: "POST", path, body: undefined }]);
+  });
+
   it.each(["GET", "POST", "DELETE"] as const)("forwards %s with cancellation and no-store", async (method) => {
     const request = vi.spyOn(daemon, "request");
     const path = `/plugin-sessions/projects/p%2Fone/workspaces/w/sessions/s${method === "POST" ? "/pin" : ""}`;

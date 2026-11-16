@@ -1,14 +1,14 @@
 import type { FastifyInstance } from "fastify";
 import type { PluginSessionSelection } from "../../shared/pluginCatalogTypes.js";
-import type { PluginSessionLifecycleV1 } from "../../shared/pluginSessionLifecycleTypes.js";
-import { createServerPluginSessionLifecycleCapabilityFactory, type CreateServerPluginSessionLifecycleCapabilityOptions } from "../plugins/serverPluginSessionLifecycleCapability.js";
+import type { PluginSessionLifecycleV2 } from "../../shared/pluginSessionLifecycleTypes.js";
+import { createServerPluginSessionLifecycleV2CapabilityFactory, type CreateServerPluginSessionLifecycleCapabilityOptions } from "../plugins/serverPluginSessionLifecycleCapability.js";
 import { requestCancellation } from "../requestCancellation.js";
 
 /** Browser lifecycle commands share backend-plugin workspace and session authority. */
 export function registerPluginSessionLifecycleRoutes(app: FastifyInstance, dependencies: CreateServerPluginSessionLifecycleCapabilityOptions): void {
-  const factory = createServerPluginSessionLifecycleCapabilityFactory(dependencies);
+  const factory = createServerPluginSessionLifecycleV2CapabilityFactory(dependencies);
   const base = "/plugin-sessions/projects/:projectId/workspaces/:workspaceId/sessions/:sessionId";
-  function route(method: "GET" | "POST" | "DELETE", path: string, operation: Exclude<keyof PluginSessionLifecycleV1, "version">): void {
+  function route(method: "GET" | "POST" | "DELETE", path: string, operation: Exclude<keyof PluginSessionLifecycleV2, "version">): void {
     app.route<{ Params: PluginSessionSelection }>({
       method, url: path,
       handler: async (request, reply) => {
@@ -34,6 +34,6 @@ export function registerPluginSessionLifecycleRoutes(app: FastifyInstance, depen
     });
   }
   route("GET", base, "get");
-  for (const operation of ["pin", "unpin", "archive", "restore"] as const) route("POST", `${base}/${operation}`, operation);
+  for (const operation of ["pin", "unpin", "archive", "restore", "abort", "close"] as const) route("POST", `${base}/${operation}`, operation);
   route("DELETE", base, "delete");
 }

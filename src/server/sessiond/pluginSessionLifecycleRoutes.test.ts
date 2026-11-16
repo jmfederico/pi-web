@@ -13,6 +13,8 @@ describe("plugin session lifecycle routes", () => {
     const sessions = {
       listCatalogSessions: vi.fn(() => Promise.resolve([{ id: "child", cwd, created: null, modified: null, archivedAt: null, archived: true, runtime: "not-hosted" as const }])),
       archiveMany: vi.fn(() => Promise.resolve({ archived: true as const, archivedSessionIds: ["child"], failures: [], generatedAt: "now" })),
+      abort: vi.fn(() => Promise.resolve()),
+      stop: vi.fn(() => Promise.resolve()),
       restore: vi.fn(() => Promise.resolve()),
       deleteArchivedMany: vi.fn(() => Promise.resolve({ deleted: true as const, deletedSessionIds: ["child"], failures: [], generatedAt: "now" })),
     };
@@ -27,7 +29,7 @@ describe("plugin session lifecycle routes", () => {
       expect(state.statusCode).toBe(200);
       expect(state.headers["cache-control"]).toBe("no-store");
       expect(state.json()).toEqual({ sessionId: "child", pinned: true, archived: true });
-      for (const action of ["pin", "unpin", "archive", "restore"]) {
+      for (const action of ["pin", "unpin", "archive", "restore", "abort", "close"]) {
         const response = await app.inject({ method: "POST", url: `${base}/${action}?cwd=/outside`, payload: { cwd: "/outside", sessionId: "other" } });
         expect(response.statusCode).toBe(200);
         expect(response.json()).toEqual({ ok: true });
@@ -37,6 +39,13 @@ describe("plugin session lifecycle routes", () => {
       expect(deleted.json()).toEqual({ ok: true });
       expect(sessions.archiveMany).toHaveBeenCalledWith([{ id: "child", cwd }]);
       expect(sessions.restore).toHaveBeenCalledWith({ id: "child", cwd });
+      for (const [action, native] of [["abort", "abort"], ["close", "stop"]] as const) {
+        expect(sessions[native]).toHaveBeenCalledExactlyOnceWith({ id: "child", cwd });
+        sessions[native].mockRejectedValueOnce(new Error("Native operation failed"));
+        const failed = await app.inject({ method: "POST", url: `${base}/${action}` });
+        expect(failed.statusCode).toBe(400);
+        expect(failed.json()).toEqual({ error: "Native operation failed" });
+      }
       expect(sessions.deleteArchivedMany).toHaveBeenCalledWith([{ id: "child", cwd }]);
       expect(pins.setPinned.mock.calls).toEqual([
         [{ kind: "session-pins", projectId: "p", workspaceId: "w" }, "child", true],

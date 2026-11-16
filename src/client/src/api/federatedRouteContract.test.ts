@@ -280,11 +280,19 @@ describe("federated route contract", () => {
       await expect(sessions[operation](selection)).resolves.toBeUndefined();
     }
 
+    for (const operation of ["abort", "close"] as const) {
+      const command = sessions[operation];
+      if (command === undefined) throw new Error(`Expected browser ${operation} support`);
+      await command(selection);
+      const path = `/plugin-sessions/projects/:projectId/workspaces/:workspaceId/sessions/:sessionId/${operation}`;
+      expect(FEDERATED_HTTP_ROUTES.find((route) => route.path === path))
+        .toEqual({ method: "POST", path, propagateCancellation: true });
+    }
     const routes = fetchMock.mock.calls.map((call) => fetchCallToRoute(call, sessions.machineId));
-    expect(routes).toHaveLength(6);
+    expect(routes).toHaveLength(8);
     expect(routes.every((route) => matchesHttpRoute(route, FEDERATED_HTTP_ROUTES))).toBe(true);
     expect(fetchMock.mock.calls.map(([url]) => toUrl(url).pathname)).toEqual(
-      ["", "/pin", "/unpin", "/archive", "/restore", ""].map((suffix) =>
+      ["", "/pin", "/unpin", "/archive", "/restore", "", "/abort", "/close"].map((suffix) =>
         `/nested/app/api/machines/remote%2Fa%25/plugin-sessions/projects/p%20%2F%25/workspaces/w%20%3F%23/sessions/s%20%2F%25${suffix}`),
     );
   });
