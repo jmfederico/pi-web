@@ -1,14 +1,17 @@
-import { spawn } from "node:child_process";
+import { fork, type ChildProcess } from "node:child_process";
+import { createRequire } from "node:module";
+import { extname } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type {
   ServerPluginExecFileRequest,
   ServerPluginExecFileResult,
 } from "../../server-plugin-api.js";
+import type { HelperCommand, HelperRequest, HelperResponse } from "./serverPluginCommandHelper.js";
 
 const DEFAULT_EXEC_TIMEOUT_MS = 30_000;
 // Git changes historically bounded command stdout at 2 MiB; keep that ceiling
 // available through the same public helper used by every server plugin.
 const DEFAULT_OUTPUT_LIMIT_BYTES = 2 * 1024 * 1024;
-const FORCE_KILL_GRACE_MS = 250;
 
 export interface ServerPluginExecFileOptions {
   env?: NodeJS.ProcessEnv;
@@ -24,13 +27,110 @@ export function createServerPluginExecFile(
   const maxTimeoutMs = positiveInteger(options.maxTimeoutMs, DEFAULT_EXEC_TIMEOUT_MS, "maxTimeoutMs");
   const maxOutputBytes = positiveInteger(options.maxOutputBytes, DEFAULT_OUTPUT_LIMIT_BYTES, "maxOutputBytes");
 
-  return async (request) => runExecFile(request, { baseEnv, maxTimeoutMs, maxOutputBytes });
+  const helper = new CommandHelperClient(forkCommandHelper);
+
+  return async (request) => runExecFile(request, { baseEnv, maxTimeoutMs, maxOutputBytes, helper });
 }
 
 interface ResolvedExecOptions {
   baseEnv: NodeJS.ProcessEnv;
   maxTimeoutMs: number;
   maxOutputBytes: number;
+  helper: CommandHelperClient;
+}
+
+type CommandOutcome = { result: ServerPluginExecFileResult } | { error: Error };
+
+interface PendingCommand {
+  helper: ChildProcess;
+  settle: (outcome: CommandOutcome) => void;
+}
+
+/**
+ * Starting a process from Node forks the calling process. Once the daemon holds
+ * gigabytes of sessions, each fork blocks its event loop for hundreds of
+ * milliseconds, so commands start from a small, long-lived helper process.
+ */
+class CommandHelperClient {
+  private helper: ChildProcess | undefined;
+  private nextId = 0;
+  private readonly pending = new Map<number, PendingCommand>();
+
+  constructor(private readonly startHelper: () => ChildProcess) {}
+
+  /** Returns a function that terminates the command's process group. */
+  start(command: HelperCommand, settle: (outcome: CommandOutcome) => void): () => void {
+    const helper = this.connectedHelper();
+    const id = ++this.nextId;
+    this.pending.set(id, { helper, settle });
+    this.updateRef(helper);
+    this.send(helper, { type: "start", id, command });
+    return () => {
+      if (this.pending.has(id)) this.send(helper, { type: "terminate", id });
+    };
+  }
+
+  private connectedHelper(): ChildProcess {
+    if (this.helper?.connected === true) return this.helper;
+    const helper = this.startHelper();
+    helper.on("message", (message: unknown) => {
+      if (!isHelperResponse(message)) return;
+      const pending = this.pending.get(message.id);
+      if (pending === undefined) return;
+      this.pending.delete(message.id);
+      this.updateRef(helper);
+      pending.settle("error" in message
+        ? { error: Object.assign(new Error(message.error.message), message.error) }
+        : { result: message.result });
+    });
+    const lost = (): void => {
+      if (this.helper === helper) this.helper = undefined;
+      helper.kill();
+      for (const [id, pending] of this.pending) {
+        if (pending.helper !== helper) continue;
+        this.pending.delete(id);
+        pending.settle({ error: new Error("Server plugin command helper exited before the command finished") });
+      }
+    };
+    helper.once("exit", lost);
+    helper.once("error", lost);
+    this.helper = helper;
+    return helper;
+  }
+
+  private send(helper: ChildProcess, request: HelperRequest): void {
+    // A helper that has just exited reports through its exit event.
+    if (helper.connected) helper.send(request);
+  }
+
+  /** An idle helper must not keep the daemon alive. */
+  private updateRef(helper: ChildProcess): void {
+    const busy = [...this.pending.values()].some((pending) => pending.helper === helper);
+    if (busy) helper.ref();
+    else helper.unref();
+    // Bun's IPC channel has no ref() or unref() and does not keep the process alive.
+    const channel = helper.channel;
+    const setRef: unknown = channel === null || channel === undefined ? undefined : Reflect.get(channel, busy ? "ref" : "unref");
+    if (typeof setRef === "function") Reflect.apply(setRef, channel, []);
+  }
+}
+
+function isHelperResponse(value: unknown): value is HelperResponse {
+  if (typeof value !== "object" || value === null || typeof Reflect.get(value, "id") !== "number") return false;
+  const error: unknown = Reflect.get(value, "error");
+  if (error !== undefined) return typeof error === "object" && error !== null && typeof Reflect.get(error, "message") === "string";
+  return typeof Reflect.get(value, "result") === "object";
+}
+
+function forkCommandHelper(): ChildProcess {
+  const source = extname(fileURLToPath(import.meta.url)) === ".ts";
+  const helperPath = fileURLToPath(new URL(source ? "./serverPluginCommandHelper.ts" : "./serverPluginCommandHelper.js", import.meta.url));
+  const loader = source ? pathToFileURL(createRequire(import.meta.url).resolve("tsx/esm")).href : undefined;
+  return fork(helperPath, [], {
+    // Do not inherit daemon flags such as --inspect.
+    execArgv: loader === undefined ? [] : ["--import", loader],
+    stdio: ["ignore", "inherit", "inherit", "ipc"],
+  });
 }
 
 function runExecFile(
@@ -41,17 +141,8 @@ function runExecFile(
   if (request.signal.aborted) return Promise.reject(abortReason(request.signal));
 
   const timeoutMs = Math.min(request.timeoutMs ?? options.maxTimeoutMs, options.maxTimeoutMs);
-  const stdout = new BoundedOutput(options.maxOutputBytes);
-  const stderr = new BoundedOutput(options.maxOutputBytes);
 
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn(request.file, [...(request.args ?? [])], {
-      ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
-      env: commandEnvironment(options.baseEnv, request),
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-      detached: process.platform !== "win32",
-    });
     let settled = false;
 
     const timeout = setTimeout(() => {
@@ -77,61 +168,25 @@ function runExecFile(
     };
     const abortChild = (error: unknown): void => {
       if (settled) return;
-      killChildTree(child, "SIGTERM");
-      setTimeout(() => {
-        killChildTree(child, "SIGKILL");
-      }, FORCE_KILL_GRACE_MS);
+      terminate();
       reject(error);
     };
     const onAbort = (): void => {
       abortChild(abortReason(request.signal));
     };
 
-    request.signal.addEventListener("abort", onAbort, { once: true });
-    child.stdout.on("data", (chunk: unknown) => { stdout.append(chunk); });
-    child.stderr.on("data", (chunk: unknown) => { stderr.append(chunk); });
-    child.once("error", (error) => { reject(error); });
-    child.once("close", (exitCode, signal) => {
-      resolve({
-        exitCode,
-        signal,
-        stdout: stdout.text(),
-        stderr: stderr.text(),
-        stdoutTruncated: stdout.truncated,
-        stderrTruncated: stderr.truncated,
-      });
+    const terminate = options.helper.start({
+      file: request.file,
+      args: [...(request.args ?? [])],
+      ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
+      env: commandEnvironment(options.baseEnv, request),
+      maxOutputBytes: options.maxOutputBytes,
+    }, (outcome) => {
+      if ("error" in outcome) reject(outcome.error);
+      else resolve(outcome.result);
     });
+    request.signal.addEventListener("abort", onAbort, { once: true });
   });
-}
-
-class BoundedOutput {
-  private readonly chunks: Buffer[] = [];
-  private bytes = 0;
-  public truncated = false;
-
-  constructor(private readonly limit: number) {}
-
-  append(value: unknown): void {
-    const chunk = Buffer.isBuffer(value) ? value : typeof value === "string" ? Buffer.from(value) : undefined;
-    if (chunk === undefined || chunk.length === 0) return;
-    const remaining = this.limit - this.bytes;
-    if (remaining <= 0) {
-      this.truncated = true;
-      return;
-    }
-    if (chunk.length > remaining) {
-      this.chunks.push(chunk.subarray(0, remaining));
-      this.bytes += remaining;
-      this.truncated = true;
-      return;
-    }
-    this.chunks.push(chunk);
-    this.bytes += chunk.length;
-  }
-
-  text(): string {
-    return Buffer.concat(this.chunks, this.bytes).toString("utf8");
-  }
 }
 
 class ExecTimeoutError extends Error {
@@ -166,27 +221,6 @@ function commandEnvironment(baseEnv: NodeJS.ProcessEnv, request: ServerPluginExe
 
 function isEnvironmentKey(value: unknown): value is string {
   return typeof value === "string" && value !== "" && !value.includes("=") && !value.includes("\0");
-}
-
-interface KillableChild {
-  pid?: number | undefined;
-  kill(signal: NodeJS.Signals): boolean;
-}
-
-function killChildTree(child: KillableChild, signal: NodeJS.Signals): void {
-  if (process.platform !== "win32" && child.pid !== undefined) {
-    try {
-      process.kill(-child.pid, signal);
-      return;
-    } catch {
-      // The process group may already be gone; fall back to the direct child.
-    }
-  }
-  try {
-    child.kill(signal);
-  } catch {
-    // Termination is best-effort after the bounded operation has failed.
-  }
 }
 
 function isAbortSignal(value: unknown): value is AbortSignal {

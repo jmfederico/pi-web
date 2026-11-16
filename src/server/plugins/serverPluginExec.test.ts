@@ -56,6 +56,53 @@ describe("server plugin execFile helper", () => {
     expect(result.stdout).toBe("base:$BASE_VALUE literal:undefined");
   });
 
+  it("starts commands from a helper process instead of the calling process", async () => {
+    const execFile = createServerPluginExecFile();
+    const parentPid = async (): Promise<string> => (await execFile({
+      file: process.execPath,
+      args: ["-e", "process.stdout.write(String(process.ppid))"],
+      signal: new AbortController().signal,
+    })).stdout;
+
+    const first = await parentPid();
+
+    expect(first).not.toBe(String(process.pid));
+    expect(await parentPid()).toBe(first);
+  });
+
+  it("rejects running commands when the helper exits and starts a new helper for later ones", async () => {
+    const execFile = createServerPluginExecFile();
+    const helperPid = Number((await execFile({
+      file: process.execPath,
+      args: ["-e", "process.stdout.write(String(process.ppid))"],
+      signal: new AbortController().signal,
+    })).stdout);
+    // Without its helper nothing can stop the command, so it ends by itself.
+    const running = execFile({
+      file: process.execPath,
+      args: ["-e", "setTimeout(() => {}, 2000)"],
+      signal: new AbortController().signal,
+    });
+
+    process.kill(helperPid, "SIGKILL");
+    await expect(running).rejects.toThrow("helper exited");
+    const next = await execFile({
+      file: process.execPath,
+      args: ["-e", "process.stdout.write(String(process.ppid))"],
+      signal: new AbortController().signal,
+    });
+    expect(Number(next.stdout)).not.toBe(helperPid);
+  });
+
+  it("reports a missing executable with its spawn error code", async () => {
+    const execFile = createServerPluginExecFile();
+
+    await expect(execFile({
+      file: "pi-web-missing-command-for-test",
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("rejects malformed environment keys before spawning", async () => {
     const execFile = createServerPluginExecFile();
 
