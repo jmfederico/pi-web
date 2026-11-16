@@ -5,6 +5,7 @@ import {
   PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY,
   PI_WEB_HOST_SESSION_STATE_CAPABILITY,
   PI_WEB_HOST_PROJECT_TRUST_CAPABILITY,
+  PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY,
   PI_WEB_HOST_WORKSPACES_CAPABILITY,
 } from "@jmfederico/pi-web/server-plugin-api";
 import type {
@@ -46,6 +47,7 @@ const plugin: PiWebServerPlugin = {
     PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY,
     PI_WEB_HOST_SESSION_STATE_CAPABILITY,
     PI_WEB_HOST_PROJECT_TRUST_CAPABILITY,
+    PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY,
     PI_WEB_HOST_WORKSPACES_CAPABILITY,
     PI_WEB_HOST_PI_SESSIONS_CAPABILITY,
   ],
@@ -77,6 +79,11 @@ const plugin: PiWebServerPlugin = {
         await lifecycle.archive(selected, { signal });
         await lifecycle.restore(selected, { signal });
         await lifecycle.delete(selected, { signal });
+        // Existing v1 consumers still resolve independently of v2 requirements.
+        const lifecycleV2 = capabilities.resolve(PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY);
+        await lifecycleV2.abort(selected, { signal });
+        await lifecycleV2.close(selected, { signal });
+        await lifecycleV2.get(selected, { signal });
         const workspaces: PiWebHostWorkspacesV1 = capabilities.resolve(PI_WEB_HOST_WORKSPACES_CAPABILITY);
         const authority = await workspaces.resolve({
           projectId: "fixture-project",

@@ -2,9 +2,11 @@ import { isAbsolute, resolve } from "node:path";
 import type { PluginSessionSelection } from "../../shared/pluginCatalogTypes.js";
 import {
   PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY,
+  PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY,
   type PluginSessionLifecycleOptions,
   type PluginSessionLifecycleState,
   type PluginSessionLifecycleV1,
+  type PluginSessionLifecycleV2,
 } from "../../shared/pluginSessionLifecycleTypes.js";
 import type { PiSessionService } from "../sessions/piSessionService.js";
 import { createServerPluginWorkspacesCapabilityFactory, type CreateServerPluginWorkspacesCapabilityOptions } from "./serverPluginWorkspacesCapability.js";
@@ -17,8 +19,8 @@ interface PinScope {
 }
 
 export interface CreateServerPluginSessionLifecycleCapabilityOptions extends CreateServerPluginWorkspacesCapabilityOptions {
-  readonly sessions: Pick<PiSessionService, "listCatalogSessions" | "archiveMany" | "restore" | "deleteArchivedMany">;
-  /** Notify observers after a successful native archive, restore, or delete. */
+  readonly sessions: Pick<PiSessionService, "listCatalogSessions" | "archiveMany" | "restore" | "deleteArchivedMany" | "abort" | "stop">;
+  /** Notify observers after a successful native archive, restore, delete, or runtime close. */
   readonly onMutation?: (selection: PluginSessionSelection) => void;
   readonly pins: {
     readonly pinnedSessionIds: () => Promise<readonly string[]>;
@@ -26,15 +28,32 @@ export interface CreateServerPluginSessionLifecycleCapabilityOptions extends Cre
   };
 }
 
-type Operation = "get" | "pin" | "unpin" | "archive" | "restore" | "delete";
+type Operation = Exclude<keyof PluginSessionLifecycleV2, "version">;
 
-/** Authority checks never open a runtime; admitted mutations belong to the native services. */
+/** Preserve the exact v1 surface while sharing authority and admission with v2. */
 export function createServerPluginSessionLifecycleCapabilityFactory(
   options: CreateServerPluginSessionLifecycleCapabilityOptions,
 ): ServerPluginHostCapabilityFactory<PluginSessionLifecycleV1> {
-  const workspaceFactory = createServerPluginWorkspacesCapabilityFactory(options);
+  const factory = createServerPluginSessionLifecycleV2CapabilityFactory(options);
   return Object.freeze({
     capability: PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY,
+    create(context: ServerPluginHostCapabilityContext) {
+      const instance = factory.create(context);
+      return Object.freeze({
+        ...instance,
+        value: PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY.parse({ ...instance.value, version: 1 }),
+      });
+    },
+  });
+}
+
+/** Authority checks never open a runtime; admitted mutations belong to the native services. */
+export function createServerPluginSessionLifecycleV2CapabilityFactory(
+  options: CreateServerPluginSessionLifecycleCapabilityOptions,
+): ServerPluginHostCapabilityFactory<PluginSessionLifecycleV2> {
+  const workspaceFactory = createServerPluginWorkspacesCapabilityFactory(options);
+  return Object.freeze({
+    capability: PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY,
     create(context: ServerPluginHostCapabilityContext) {
       const disposal = new AbortController();
       const lifetime = AbortSignal.any([context.lifetimeSignal, disposal.signal]);
@@ -69,10 +88,20 @@ export function createServerPluginSessionLifecycleCapabilityFactory(
           await options.pins.setPinned(scope, session.id, true);
           return undefined;
         }
-        if (session.runtime === "busy") throw new Error("Stop current session activity before changing session lifecycle");
         const ref = { id: session.id, cwd: workspace.path };
         assertActive(signal);
         // Do not check cancellation after admission: cancellation cannot undo native work.
+        // Runtime controls must remain available while busy; native abort owns status publication.
+        if (operation === "abort") {
+          await options.sessions.abort(ref);
+          return undefined;
+        }
+        if (operation === "close") {
+          await options.sessions.stop(ref);
+          options.onMutation?.(selection);
+          return undefined;
+        }
+        if (session.runtime === "busy") throw new Error("Stop current session activity before changing session lifecycle");
         if (operation === "archive") {
           const result = await options.sessions.archiveMany([ref]);
           requireSuccess(session.id, result.archivedSessionIds, result.failures);
@@ -90,10 +119,10 @@ export function createServerPluginSessionLifecycleCapabilityFactory(
       const mutation = (operation: Exclude<Operation, "get">) => async (selection: PluginSessionSelection, requested?: PluginSessionLifecycleOptions): Promise<void> => {
         await perform(operation, selection, requested);
       };
-      const value = PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY.parse({
-        version: 1,
+      const value = PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY.parse({
+        version: 2,
         get: (selection: PluginSessionSelection, requested?: PluginSessionLifecycleOptions) => perform("get", selection, requested),
-        pin: mutation("pin"), unpin: mutation("unpin"), archive: mutation("archive"), restore: mutation("restore"), delete: mutation("delete"),
+        pin: mutation("pin"), unpin: mutation("unpin"), archive: mutation("archive"), restore: mutation("restore"), delete: mutation("delete"), abort: mutation("abort"), close: mutation("close"),
       });
       return Object.freeze({ value, dispose: () => { disposal.abort(); } });
     },

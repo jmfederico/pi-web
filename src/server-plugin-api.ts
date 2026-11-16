@@ -44,7 +44,9 @@ export {
 
 export {
   PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY,
+  PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY,
   type PluginSessionLifecycleV1,
+  type PluginSessionLifecycleV2,
   type PluginSessionLifecycleState,
   type PluginSessionLifecycleOptions,
 } from "./shared/pluginSessionLifecycleTypes.js";

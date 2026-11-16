@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY, type PluginSessionLifecycleOptions } from "./pluginSessionLifecycleTypes.js";
+import { PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY, PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY, type PluginSessionLifecycleOptions } from "./pluginSessionLifecycleTypes.js";
 import type { PluginSessionSelection } from "./pluginCatalogTypes.js";
 
 const selection: PluginSessionSelection = { projectId: "project", workspaceId: "workspace", sessionId: "exact-session" };
@@ -32,9 +32,54 @@ describe("public session lifecycle capability", () => {
     }
   });
 
-  it("rejects missing commands and incompatible versions before publication", () => {
-    expect(() => PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY.parse({ ...provider(), version: 2 })).toThrow("Invalid");
-    expect(() => PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY.parse({ ...provider(), delete: undefined })).toThrow("Invalid");
+  it("keeps v1 parseable without runtime commands and requires exact versions and all v2 commands", () => {
+    const legacy = provider();
+    const modern = { ...legacy, version: 2, abort: vi.fn(), close: vi.fn() };
+    for (const command of ["abort", "close"] as const) {
+      expect(PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY.parse(legacy)).not.toHaveProperty(command);
+      expect(PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY.parse({ ...modern, version: 1 })).not.toHaveProperty(command);
+    }
+    expect(() => PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY.parse({ ...legacy, version: 2 })).toThrow("Invalid");
+    expect(() => PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY.parse({ ...legacy, delete: undefined })).toThrow("Invalid");
+    expect(() => PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY.parse({ ...modern, version: 1 })).toThrow("Invalid");
+    expect(() => PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY.parse({ ...modern, version: 3 })).toThrow("Invalid");
+    for (const command of ["abort", "close", "delete"] as const) {
+      expect(() => PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY.parse({ ...modern, [command]: undefined })).toThrow("Invalid");
+    }
+  });
+
+  it.each(["abort", "close"] as const)("snapshots and binds v2 %s through repeated parsing without leaking native results", async (command) => {
+    const native = vi.fn(function (this: object, target: PluginSessionSelection, options?: PluginSessionLifecycleOptions) {
+      return Promise.resolve({ owner: this, target, options });
+    });
+    const source = { ...provider(), version: 2, abort: native, close: native };
+    const lifecycle = PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY.parse(PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY.parse(source));
+    source[command] = vi.fn(() => { throw new Error("replaced"); });
+    const requested = { ...selection };
+    const options = { signal: new AbortController().signal };
+    const pending = lifecycle[command](requested, options);
+    requested.sessionId = "replacement";
+    await expect(pending).resolves.toBeUndefined();
+    expect(native).toHaveBeenCalledExactlyOnceWith(selection, options);
+    expect(native.mock.contexts[0]).toBe(source);
+    expect(native.mock.calls[0]?.[0]).not.toBe(requested);
+    expect(Object.isFrozen(native.mock.calls[0]?.[0])).toBe(true);
+    expect(Object.isFrozen(lifecycle)).toBe(true);
+    await expect(lifecycle.get(selection)).resolves.toEqual({ sessionId: selection.sessionId, pinned: true, archived: false });
+  });
+
+  it.each([
+    { ...selection, cwd: "/outside" },
+    { ...selection, projectId: "" },
+    { ...selection, workspaceId: " " },
+    { ...selection, sessionId: "x".repeat(513) },
+  ])("rejects malformed runtime command selection before invoking the provider (%j)", async (target) => {
+    const native = vi.fn(() => Promise.resolve());
+    const lifecycle = PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY.parse({ ...provider(), version: 2, abort: native, close: native });
+    for (const command of ["abort", "close"] as const) {
+      await expect(lifecycle[command](target)).rejects.toThrow("Invalid");
+    }
+    expect(native).not.toHaveBeenCalled();
   });
 
   it("rejects path authority, invalid IDs, and mismatched state without mutating", async () => {

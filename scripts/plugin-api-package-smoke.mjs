@@ -145,8 +145,9 @@ async function assertServerRuntimeApi(consumerRoot) {
       PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY,
       PI_WEB_HOST_SESSION_STATE_CAPABILITY,
       PI_WEB_HOST_PROJECT_TRUST_CAPABILITY,
+      PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY,
     } from "@jmfederico/pi-web/server-plugin-api";
-    export default [PI_WEB_HOST_WORKSPACES_CAPABILITY, PI_WEB_HOST_PI_SESSIONS_CAPABILITY, PI_WEB_HOST_PI_SESSION_EVENTS_CAPABILITY, PI_WEB_HOST_CATALOG_CAPABILITY, PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY, PI_WEB_HOST_SESSION_STATE_CAPABILITY, PI_WEB_HOST_PROJECT_TRUST_CAPABILITY];
+    export default [PI_WEB_HOST_WORKSPACES_CAPABILITY, PI_WEB_HOST_PI_SESSIONS_CAPABILITY, PI_WEB_HOST_PI_SESSION_EVENTS_CAPABILITY, PI_WEB_HOST_CATALOG_CAPABILITY, PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY, PI_WEB_HOST_SESSION_STATE_CAPABILITY, PI_WEB_HOST_PROJECT_TRUST_CAPABILITY, PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY];
   `, "utf8");
   const serverApi = await import(pathToFileURL(fixturePath).href);
   if (typeof serverApi.createCompanionBackend !== "function") throw new Error("Installed companion backend helper is missing");
@@ -154,11 +155,16 @@ async function assertServerRuntimeApi(consumerRoot) {
   if (serverApi.createCompanionBackend({ emit: (_channel, query) => query.accept(() => backend) }, "fixture.server") !== backend) {
     throw new Error("Installed companion helper did not return the hosted v5 backend");
   }
-  const [workspacesCapability, piSessionsCapability, sessionEventsCapability, catalogCapability, lifecycleCapability, stateCapability, trustCapability] = serverApi.default;
+  const [workspacesCapability, piSessionsCapability, sessionEventsCapability, catalogCapability, lifecycleCapability, stateCapability, trustCapability, lifecycleV2Capability] = serverApi.default;
   for (const [capability, id] of [[stateCapability, "session-state"], [trustCapability, "project-trust"]]) {
     if (!Object.isFrozen(capability) || capability?.pluginId !== "pi-web.host" || capability?.id !== id || capability?.version !== 1 || typeof capability?.parse !== "function") {
       throw new Error(`Installed ${id} capability is invalid`);
     }
+  }
+  if (!Object.isFrozen(lifecycleV2Capability) || lifecycleV2Capability?.pluginId !== "pi-web.host"
+    || lifecycleV2Capability?.id !== "session-lifecycle" || lifecycleV2Capability?.version !== 2
+    || typeof lifecycleV2Capability?.parse !== "function") {
+    throw new Error("Installed server plugin API does not expose the exact pi-web.host/session-lifecycle v2 token");
   }
   if (!Object.isFrozen(lifecycleCapability) || lifecycleCapability?.pluginId !== "pi-web.host"
     || lifecycleCapability?.id !== "session-lifecycle" || lifecycleCapability?.version !== 1
