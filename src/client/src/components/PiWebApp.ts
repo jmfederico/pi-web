@@ -1020,7 +1020,14 @@ export class PiWebApp extends LitElement {
       if (selectedMachineId(this.state) !== machineId && !await this.selectMachineWithMemory(machine)) {
         throw requiredTerminalUnavailableError(machineId);
       }
-      const terminal = this.maintenanceTerminal("core", machineId, this.beginNavigationOperation(WORKSPACE_SURFACE_SCOPE));
+      const navigation = this.beginNavigationOperation(WORKSPACE_SURFACE_SCOPE);
+      // Route restoration can finish before plugin activation when no tool is
+      // selected. Join the captured machine's load before looking up Terminal.
+      await this.loadPluginsForMachine(machine);
+      if (selectedMachineId(this.state) !== machineId || !navigation.isCurrent()) {
+        throw requiredTerminalUnavailableError(machineId);
+      }
+      const terminal = this.maintenanceTerminal("core", machineId, navigation);
       if (terminal === undefined) throw requiredTerminalUnavailableError(machineId);
       await terminal.runCommand({ title, command, open: true });
     },

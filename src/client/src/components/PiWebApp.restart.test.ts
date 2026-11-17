@@ -41,6 +41,10 @@ function setup(machine = remote) {
   const app = new PiWebApp();
   apps.push(app);
   Reflect.set(app, "state", { ...initialAppState(), selectedMachine: machine, machines: [gateway, remote] });
+  Reflect.set(app, "gatewayPluginLoadPromise", Promise.resolve());
+  const loaded: unknown = Reflect.get(app, "loadedMachinePluginIds");
+  if (!(loaded instanceof Set)) throw new Error("Missing plugin load registry");
+  loaded.add(remote.id);
   const root = app.attachShadow({ mode: "open" });
   Reflect.set(app, "renderRoot", root);
   const load = vi.spyOn(piWebApi, "piWebStatus").mockResolvedValue(status);
@@ -57,7 +61,7 @@ function setup(machine = remote) {
   if (!(compositions instanceof Map)) throw new Error("Missing terminal registry");
   compositions.set("local", composition);
   compositions.set("remote", composition);
-  return { app, root, load, runCommand, createMaintenanceTerminal, compositions };
+  return { app, root, load, runCommand, createMaintenanceTerminal, compositions, composition, loaded };
 }
 
 afterEach(async () => {
@@ -137,6 +141,51 @@ it.each([true, false])("Settings targets its explicit machine and respects cance
   }
   expect(navigate).toHaveBeenCalledExactlyOnceWith(gateway);
   expect(load).toHaveBeenCalledExactlyOnceWith("local");
+});
+
+it.each(["ready", "unavailable", "selection-changed", "navigation-retired"] as const)("waits for the Settings target's in-flight plugin activation and fails closed (%s)", async (outcome) => {
+  const { app, compositions, composition, loaded, runCommand, createMaintenanceTerminal } = setup(gateway);
+  loaded.delete(remote.id);
+  compositions.delete(remote.id);
+  let finishActivation!: () => void;
+  const activation = new Promise<void>((resolve) => { finishActivation = resolve; });
+  const loads: unknown = Reflect.get(app, "machinePluginLoadPromises");
+  if (!(loads instanceof Map)) throw new Error("Missing in-flight plugin registry");
+  loads.set(remote.id, activation);
+  const lookup = vi.spyOn(loads, "get");
+  Reflect.set(app, "settingsSection", "sessiond");
+  // Model route restoration completing while its plugin load is still pending.
+  Reflect.set(app, "selectMachineWithMemory", (machine: Machine) => {
+    Reflect.set(app, "state", { ...initialAppState(), selectedMachine: machine, machines: [gateway, remote] });
+    return Promise.resolve(true);
+  });
+  const callback = templateValueAfterMarker(app.render(), ".onRestart=");
+  if (typeof callback !== "function") throw new Error("Missing settings restart callback");
+  const result: unknown = Reflect.apply(callback, undefined, [remote.id, "sessiond"]);
+  if (!(result instanceof Promise)) throw new Error("Expected asynchronous restart request");
+  const checked = outcome === "ready" ? expect(result).resolves.toBeUndefined() : expect(result).rejects.toThrow();
+  // Wait until restart joins the pending load before completing activation.
+  await vi.waitFor(() => { expect(lookup).toHaveBeenCalledWith(remote.id); });
+  expect(createMaintenanceTerminal).not.toHaveBeenCalled();
+  expect(runCommand).not.toHaveBeenCalled();
+  if (outcome !== "unavailable") compositions.set(remote.id, composition);
+  if (outcome === "selection-changed") {
+    Reflect.set(app, "state", { ...initialAppState(), selectedMachine: gateway, machines: [gateway, remote] });
+  }
+  if (outcome === "navigation-retired") {
+    const navigate: unknown = Reflect.get(app, "retireNavigationScope");
+    if (typeof navigate !== "function") throw new Error("Missing navigation operation");
+    Reflect.apply(navigate, app, [["tool", "view"]]);
+  }
+  finishActivation();
+  await checked;
+  if (outcome === "ready") {
+    expect(createMaintenanceTerminal).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ machineId: remote.id }));
+    expect(runCommand).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ command: "target-restart-daemon" }));
+  } else {
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(Reflect.get(app, "settingsSection")).toBe("sessiond");
+  }
 });
 
 it("reports missing target Terminal support and never falls back to the gateway", async () => {

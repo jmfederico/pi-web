@@ -178,20 +178,22 @@ describe("Settings direct restart shortcuts", () => {
     expect(configApi.updateConfig).toHaveBeenCalledTimes(1);
   });
 
-  it("offers gateway web-only restart after a network save, never for a draft or unrelated save", async () => {
+  it("keeps gateway restart explicit and blocks it during saves even when matching hostname policy cannot confirm network activation", async () => {
     const dialog = await mount("general");
     await selectMachine(dialog, secondRemoteMachine.id);
-    expect(findAction(required(dialog.shadowRoot))).toBeUndefined();
+    expect(restartButton(dialog).disabled).toBe(false);
+    expect(configApi.updateConfig).not.toHaveBeenCalled();
     required(general(dialog).shadowRoot?.querySelector<HTMLInputElement>("#quiet-mode")).click();
     await settle(dialog);
-    expect(findAction(required(dialog.shadowRoot))).toBeUndefined();
+    expect(restartButton(dialog).disabled).toBe(false);
     await editPort(dialog, "9000");
-    expect(findAction(required(dialog.shadowRoot))).toBeUndefined();
+    expect(restartButton(dialog).disabled).toBe(false);
     const save = deferred<PiWebConfigResponse>();
     vi.mocked(configApi.updateConfig).mockReturnValueOnce(save.promise);
     submitGateway(dialog);
     await settle(dialog);
-    expect(findAction(required(dialog.shadowRoot))).toBeUndefined();
+    expect(restartButton(dialog).disabled).toBe(true);
+    restartButton(dialog).click();
     expect(dialog.onRestart).not.toHaveBeenCalled();
     save.resolve({ ...gatewayConfig, ...configResponse({ ...gatewayConfig.effectiveConfig, port: 9000 }) });
     await settle(dialog);
@@ -209,14 +211,75 @@ describe("Settings direct restart shortcuts", () => {
     expect(action(dialog).shadowRoot?.querySelector('[role="alert"]')).toBeNull();
   });
 
-  it("does not offer a network restart after a failed save", async () => {
+  it.each([
+    { field: "port", selector: 'input[inputmode="numeric"]', value: "9000", saved: { port: 9000 } },
+    { field: "host", selector: 'input[placeholder="127.0.0.1"]', value: "0.0.0.0", saved: { host: "0.0.0.0" } },
+  ])("keeps gateway restart available after saving $field and recreating Settings with matching hostname policy", async ({ selector, value, saved }) => {
+    const dialog = await mount("general");
+    const input = required(general(dialog).shadowRoot?.querySelector<HTMLInputElement>(selector));
+    input.value = value;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    submitGateway(dialog);
+    await settle(dialog);
+    expect(configApi.updateConfig).toHaveBeenCalledExactlyOnceWith({ set: saved, unset: [] });
+    expect(gatewayConfig.effectiveConfig).toMatchObject(saved);
+    expect(gatewayConfig.activeHostAccess).toEqual(gatewayConfig.effectiveConfig.hostAccess);
+    expect(dialog.onRestart).not.toHaveBeenCalled();
+
+    dialog.onClose = () => { dialog.remove(); };
+    required(dialog.shadowRoot?.querySelector<HTMLButtonElement>('button[aria-label="Close settings"]')).click();
+    expect(dialog.isConnected).toBe(false);
+    const reopened = await mount("general");
+    await selectMachine(reopened, secondRemoteMachine.id);
+    expect(restartButton(reopened).disabled).toBe(false);
+    restartButton(reopened).click();
+    await settle(reopened);
+    expect(reopened.onRestart).toHaveBeenCalledExactlyOnceWith("local", "web");
+    expect(configApi.updateConfig).toHaveBeenCalledTimes(1);
+    // Launching a command is not evidence that the saved network values are active.
+    reopened.remove();
+    const afterLaunch = await mount("general");
+    expect(restartButton(afterLaunch).disabled).toBe(false);
+  });
+
+  it("reports a failed save without changing saved network config or launching a restart", async () => {
     const dialog = await mount("general");
     vi.mocked(configApi.updateConfig).mockRejectedValueOnce(new Error("Read-only config"));
     await editPort(dialog, "9000");
     submitGateway(dialog);
     await settle(dialog);
-    expect(findAction(required(dialog.shadowRoot))).toBeUndefined();
+    expect(general(dialog).error).toContain("Read-only config");
+    expect(gatewayConfig.effectiveConfig.port).toBe(8504);
+    expect(restartButton(dialog).disabled).toBe(false);
     expect(dialog.onRestart).not.toHaveBeenCalled();
+  });
+
+  it("offers no gateway restart until configuration is available and disables it while refreshing", async () => {
+    vi.mocked(configApi.config).mockRejectedValueOnce(new Error("Gateway unavailable"));
+    const dialog = await mount("general");
+    expect(general(dialog).error).toContain("Gateway unavailable");
+    expect(findAction(required(dialog.shadowRoot))).toBeUndefined();
+    const pending = deferred<PiWebConfigResponse>();
+    vi.mocked(configApi.config).mockReturnValueOnce(pending.promise);
+    const loaded = dialog.reloadGatewayConfig();
+    await settle(dialog);
+    expect(findAction(required(dialog.shadowRoot))).toBeUndefined();
+    pending.resolve(gatewayConfig);
+    await loaded;
+    await settle(dialog);
+    expect(restartButton(dialog).disabled).toBe(false);
+
+    const refresh = deferred<PiWebConfigResponse>();
+    vi.mocked(configApi.config).mockReturnValueOnce(refresh.promise);
+    const refreshed = dialog.reloadGatewayConfig();
+    await settle(dialog);
+    expect(restartButton(dialog).disabled).toBe(true);
+    restartButton(dialog).click();
+    expect(dialog.onRestart).not.toHaveBeenCalled();
+    refresh.resolve(gatewayConfig);
+    await refreshed;
+    await settle(dialog);
+    expect(restartButton(dialog).disabled).toBe(false);
   });
 
   it.each([null, undefined, { mode: "restricted" as const, hosts: ["old.example"] }])("offers a local web shortcut for a saved hostname policy not confirmed active (%j)", async (activeHostAccess) => {

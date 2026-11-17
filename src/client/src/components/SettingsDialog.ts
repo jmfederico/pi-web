@@ -89,7 +89,6 @@ export class SettingsDialog extends LitElement {
   @state() private restartRequest: { machineId: string; services: RestartServices } | undefined;
   private get restarting(): boolean { return this.restartRequest !== undefined; }
   @state() private restartFailure: { machineId: string; services: RestartServices; error: string } | undefined;
-  @state() private gatewayNetworkChanged = false;
   @property({ attribute: false }) onMachineConfigSaved?: (machineId: string) => void;
   @property({ attribute: false }) onGatewayConfigLoaded?: (response: PiWebConfigResponse) => void;
   /** A completed write from a closed dialog requires an authoritative refresh. */
@@ -414,7 +413,7 @@ export class SettingsDialog extends LitElement {
         .error=${this.error}
         .machineError=${this.accessError}
         .savedMessage=${this.savedSection === "general" ? this.savedMessage : ""}
-        .restartAction=${this.gatewayRestartRequired() ? this.renderRestartAction(settingsMachineTarget(this.machines.find((machine) => machine.kind === "local")), "web", this.loading) : undefined}
+        .restartAction=${this.gatewayRestartAvailable() ? this.renderRestartAction(settingsMachineTarget(this.machines.find((machine) => machine.kind === "local")), "web", this.loading) : undefined}
         .targetLabel=${settingsFeedbackTargetLabel(this.settingsTarget())}
         .targetId=${this.settingsTarget().id}
         .onReload=${() => this.loadConfig()}
@@ -454,17 +453,12 @@ export class SettingsDialog extends LitElement {
     `;
   }
 
-  private gatewayRestartRequired(): boolean {
-    const response = this.configResponse;
-    if (response === undefined) return false;
-    if (this.gatewayNetworkChanged) return true;
-    const desired = response.effectiveConfig.hostAccess ?? null;
-    const active = response.activeHostAccess;
-    // Older gateways cannot confirm that a saved hostname policy is active.
-    if (active === undefined) return desired !== null;
-    if (desired === null || active === null) return desired !== active;
-    return desired.mode !== active.mode || (desired.mode === "restricted" && active.mode === "restricted"
-      && (desired.hosts.length !== active.hosts.length || desired.hosts.some((host, index) => host !== active.hosts[index])));
+  private gatewayRestartAvailable(): boolean {
+    // The API reports active hostname policy, but not the running host/port.
+    // Matching policy cannot prove network settings are active, and tracking
+    // saves in this dialog would lose that evidence when Settings is recreated.
+    // Keep an explicit restart available without claiming one is required.
+    return this.configResponse !== undefined;
   }
 
   private renderRestartAction(target: SettingsMachineTarget, services: "web" | "sessiond", loading: boolean): TemplateResult | undefined {
@@ -733,11 +727,6 @@ export class SettingsDialog extends LitElement {
       }
       this.saving = true;
       const response = await configApi.updateConfig(update);
-      // Network startup values are not reported by the API. Retain a reminder
-      // after a saved change; neither refresh nor launch proves activation.
-      if (snapshot !== undefined && (snapshot.effectiveConfig.host !== response.effectiveConfig.host || snapshot.effectiveConfig.port !== response.effectiveConfig.port)) {
-        this.gatewayNetworkChanged = true;
-      }
       this.configResponse = response;
       this.publishGatewayConfig(response);
       this.showSavedMessage(() => section === "shortcuts" ? settingsDialogMessages.t("shortcutsSaved")
