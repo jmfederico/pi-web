@@ -3,15 +3,15 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PI WEB fleet — remote Pi web UI machines</title>
+    <title>Machines — work across hosts with PI WEB</title>
     <meta
       name="description"
-      content="Connect trusted PI WEB runtimes through machine federation so one web UI can supervise local and remote projects, sessions, files, workspaces, terminals, Pi packages, and plugins."
+      content="Switch between trusted local and remote machines from one PI WEB URL. Work with their projects, sessions, files, and terminals without moving your environment."
     />
     <link rel="canonical" href="https://pi-web.dev/machines" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="PI WEB" />
-    <meta property="og:title" content="PI WEB fleet — remote Pi web UI machines" />
+    <meta property="og:title" content="Machines — work across hosts with PI WEB" />
     <meta
       property="og:description"
       content="Use one PI WEB instance to reach trusted local and remote Pi Coding Agent machines."
@@ -23,7 +23,7 @@
     <meta property="og:image:height" content="630" />
     <meta property="og:image:alt" content="PI WEB — A remote-first runtime for AI coding agents. Teal bar mark and uppercase wordmark on dark navy." />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="PI WEB fleet — remote Pi web UI machines" />
+    <meta name="twitter:title" content="Machines — work across hosts with PI WEB" />
     <meta
       name="twitter:description"
       content="Use one PI WEB instance to reach trusted local and remote Pi Coding Agent machines."
@@ -80,12 +80,11 @@
     <main id="main">
       <section class="page-hero">
         <div class="container">
-          <p class="overline">Trusted runtimes</p>
+          <p class="overline">One URL, multiple machines</p>
           <h1>Machines</h1>
           <p>
-            Most PI WEB setups only need one runtime. When you do have more than one, machine federation lets the PI WEB
-            instance you opened act as a gateway to other trusted runtimes while each machine keeps its own repositories,
-            credentials, sessions, Pi package settings, and plugins.
+            Switch between trusted machines to work with their projects, sessions, files, and terminals from one PI WEB
+            URL. Each machine keeps its own environment. If you use one host, there is no need to add machines.
           </p>
         </div>
       </section>
@@ -94,12 +93,12 @@
         <div class="container doc-layout">
           <aside class="toc" aria-label="Machines page contents">
             <strong>On this page</strong>
-            <a href="#what-it-is">What Fleet does</a>
+            <a href="#what-it-is">Reach your machines</a>
             <a href="#when-to-use">When to use it</a>
-            <a href="#prepare-machines">Set up another runtime</a>
+            <a href="#what-is-proxied">What works remotely</a>
+            <a href="#prepare-machines">Prepare a machine</a>
             <a href="#add-machine">Add a machine</a>
             <a href="#instance-identity">Which instance is this?</a>
-            <a href="#what-is-proxied">What works remotely</a>
             <a href="#auth-credentials">Credentials</a>
             <a href="#plugins">Plugins</a>
             <a href="#trust-model">Trust boundaries</a>
@@ -108,16 +107,15 @@
 
           <div class="doc-content">
             <section id="what-it-is">
-              <h2>What Fleet does</h2>
+              <h2>Reach your machines from one place</h2>
               <p>
-                The local machine is available automatically. To reach another PI WEB runtime, register its base URL
-                and, optionally, a bearer token.
+                The PI WEB instance you open is your gateway. Its local machine is available automatically;
+                add another machine's PI WEB URL to reach that machine through the same browser connection.
+                This is machine federation, also called Fleet.
               </p>
-              <p>
-                After registration, the browser keeps talking to the current PI WEB origin. The gateway contacts the
-                selected remote PI WEB server so you can work with its projects, workspaces, sessions, files, terminals,
-                Pi packages, and compatible plugins.
-              </p>
+              <details class="config-details">
+                <summary>How the gateway connects machines</summary>
+                <p>The browser talks to the gateway, which forwards selected-machine requests to the remote PI WEB server.</p>
               <div class="code-card">
                 <div class="copy-row">
                   <strong>Fleet shape</strong>
@@ -134,39 +132,47 @@ PI WEB gateway you opened
   │
   └─ [ Remote PI WEB runtime B ]</code></pre>
               </div>
+              </details>
             </section>
 
             <section id="when-to-use">
               <h2>When to use it</h2>
+              <ul>
+                <li><strong>Work across hosts:</strong> reach a workstation, home server, cloud VM, or client-specific host without moving repositories.</li>
+                <li><strong>Keep environments separate:</strong> each machine owns its credentials, sessions, worktrees, terminals, package settings, and plugins.</li>
+              </ul>
               <p>
-                Federation is useful when you have more than one place where agents should work, but you want one stable
-                browser entrypoint.
+                For access to one host from several devices, start with <a href="remote-first">remote access</a> instead.
               </p>
-              <div class="cards">
-                <article class="card">
-                  <div class="card-icon">▦</div>
-                  <h3>Many dev boxes</h3>
-                  <p>Register a workstation, home server, cloud VM, or client-specific host without moving repositories.</p>
-                </article>
-                <article class="card">
-                  <div class="card-icon">⇄</div>
-                  <h3>One gateway</h3>
-                  <p>Open one trusted PI WEB URL and switch machines instead of juggling browser tabs and tunnels.</p>
-                </article>
-                <article class="card">
-                  <div class="card-icon">⌁</div>
-                  <h3>Local ownership</h3>
-                  <p>Each target machine keeps its own Pi auth, sessions, worktrees, terminal state, Pi package settings, and plugins.</p>
-                </article>
-              </div>
+            </section>
+
+            <section id="what-is-proxied">
+              <h2>What works remotely</h2>
+              <p>Select a machine to work with its:</p>
+              <ul>
+                <li>Projects and workspaces.</li>
+                <li>Files, previews, and Git status and diffs.</li>
+                <li>Pi sessions, transcripts, prompts, model controls, and commands.</li>
+                <li>Activity indicators and realtime updates.</li>
+                <li>Terminals and terminal command runs.</li>
+                <li>Pi package listing, install, remove, and update from <strong>Settings → Pi packages</strong> when supported by the target PI WEB runtime.</li>
+                <li>Compatible plugins installed on the selected machine.</li>
+              </ul>
             </section>
 
             <section id="prepare-machines">
-              <h2>Set up another runtime</h2>
+              <h2>Prepare a machine</h2>
               <p>
                 Install and run PI WEB on every machine you want to register. The remote URL must be reachable from the
-                gateway server, not just from your browser.
+                gateway server, not just from your browser. Use NetBird, Tailscale, WireGuard, a private LAN,
+                an SSH tunnel, or an authenticated reverse proxy.
               </p>
+              <div class="callout danger">
+                Do not expose PI WEB directly to the public internet. Register machines only over trusted network paths
+                and only when you trust the endpoint.
+              </div>
+              <details class="config-details">
+                <summary>Install commands and remote URL setup</summary>
               <div class="code-card">
                 <div class="copy-row">
                   <strong>Install on each target</strong>
@@ -177,16 +183,13 @@ PI WEB gateway you opened
 <span class="prompt">$</span> pi-web doctor</code></pre>
               </div>
               <p>
-                Prefer a private path such as NetBird, Tailscale, WireGuard, private LAN, SSH tunnel, or an authenticated reverse
-                proxy. If the remote is behind a path prefix, include that prefix in the machine URL, for example
+                If the remote is behind a path prefix, include that prefix in the machine URL, for example
                 <code>https://devbox.example.test/pi-web</code>. The machine registry normalizes the trailing slash; when
                 opening that deployment directly in a browser, use its canonical <code>https://devbox.example.test/pi-web/</code>
                 URL and configure the proxy to redirect the slashless form.
               </p>
-              <div class="callout danger">
-                Do not expose PI WEB directly to the public internet. Register machines only over trusted network paths
-                and only when you trust the endpoint.
-              </div>
+              <p>See the <a href="install">installation guide</a> and <a href="install#reverse-proxy-prefix">reverse proxy setup</a> for deployment options.</p>
+              </details>
             </section>
 
             <section id="add-machine">
@@ -200,8 +203,8 @@ PI WEB gateway you opened
               </ol>
               <p>
                 Use the machine selector beside the PI WEB brand (or the Machine chip on narrow layouts), then add
-                projects, workspaces, and sessions on that machine. In an installed PWA, PI WEB also shows the gateway
-                address so you can distinguish windows; see <a href="#instance-identity">Which instance is this?</a>.
+                projects, workspaces, and sessions on that machine. See <a href="#instance-identity">Which instance is this?</a>
+                to distinguish the gateway from your selected machine.
               </p>
               <div class="callout">
                 Removing a remote machine only removes it from this gateway's registry. It does not stop the remote PI WEB
@@ -212,15 +215,16 @@ PI WEB gateway you opened
             <section id="instance-identity">
               <h2>Which instance is this?</h2>
               <p>
-                Set the <strong>Machine name</strong> in <strong>Settings → General</strong> for the selected machine. The local
-                entry uses that name, or <strong>PI-WEB</strong> when unnamed. With several machines, the selector shows
-                the selected machine's name; with only one, a static identity remains visible in both browsers and PWAs.
-                Narrow layouts show the same identity in the location bar. Installed PWAs also show the address because
-                they have no browser URL bar.
+                The selected machine's name tells you where projects and sessions live. The window's address identifies
+                the gateway; installed PWAs show it too, since they have no browser URL bar.
+                Set <strong>Machine name</strong> in <strong>Settings → General</strong> for the selected machine.
               </p>
+              <details class="config-details">
+                <summary>Display names, PWA identity, and development icons</summary>
               <p>
-                The address is the ground truth for which gateway serves the window; the selected machine decides which
-                runtime your projects, workspaces, and sessions live on.
+                The local entry uses its machine name, or <strong>PI-WEB</strong> when unnamed. With several machines,
+                the selector shows the selected machine's name; with only one, a static identity remains visible in
+                browsers and PWAs. Narrow layouts show the same identity in the location bar.
               </p>
               <p>
                 Remote machines use their reported name unless you set a <strong>Local display name</strong>. Clear that
@@ -233,23 +237,7 @@ PI WEB gateway you opened
                 source checkouts count as development deployments; package installs and Docker runtime deployments stay
                 teal. Browser updates to existing launcher names and icons can be delayed; reinstall the PWA if needed.
               </p>
-            </section>
-
-            <section id="what-is-proxied">
-              <h2>What works remotely</h2>
-              <p>
-                After you select a machine, the rest of the app works in that machine's scope. The gateway routes the
-                selected-machine work to the target PI WEB runtime.
-              </p>
-              <ul>
-                <li>Projects and workspaces.</li>
-                <li>Files, previews, and Git status and diffs.</li>
-                <li>Pi sessions, transcripts, prompts, model controls, and commands.</li>
-                <li>Activity indicators and realtime updates.</li>
-                <li>Terminals and terminal command runs.</li>
-                <li>Pi package listing, install, remove, and update from <strong>Settings → Pi packages</strong> when supported by the target PI WEB runtime.</li>
-                <li>Compatible plugins installed on the selected machine.</li>
-              </ul>
+              </details>
             </section>
 
             <section id="auth-credentials">
@@ -264,6 +252,8 @@ PI WEB gateway you opened
                 <li>Subscription (OAuth) login and logout can be driven from the gateway while the machine is selected; the flow runs on the target machine and the credential is written there.</li>
                 <li>The optional machine bearer token is stored by the gateway and sent to the remote while proxying requests.</li>
               </ul>
+              <details class="config-details">
+                <summary>Sign in to a model-provider subscription remotely</summary>
               <p>
                 To sign in with a subscription, select the machine, open the login dialog, and choose
                 <strong>Use a subscription</strong>. Because the provider flow runs on the target machine, its loopback
@@ -279,6 +269,7 @@ PI WEB gateway you opened
                 Use <strong>Actions → Open Selected Machine PI WEB</strong> when you need to authenticate directly on a
                 remote machine or inspect it outside the gateway.
               </p>
+              </details>
             </section>
 
             <section id="plugins">
@@ -288,6 +279,17 @@ PI WEB gateway you opened
                 does not substitute its own backend when a remote plugin is unavailable or incompatible. Portable
                 browser-only plugins can reuse a gateway copy; see the <a href="plugins#remote-machines">plugin guide</a>.
               </p>
+              <p>
+                Browser and server plugins are trusted code, not isolated add-ons. Server plugins run with the target
+                daemon's user permissions and can stall or crash its sessions and terminals. Only federate machines
+                whose installed PI WEB plugin packages you trust.
+              </p>
+              <div class="callout warning">
+                Plugin updates may require a target session-daemon restart, which can interrupt active sessions and
+                runtime ownership. Review active work before restarting.
+              </div>
+              <details class="config-details">
+                <summary>Change plugins, upgrade machines, and recover from failures</summary>
               <p>
                 Use <strong>Settings → PI WEB plugins</strong> to change the selected machine's plugin settings and
                 check whether a restart is required. Browser-only changes need a gateway page reload. Server-backed
@@ -300,16 +302,12 @@ PI WEB gateway you opened
                 the updated web/API processes and the target session daemon, then reload the gateway page. See
                 <a href="config#plugin-config">plugin configuration and recovery</a> for the rollout steps.
               </p>
-              <div class="callout warning">
-                Run offline disable and safe-start commands directly on the affected target machine. A manual restart of
-                its <code>pi-web-sessiond.service</code> may interrupt active sessions and runtime ownership. For the
-                native user service, run <code>systemctl --user restart pi-web-sessiond</code> only after reviewing active work.
-              </div>
               <p>
-                Browser and server plugins are trusted code, not isolated add-ons. Server plugins run with the target
-                daemon's user permissions and can stall or crash its sessions and terminals. Only federate machines
-                whose installed PI WEB plugin packages you trust.
+                Run offline disable and safe-start commands directly on the affected target machine. For the native
+                user service, restart <code>pi-web-sessiond.service</code> with
+                <code>systemctl --user restart pi-web-sessiond</code> only after reviewing active work.
               </p>
+              </details>
               <p><a href="plugins#remote-machine-plugins">Read the remote machine plugin and recovery notes →</a></p>
             </section>
 
@@ -337,7 +335,7 @@ PI WEB gateway you opened
                 <li>Use <strong>Actions → Refresh Selected Machine</strong> to re-check health.</li>
                 <li>Make sure the remote URL is reachable from the gateway server.</li>
                 <li>Open the remote PI WEB directly to verify it is running and to complete model-provider login flows.</li>
-                <li>For plugin lifecycle/peer compatibility errors, upgrade the gateway and target together, restart the updated web/API processes, manually restart the target session daemon, then reload the gateway page.</li>
+                <li>For plugin compatibility errors, follow the <a href="#plugins">plugin upgrade and recovery steps</a>. Review active work before any session-daemon restart.</li>
                 <li>Check <code>pi-web logs</code> on both gateway and target for proxy, plugin activation, health, conflict, or revision diagnostics.</li>
                 <li>Use the target's offline <code>pi-web plugins disable</code> or <code>safe-start</code> commands when sessiond cannot start normally.</li>
               </ul>

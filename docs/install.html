@@ -83,8 +83,8 @@
           <p class="overline">Installation guide</p>
           <h1>Install PI WEB</h1>
           <p>
-            The recommended setup runs PI WEB as per-user services. PI WEB chooses the native user-service backend for
-            your operating system.
+            Install on the machine where your agents will run, then open PI WEB in your browser.
+            User services keep sessions running when you disconnect; the host must stay on.
           </p>
         </div>
       </section>
@@ -94,20 +94,24 @@
           <aside class="toc" aria-label="Install page contents">
             <strong>On this page</strong>
             <a href="#requirements">Requirements</a>
-            <a href="#user-services">User service install</a>
+            <a href="#user-services">Recommended install</a>
             <a href="#bun">Best-effort Bun support</a>
             <a href="#one-line">One-line install</a>
             <a href="#pi-package">Install through Pi</a>
             <a href="#manual-run">WSL / manual run</a>
             <a href="#remote-access">Remote access</a>
-            <a href="#reverse-proxy-prefix">Reverse proxy prefixes</a>
-            <a href="#federated-machines">Federated machines</a>
+            <a href="#reverse-proxy-prefix">Reverse proxy</a>
+            <a href="#federated-machines">Connect machines</a>
             <a href="#manage-services">Manage services</a>
+            <a href="#updates">Update PI WEB</a>
             <a href="#configure">Configure</a>
             <a href="#uninstall">Uninstall</a>
           </aside>
 
           <div class="doc-content">
+            <p><strong>Choose your setup:</strong> use the <a href="#user-services">recommended npm install</a> for persistent services,
+              <a href="#pi-package">install through Pi</a> to manage PI WEB inside Pi, or
+              <a href="#manual-run">run manually</a> without a user service manager.</p>
             <section id="requirements">
               <h2>Requirements</h2>
               <ul>
@@ -116,7 +120,11 @@
                 <li>A shell login environment that exposes your runtime, Pi, git, and any tools your agents need. The package launchers use POSIX <code>sh</code>. Pi's Bash tool and some service scripts still require Bash.</li>
                 <li>For the automatic installer: a supported per-user service manager.</li>
               </ul>
-              <p>PI WEB reuses your existing Pi installation; it does not install a separate Pi engine or pin its version. After upgrading or downgrading Pi in that installation, restart the web/API service before the session daemon to use the changed version. Restarting the daemon interrupts active sessions. If a Pi upgrade causes compatibility problems, you can downgrade Pi. If Pi was previously installed only as part of PI WEB, install Pi itself before updating PI WEB.</p>
+              <p>PI WEB reuses your existing Pi installation; it does not install a separate Pi engine or pin its version.</p>
+              <details class="config-details">
+                <summary>Changing or upgrading your Pi installation</summary>
+                <p>After upgrading or downgrading Pi, restart the web/API service before the session daemon to use the changed version. Restarting the daemon interrupts active sessions. If a Pi upgrade causes compatibility problems, you can downgrade Pi. If Pi was previously installed only as part of PI WEB, install Pi itself before updating PI WEB.</p>
+              </details>
               <div class="callout warning">
                 <strong>Important PATH detail:</strong>
                 PI WEB services run through a non-interactive login shell with <code>-lc</code>. Setup that only lives in
@@ -127,12 +135,9 @@
             </section>
 
             <section id="user-services">
-              <h2>Recommended: run PI WEB as user services</h2>
-              <p>
-                This creates two per-user services: one long-lived session daemon and one web/API service. The CLI chooses
-                the native user-service backend automatically. It is the easiest way to keep sessions available after SSH
-                disconnects, browser restarts, or web/API restarts.
-              </p>
+              <h2>Recommended: install with npm</h2>
+              <p>Keep sessions available after SSH disconnects, browser restarts, or web/API restarts.
+                Run these commands on your agent host, using your normal user account.</p>
               <div class="code-card">
                 <div class="copy-row">
                   <strong>User service install</strong>
@@ -147,13 +152,21 @@
                 by PI WEB terminals without enabling install scripts for other dependencies.
               </p>
               <p>Then open <a href="http://127.0.0.1:8504">http://127.0.0.1:8504</a>.</p>
-              <p>If preflight fails, no config or existing services are changed. Follow the detected shell guidance: zsh services read <code>~/.zprofile</code>, not interactive-only <code>~/.zshrc</code>; bash uses <code>~/.bash_profile</code> or <code>~/.profile</code>.</p>
-              <p>On Linux servers, also consider <code>sudo loginctl enable-linger "$USER"</code> so user services survive logout/reboot.</p>
+              <p>Installing on a remote host? <a href="#remote-access">Open it through an SSH tunnel</a>.</p>
+              <details class="config-details">
+                <summary>Service setup, shell paths, and Linux logout</summary>
+                <p>The installer creates two per-user services: a long-lived session daemon and a web/API service. It chooses the native user-service backend automatically.</p>
+                <p>If preflight fails, no config or existing services are changed. Follow the detected shell guidance: zsh services read <code>~/.zprofile</code>, not interactive-only <code>~/.zshrc</code>; bash uses <code>~/.bash_profile</code> or <code>~/.profile</code>.</p>
+                <p>On Linux servers, also consider <code>sudo loginctl enable-linger "$USER"</code> so user services survive logout/reboot.</p>
+              </details>
             </section>
 
             <section id="bun">
               <h2>Best-effort Bun support</h2>
-              <p>Bun support is provided on a best-effort basis. The maintainers use Node.js, not Bun, for day-to-day development. Reported Bun bugs will be addressed where possible, but Bun compatibility is not guaranteed. Node.js remains the recommended runtime.</p>
+              <p>Use Bun to run without Node.js. Support is best-effort, not guaranteed; Node.js remains recommended.
+                Maintainers develop with Node.js and address reported Bun bugs where possible.</p>
+              <details class="config-details">
+                <summary>Install with Bun: requirements, limits, and updates</summary>
               <p>PI WEB can run without Node.js using Bun's native terminals. Linux is verified with Bun 1.4.3; macOS service installation has not been verified with Bun. Bun must provide <code>Bun.Terminal</code> and <code>Bun.spawn</code>; an older Bun cannot use <code>node-pty</code> as a fallback.</p>
               <div class="code-card">
                 <div class="copy-row">
@@ -170,11 +183,14 @@
               <p>The installer retains an explicit runtime preference in the service definitions. Services choose the interpreter again at each start. Rerun <code>pi-web install</code> to replace older definitions that launch an interpreter directly; changing definitions or restarting sessiond interrupts active sessions. For manual operation, prefix both <code>pi-web-sessiond</code> and <code>pi-web-server</code> with <code>PI_WEB_RUNTIME=bun</code>.</p>
               <p>Bun terminals do not load <code>node-pty</code>, so its optional native build can be skipped. Node terminals still require a working <code>node-pty</code> installation. Pi extensions may load other native modules whose Bun compatibility PI WEB cannot guarantee; an incompatible native module can abort the daemon. The agent's <code>httpIdleTimeoutMs</code> setting is not applied under Bun; see <a href="faq#model-response-terminated">HTTP timeout troubleshooting</a>. Both runtimes enforce PI WEB's channel message limits. Node can also apply these limits during message assembly; Bun's native transport buffers messages before delivering them to PI WEB.</p>
               <p>For Bun global installations, update with <code>bun add --global @jmfederico/pi-web@latest</code>, then restart the web/API service before sessiond. Automatic <code>pi-web update</code> is not provided for Bun global installs. Development service scripts still use the Node/npm toolchain; Bun support here covers the installed application.</p>
+              </details>
             </section>
 
             <section id="one-line">
               <h2>One-line install</h2>
-              <p>If you prefer a curl pipe for the native user-service install, use the repository installer. This path still requires Node.js, npm, and Pi Coding Agent on the host.</p>
+              <p>Prefer the repository installer? This creates native user services and still requires Node.js, npm, and Pi Coding Agent on the host.</p>
+              <details class="config-details">
+                <summary>Install with curl and sh</summary>
               <div class="code-card">
                 <div class="copy-row">
                   <strong>One-liner</strong>
@@ -182,13 +198,13 @@
                 </div>
                 <pre id="one-line-install"><code><span class="prompt">$</span> curl -fsSL https://raw.githubusercontent.com/jmfederico/pi-web/main/install.sh | sh</code></pre>
               </div>
+              </details>
             </section>
 
             <section id="pi-package">
               <h2>Install through Pi</h2>
-              <p>PI WEB is also published as a Pi package. This exposes a <code>/pi-web</code> command inside Pi.</p>
-              <p>You do not need a separate global npm install; manage the services with <code>/pi-web</code> inside Pi. The commands and installed services use that same Pi installation. If you move Pi to a different installation path, run <code>/pi-web install</code> again to update the service definitions.</p>
-              <p>With Pi's managed installer (<code>pi.dev/install.sh</code>), the services follow the version Pi selects after <code>pi update</code>. Services installed from a managed Pi by earlier PI WEB versions point at one Pi release and stop starting once <code>pi update</code> removes it; run <code>/pi-web install</code> once to switch them.</p>
+              <p>Manage services with <code>/pi-web</code> inside Pi, without a separate global npm install.
+                The commands and services use that same Pi installation.</p>
               <div class="code-card">
                 <div class="copy-row">
                   <strong>Pi package path</strong>
@@ -203,14 +219,19 @@
 /pi-web doctor
 /pi-web version</code></pre>
               </div>
+              <details class="config-details">
+                <summary>Moving Pi or updating managed Pi installations</summary>
+                <p>If you move Pi to a different installation path, run <code>/pi-web install</code> again to update the service definitions.</p>
+                <p>With Pi's managed installer (<code>pi.dev/install.sh</code>), the services follow the version Pi selects after <code>pi update</code>. Services installed from a managed Pi by earlier PI WEB versions point at one Pi release and stop starting once <code>pi update</code> removes it; run <code>/pi-web install</code> once to switch them.</p>
+              </details>
             </section>
 
             <section id="manual-run">
-              <h2>WSL / manual run</h2>
-              <p>
-                On WSL without systemd, containers without a user service manager, or other unsupported environments,
-                install the package and run the daemon and web server yourself.
-              </p>
+              <h2>Run without user services</h2>
+              <p>On WSL without systemd, containers without a user service manager, or other unsupported environments,
+                run the daemon and web server yourself. On modern WSL with systemd enabled, the recommended installer can work.</p>
+              <details class="config-details">
+                <summary>Start the daemon and web server manually</summary>
               <div class="code-card">
                 <div class="copy-row">
                   <strong>Manual processes</strong>
@@ -224,20 +245,19 @@
 <span class="comment"># Terminal 2</span>
 <span class="prompt">$</span> PI_WEB_PORT=8504 pi-web-server</code></pre>
               </div>
-              <p>
-                On modern WSL distributions with systemd enabled, the installer can work. Without systemd, use the
-                manual run approach above.
-              </p>
+              </details>
+              <details class="config-details" id="development-restarts">
+                <summary>Install and restart development services</summary>
               <p>
                 From a PI WEB checkout, <code>pi-web install --dev</code> installs the split development services on supported user-service platforms.
                 <code>pi-web uninstall</code> removes both production and development service files; no uninstall flags are needed.
               </p>
-              <h3 id="development-restarts">Development restarts</h3>
               <p>
                 Run <code>pi-web restart</code> to restart the installed development services. It handles
                 build readiness and restart order for you. Restarting interrupts active sessions, so wait for
                 important work to finish first.
               </p>
+              </details>
             </section>
 
             <section id="remote-access">
@@ -263,7 +283,13 @@
             </section>
 
             <section id="reverse-proxy-prefix">
-              <h2>Reverse proxy root and path-prefix deployments</h2>
+              <h2>Use a reverse proxy</h2>
+              <p>Serve PI WEB at <code>/</code> or a nested path such as <code>/ai/</code> or <code>/test/ai/</code>.
+                The same published client works at each path, with no prefix-specific rebuild or PI WEB configuration.</p>
+              <p><strong>Security:</strong> your proxy must provide TLS, authenticate HTTP and WebSocket traffic,
+                reject unknown public hosts, and restrict direct backend access. Host/Origin validation is not authentication.</p>
+              <details class="config-details">
+                <summary>Set allowed hostnames and restart web services</summary>
               <div class="callout">
                 Choose <strong>Allowed hostnames</strong> in General settings to apply one hostname policy in production
                 and development. For example, save
@@ -277,6 +303,9 @@
                 restart is needed. See <a href="config#browser-request-security">host and Origin validation</a>
                 for matching rules, environment overrides, migration, and running-policy status.
               </div>
+              </details>
+              <details class="config-details">
+                <summary>Configure root or nested paths with Nginx</summary>
               <p>
                 For both root and nested deployments, the proxy owns TLS and must authenticate HTTP and WebSocket
                 traffic, reject unrecognized public hosts, and restrict direct backend access. Configure a rejecting
@@ -284,11 +313,6 @@
                 <code>Host</code>, including nonstandard ports, and browser <code>Origin</code> unchanged. In Nginx, use <code>$http_host</code>,
                 not <code>$host</code>, which loses the port. PI WEB does not trust <code>Forwarded</code> or
                 <code>X-Forwarded-*</code> for these checks. Host/Origin validation is not authentication.
-              </p>
-              <p>
-                The published PI WEB client is deployment-independent. The same package works at the origin root
-                (<code>/</code>) or at canonical nested prefixes such as <code>/ai/</code> and <code>/test/ai/</code>;
-                no prefix-specific rebuild or PI WEB configuration is needed.
               </p>
               <p>
                 For a root deployment, proxy <code>/</code> directly to <code>http://127.0.0.1:8504</code> without
@@ -354,10 +378,11 @@ server {
                 Open the trailing-slash URL, such as <code>https://pi.example.com/ai/</code>. The UI, plugins, and
                 installed PWA all use that prefix.
               </p>
+              </details>
             </section>
 
             <section id="federated-machines">
-              <h2>Federated machines</h2>
+              <h2>Connect more machines</h2>
               <p>
                 To use one PI WEB instance as a gateway to others, install and run PI WEB on each target machine first.
                 Make each target reachable from the gateway through a trusted path, then open the gateway and use
@@ -376,7 +401,9 @@ server {
             <section id="manage-services">
               <h2>Manage services</h2>
               <p>In PI WEB, <strong>Restart…</strong> opens a confirmation before running the displayed restart command in the gateway's maintenance terminal, like Updates. Choose web, the session daemon, or both; daemon restarts interrupt agent work and terminals. See <a href="config#restart-services">restarting from PI WEB</a>.</p>
-              <p><code>pi-web version</code> compares the installed package version with the versions reported by the running Web/UI and session daemon services.</p>
+              <details class="config-details">
+                <summary>Check status, read logs, and restart from the CLI</summary>
+              <p><code>pi-web version</code> compares the installed package version with the versions reported by the running Web/UI and session daemon services. <code>pi-web restart</code> interrupts active sessions and terminals.</p>
               <div class="code-card">
                 <div class="copy-row">
                   <strong>Useful commands</strong>
@@ -391,20 +418,30 @@ server {
 <span class="comment"># From a checkout, install the split development services:</span>
 <span class="prompt">$</span> pi-web install --dev</code></pre>
               </div>
+              </details>
             </section>
 
             <section id="updates">
               <h2>Update PI WEB</h2>
+              <p>Use the <strong>Updates</strong> panel or run <code>pi-web update</code> for a supported installation.
+                The command explains the update and asks for confirmation.</p>
+              <p><strong>Restart warning:</strong> restarting the session daemon interrupts active sessions and terminals.
+                Use <code>--yes</code> only when you explicitly accept that interruption, including in non-interactive scripts.</p>
+              <details class="config-details">
+                <summary>Version checks, update progress, and platform requirements</summary>
               <p>Run <code>pi-web version --check</code> to compare installed and running versions and check the latest available npm release. Ordinary <code>pi-web version</code> and <code>pi-web --version</code> do not check for new releases.</p>
-              <p>Run <code>pi-web update</code> to update a supported installation. The Updates panel runs the same command on the selected machine from <code>$PI_WEB_DATA_DIR/maintenance</code> (default <code>~/.pi-web/maintenance</code>), independently of the selected workspace. Output opens in the Terminal tab; no project or workspace selection is required. Maintenance terminals appear alongside workspace terminals on the same machine. They start from actions such as Update, not from New terminal; completed runs can still be continued interactively.</p>
+              <p>The Updates panel runs <code>pi-web update</code> on the selected machine from <code>$PI_WEB_DATA_DIR/maintenance</code> (default <code>~/.pi-web/maintenance</code>), independently of the selected workspace. Output opens in the Terminal tab; no project or workspace selection is required. Maintenance terminals appear alongside workspace terminals on the same machine. They start from actions such as Update, not from New terminal; completed runs can still be continued interactively.</p>
               <p>Global npm installations check the latest release first. If that version is already installed, the command exits without reinstalling packages or restarting services. Use <code>pi-web update --force</code> to reinstall it intentionally; <code>--force</code> does not bypass confirmation.</p>
-              <p>The command explains the update and asks for confirmation. Restarting the session daemon interrupts active sessions and terminals. Use <code>--yes</code> only when you explicitly accept that interruption, including in non-interactive scripts.</p>
               <p>Docker, global npm, user-scope Pi-managed installations, and Git checkouts use their respective update tools. Native updates require installed PI WEB services. A checkout update only fast-forwards a clean branch with an upstream, then installs dependencies and builds in that checkout regardless of where you run the command. Dirty, detached, or non-fast-forward checkouts stop before installation and restart; a failed dependency install or build also prevents restart.</p>
               <p>Inside PI WEB, Linux native updates require a working systemd user manager. The restart runs independently of the terminal; the command prints a journal command for checking its outcome. On macOS, native updates use a detached launchd handoff so the initiating terminal can finish safely. Docker uses its existing independent update runner.</p>
+              </details>
             </section>
 
             <section id="configure">
-              <h2>Configure</h2>
+              <h2>Configure PI WEB</h2>
+              <p>Use Settings to choose network access, agent tools, packages, plugins, and shortcuts.</p>
+              <details class="config-details">
+                <summary>Edit the config file or choose a custom path</summary>
               <p>
                 The installer writes a config file to <code>~/.config/pi-web/config.json</code>, or to
                 <code>$XDG_CONFIG_HOME/pi-web/config.json</code> when <code>XDG_CONFIG_HOME</code> is set. You can choose a
@@ -426,6 +463,9 @@ server {
   "subsessions": true
 }</code></pre>
               </div>
+              </details>
+              <details class="config-details">
+                <summary>Find settings and apply plugin changes</summary>
               <p>
                 Use <strong>Settings → General</strong> for bind address, port, allowed hostnames, and external filesystem roots; <strong>Settings → Session daemon</strong>
                 for agent-spawn tools; <strong>Settings → Pi packages</strong> for Pi package install/remove/update;
@@ -435,6 +475,7 @@ server {
                 <a href="plugins#install-and-manage">installing and managing plugins</a> and
                 <a href="plugins#trust-and-recovery">plugin recovery</a>.
               </p>
+              </details>
               <div class="callout">
                 Need the full schema, restart rules, project-local <code>.pi-web/config.json</code>, path access details, and
                 environment variable reference? Read the <a href="config">configuration reference</a>.
@@ -450,7 +491,7 @@ server {
               <h2>Uninstall</h2>
               <p>
                 <code>pi-web uninstall</code> stops, disables, and removes PI WEB's production and development service files.
-                It does not remove the npm package, config file, or data directory.
+                Stopping the services interrupts active sessions and terminals. It does not remove the npm package, config file, or data directory.
               </p>
               <div class="code-card">
                 <div class="copy-row">
@@ -460,7 +501,9 @@ server {
                 <pre id="uninstall-commands"><code><span class="prompt">$</span> pi-web uninstall
 <span class="prompt">$</span> npm uninstall -g @jmfederico/pi-web</code></pre>
               </div>
-              <p>Optional cleanup, if you also want to delete PI WEB config and state:</p>
+              <details class="config-details">
+                <summary>Optional: permanently delete config and state</summary>
+              <p>Only run this cleanup if you also want to delete PI WEB config and state. Check the paths before deleting.</p>
               <div class="code-card">
                 <div class="copy-row">
                   <strong>Delete config and data</strong>
@@ -479,6 +522,7 @@ server {
                 If you installed with <code>pi-web install --config /custom/path.json</code>, delete that custom file instead
                 of the default config path.
               </p>
+              </details>
             </section>
           </div>
         </div>
