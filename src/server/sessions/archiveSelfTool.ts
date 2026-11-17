@@ -10,7 +10,7 @@ export function createArchiveSelfToolDefinition(check?: CheckSelfArchive) {
     name: "archive_self",
     exposure: "model-only",
     label: "Archive this session",
-    description: "Request archival of this session and its tracked subsessions, making them unavailable for new work while preserving their transcripts. Use only for an explicit, unequivocal user request to archive this session. Requires idle descendants; reports blocking sessions otherwise. Independent sessions and scheduled tasks stay unchanged.",
+    description: "Request archival of this session and its tracked subsessions, making them unavailable for new work while preserving their transcripts. Use only for an explicit, unequivocal user request to archive this session. Requires idle descendants; reports blocking sessions otherwise. Independent sessions stay unchanged.",
     promptSnippet: "archive_self: request archival of this session and its tracked subsessions, making them unavailable for new work",
     promptGuidelines: [
       "Use archive_self only for an explicit, unequivocal user request to archive this session.",
