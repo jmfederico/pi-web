@@ -57,7 +57,10 @@ class CommandHelperClient {
   private nextId = 0;
   private readonly pending = new Map<number, PendingCommand>();
 
-  constructor(private readonly startHelper: () => ChildProcess) {}
+  constructor(private readonly startHelper: () => ChildProcess) {
+    // Fork while the daemon is still small; a helper that exits later is replaced on demand.
+    this.updateRef(this.connectedHelper());
+  }
 
   /** Returns a function that terminates the command's process group. */
   start(command: HelperCommand, settle: (outcome: CommandOutcome) => void): () => void {
