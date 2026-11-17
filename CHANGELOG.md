@@ -1,5 +1,23 @@
 # @jmfederico/pi-web
 
+## 1.202611.4
+
+### Patch Changes
+
+- d9f8ee0: Reduce slowdowns from long running chats by reusing usage statistics instead of recalculating them on every streamed update. Running state, queues, and questions still update promptly; token totals, cost, and context usage refresh on the next two-second heartbeat when their inputs change.
+- 7a8610d: Strip terminal colour and formatting codes from tool results and errors in the conversation view.
+- 6f219d1: Require clear archival wording in the agent's self-archival instructions. Archive tracked subsessions together with their parent, preserving transcripts and reporting busy descendants instead of stopping their work. Keep independent sessions and forks unchanged, and preserve new transcript content when retrying a failed archive batch. Reject conflicting archive destinations without overwriting transcripts or deleting active files.
+- 8716565: Refresh the bundled PI WEB preview banner with the current logo, colors, and uppercase name.
+- b97c0fa: Fix large photo attachments failing with “Maximum call stack size exceeded” during image validation.
+- 3dfdbb6: Make Restart target the selected machine and share restart handling across the action menu, Updates, and Settings. Updates and Settings now offer direct, service-specific restart buttons with machine and interruption warnings; the generic Restart action keeps its confirmation dialog. Wait for the target machine's Terminal plugin before launching, and keep the gateway web restart shortcut available across Settings visits because active host and port settings cannot be confirmed. Show pending feedback in Updates only while preparing and launching the terminal command, not while services restart. Add a machine-scoped restart capability for browser v5 plugins with explicit cancelled or launched outcomes.
+- 168f8be: Let plugins interrupt current session work or close its runtime to discard an unused, memory-only session. Closing preserves any saved conversation. Server plugins can require session-lifecycle v2; browser plugins can use the optional sessions.abort and sessions.close helpers. Existing lifecycle and catalog APIs remain supported. Neither operation persistently pauses sessions or stops descendants.
+- 1e4427f: Add an optional Private input package for saving a user-entered secret to a new file without including the value in the conversation. Include its installation, recovery, and privacy guide in the published package. Confirm outcome notifications from session history so a failed delivery can be retried without saving the secret again.
+- 58be8e7: Keep private-input forms outside collapsed activity with a reusable standalone placement option for plugin tool renderers. Add native password and multiline entry modes with Show/Hide controls, warn before visible multiline entry on browsers without masking, and prevent format switches from discarding line breaks. Simplify capture to the request, destination, secret field and Save/Cancel actions, with optional multiline entry and recovery controls only when needed. Saving confirms the displayed destination without a separate checkbox; existing files are never replaced. Keep secret fields at least 16px to avoid mobile focus zoom.
+- a37be0e: Reject dangling destination symlinks when saving private input on Windows instead of creating their targets. Windows capture now requires a filesystem that supports hard links; existing files and symlinks remain untouched.
+- b1c46c0: Automatically dismiss settled extension dialog cards after a ten-second countdown. Choosing Keep visible or revealing an answer cancels dismissal so the card stays available while reading.
+- 3149747: Let transcript renderers use their own paired plugin backend on the conversation's machine, with requests and channels cancelled when the rendered view is retired.
+- 7b3b571: Keep working indicators visible inside intervention circles on machines, projects, and workspaces, including when unread activity is also present.
+
 ## 1.202611.3
 
 ### Patch Changes
