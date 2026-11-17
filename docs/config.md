@@ -596,11 +596,11 @@ In **Settings → Session daemon**, these keys are saved on the selected machine
 
 #### Self-archival
 
-Agents can call `archive_self` with no arguments to end their run and archive their own session. The transcript is preserved and can be restored through the normal archive controls. Other sessions, descendants, and scheduled task definitions are unchanged. The tool is available independently of spawning, messaging, and question-form settings.
+Agents are instructed to use `archive_self` only for an explicit, unequivocal request to archive this session, such as “archive yourself” or “archive this session.” The tool takes no arguments and ends the run, requesting archival of the session and its tracked subsessions recursively. Archival makes these sessions unavailable for new work while preserving their transcripts. They remain restorable through normal archive controls. Independent sessions, forks, and scheduled task definitions stay unchanged. The tool is available independently of spawning, messaging, and question-form settings.
 
-Archival policy belongs in your instructions. The tool does not check task outcomes or decide whether a result needs your review. Agents should finish reports and any final summary before calling it, alone and last.
+Every tracked descendant must be idle. The tool reports blocking session IDs so the agent can finish or deliberately stop that work before retrying. PI WEB checks again after the caller settles; it cancels archival if any session has started work in the meantime. It does not wait in the background for children to finish.
 
-The tool acknowledges a request, not completed archival. PI WEB waits for the saved tool result and an idle session before archiving. New conversation work, queued work, interruption, or a branch change cancels the pending request; it is not replayed when a session reopens. Failures appear in session notifications and daemon logs rather than triggering an automatic retry. Restart the session daemon after upgrading to activate the tool.
+Outcome and review conditions come from your instructions. Called alone, a successful `archive_self` call ends the current run immediately. The result confirms an archival request; archival occurs after the run settles. New conversation work, queued work, interruption, or a branch change cancels the request; reopening a session does not replay it. Failures appear in session notifications and daemon logs without an automatic retry. After a persistence failure, check the archive before retrying because some sessions may already be archived. Restart the session daemon after upgrading to activate the changes. Restarting interrupts active sessions and terminals; finish important work first and restart from outside its hosted sessions.
 
 #### Human intervention
 
