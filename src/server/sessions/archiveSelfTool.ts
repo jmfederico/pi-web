@@ -10,11 +10,11 @@ export function createArchiveSelfToolDefinition(check?: CheckSelfArchive) {
     name: "archive_self",
     exposure: "model-only",
     label: "Archive this session",
-    description: "End this run and request archival of this session and its tracked subsessions, preserving their transcripts. Requires idle descendants; reports blocking sessions otherwise. Independent sessions and scheduled tasks stay unchanged. New conversation work cancels the request.",
-    promptSnippet: "archive_self: end the run and archive this session and its tracked subsessions",
+    description: "End this run immediately and request archival of this session and its tracked subsessions, preserving their transcripts. Requires idle descendants; reports blocking sessions otherwise. Independent sessions and scheduled tasks stay unchanged. New conversation work cancels the request.",
+    promptSnippet: "archive_self: immediately end execution and request archival of this session and its tracked subsessions",
     promptGuidelines: [
       "Use archive_self only when the user clearly requests archiving this session, such as ‘archive yourself,’ ‘archive this session,’ or equivalent wording that explicitly conveys archival.",
-      "Finish any outcome reports and final summary first, then call archive_self alone and last. It ends the run; the result acknowledges the request, not completed archival.",
+      "A successful archive_self call ends your run immediately. Complete all required work, handoffs, reports, and the final summary first; call archive_self alone as your final action. The result acknowledges the request, not completed archival.",
     ],
     parameters: Parameters,
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
