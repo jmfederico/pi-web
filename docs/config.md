@@ -166,7 +166,9 @@ Use `PATCH /api/config` for explicit updates, or `PATCH /api/machines/<machineId
 
 ### Restarting from PI WEB
 
-Open **Restart…** from the actions menu, choose **Web service**, **Session daemon**, or **Both services**, and select **Run in terminal**. This opens the displayed restart command in the gateway's maintenance terminal, like the Updates panel. Confirmation switches to the gateway if a remote machine is selected. A missing targeted command disables that choice rather than restarting additional services.
+Open **Restart…** from the actions menu, choose **Web service**, **Session daemon**, or **Both services**, and select **Run in terminal**. The dialog names the selected machine and opens its displayed command in that machine's maintenance terminal. A missing targeted command disables that choice rather than restarting additional services.
+
+**Updates** and **Settings** offer direct restart buttons without another confirmation dialog. Read the machine, service, and interruption warning before clicking. Updates targets its selected machine. Gateway network/hostname settings target the gateway's web service; session-daemon and server-plugin settings target the machine selected inside Settings, which can differ from the sidebar. Saving settings alone never starts a restart. All entry points use the same core restart handling and the target machine's installation-specific commands. Updates disables restart buttons while preparing the command and opening its terminal; pending feedback ends at terminal acceptance, not restart completion.
 
 Web-only restart preserves agent sessions. Restarting the daemon interrupts agent work and terminals; the dialog shows a simple activity hint. Check terminal output for errors. The command owns the restart: the dialog does not track completion or retry it. If the daemon restart closes the terminal or web does not return, use your installation's service controls to inspect and recover it. After hostname-policy changes, reconnect using an allowed address and refresh the page.
 

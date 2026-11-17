@@ -39,7 +39,7 @@ describe("recommendedCommand", () => {
       release: { packageName: "@jmfederico/pi-web", updateAvailable: true },
       commands: { update: "pi-web update", restart: "pi-web restart" },
     }));
-    expect(result).toEqual({ label: "Update PI WEB", command: "pi-web update" });
+    expect(result).toEqual({ kind: "update", label: "Update PI WEB", command: "pi-web update" });
   });
 
   it("falls through to restart when an update is available but the update command is empty", () => {
@@ -49,20 +49,24 @@ describe("recommendedCommand", () => {
         web: component({ stale: true }),
         sessiond: component({ component: "sessiond", label: "Session daemon" }),
       },
-      commands: { update: "", restart: "pi-web restart" },
+      commands: { update: "", restartWeb: "pi-web restart-web" },
     }));
-    expect(result).toEqual({ label: "Restart everything", command: "pi-web restart" });
+    expect(result).toEqual({ kind: "restart", services: "web", label: "Restart Web/UI", command: "pi-web restart-web" });
   });
 
-  it("recommends restart when the web component is stale", () => {
+  it.each([
+    [true, false, "web", "pi-web restart-web"],
+    [false, true, "sessiond", "pi-web restart-sessiond"],
+    [true, true, "both", "pi-web restart"],
+  ] as const)("recommends only the stale services (web=%s, sessiond=%s)", (webStale, sessiondStale, services, command) => {
     const result = recommendedCommand(status({
       components: {
-        web: component({ stale: true }),
-        sessiond: component({ component: "sessiond", label: "Session daemon" }),
+        web: component({ stale: webStale }),
+        sessiond: component({ component: "sessiond", stale: sessiondStale }),
       },
-      commands: { restart: "pi-web restart" },
+      commands: { restart: "pi-web restart", restartWeb: "pi-web restart-web", restartSessiond: "pi-web restart-sessiond" },
     }));
-    expect(result).toEqual({ label: "Restart everything", command: "pi-web restart" });
+    expect(result).toMatchObject({ kind: "restart", services, command });
   });
 
   it("does not recommend a restart just because a daemon version check failed", () => {
@@ -76,7 +80,7 @@ describe("recommendedCommand", () => {
     expect(result).toBeUndefined();
   });
 
-  it("recommends restart when the session daemon is stale", () => {
+  it("does not widen a targeted restart when only a combined command is available", () => {
     const result = recommendedCommand(status({
       components: {
         web: component(),
@@ -84,7 +88,7 @@ describe("recommendedCommand", () => {
       },
       commands: { restart: "pi-web restart" },
     }));
-    expect(result).toEqual({ label: "Restart everything", command: "pi-web restart" });
+    expect(result).toBeUndefined();
   });
 
   it("returns nothing when everything is current and available", () => {
@@ -95,14 +99,14 @@ describe("recommendedCommand", () => {
     expect(recommendedCommand(status({
       release: { packageName: "@jmfederico/pi-web", updateAvailable: true },
       commands: { update: "pi-web-docker update", restart: "pi-web-docker restart" },
-    }))).toEqual({ label: "Update PI WEB", command: "pi-web-docker update" });
+    }))).toEqual({ kind: "update", label: "Update PI WEB", command: "pi-web-docker update" });
     expect(recommendedCommand(status({
       components: {
         web: component({ stale: true, installation: { kind: "docker", dockerMode: "dev" } }),
         sessiond: component({ component: "sessiond", label: "Session daemon", installation: { kind: "docker", dockerMode: "dev" } }),
       },
-      commands: { restart: "pi-web-docker --dev restart" },
-    }))).toEqual({ label: "Restart everything", command: "pi-web-docker --dev restart" });
+      commands: { restartWeb: "pi-web-docker --dev restart-web" },
+    }))).toEqual({ kind: "restart", services: "web", label: "Restart Web/UI", command: "pi-web-docker --dev restart-web" });
   });
 
   it("does not fabricate a restart command when one is not configured", () => {
@@ -118,6 +122,12 @@ describe("recommendedCommand", () => {
 });
 
 describe("additionalCommands", () => {
+  it("deduplicates by semantic operation rather than command text", () => {
+    const value = status({ commands: { update: "wrapper", restartWeb: "wrapper", restart: "wrapper", status: "wrapper" } });
+    expect(additionalCommands(value, { kind: "restart", services: "web", label: "Web", command: "wrapper" }).map((entry) => entry.kind === "restart" ? entry.services : entry.kind))
+      .toEqual(["update", "both", "status"]);
+  });
+
   it("drops empty commands and the recommended command, preserving order", () => {
     const value = status({
       commands: {
@@ -128,19 +138,19 @@ describe("additionalCommands", () => {
         status: "pi-web status",
       },
     });
-    const result = additionalCommands(value, { label: "Restart everything", command: "pi-web restart" });
+    const result = additionalCommands(value, { kind: "restart", services: "both", label: "Restart all", command: "pi-web restart" });
     expect(result).toEqual([
-      { label: "Update", command: "pi-web update" },
-      { label: "Restart session daemon", command: "pi-web restart sessiond" },
-      { label: "Status", command: "pi-web status" },
+      { kind: "update", label: "Update", command: "pi-web update" },
+      { kind: "restart", services: "sessiond", label: "Restart session daemon", command: "pi-web restart sessiond" },
+      { kind: "status", label: "Status", command: "pi-web status" },
     ]);
   });
 
   it("keeps all commands when there is no recommended command", () => {
     const value = status({ commands: { update: "pi-web update", status: "pi-web status" } });
     expect(additionalCommands(value, undefined)).toEqual([
-      { label: "Update", command: "pi-web update" },
-      { label: "Status", command: "pi-web status" },
+      { kind: "update", label: "Update", command: "pi-web update" },
+      { kind: "status", label: "Status", command: "pi-web status" },
     ]);
   });
 
@@ -154,11 +164,11 @@ describe("additionalCommands", () => {
         status: "pi-web-docker status",
       },
     }), undefined)).toEqual([
-      { label: "Update", command: "pi-web-docker update" },
-      { label: "Restart all", command: "pi-web-docker restart" },
-      { label: "Restart Web/UI", command: "pi-web-docker restart-web" },
-      { label: "Restart session daemon", command: "pi-web-docker restart-sessiond" },
-      { label: "Status", command: "pi-web-docker status" },
+      { kind: "update", label: "Update", command: "pi-web-docker update" },
+      { kind: "restart", services: "both", label: "Restart all", command: "pi-web-docker restart" },
+      { kind: "restart", services: "web", label: "Restart Web/UI", command: "pi-web-docker restart-web" },
+      { kind: "restart", services: "sessiond", label: "Restart session daemon", command: "pi-web-docker restart-sessiond" },
+      { kind: "status", label: "Status", command: "pi-web-docker status" },
     ]);
 
     expect(additionalCommands(status({
@@ -169,11 +179,11 @@ describe("additionalCommands", () => {
         restartSessiond: "pi-web-docker --dev restart-sessiond",
         status: "pi-web-docker --dev status",
       },
-    }), { label: "Update PI WEB", command: "pi-web-docker --dev update" })).toEqual([
-      { label: "Restart all", command: "pi-web-docker --dev restart" },
-      { label: "Restart Web/UI", command: "pi-web-docker --dev restart-web" },
-      { label: "Restart session daemon", command: "pi-web-docker --dev restart-sessiond" },
-      { label: "Status", command: "pi-web-docker --dev status" },
+    }), { kind: "update", label: "Update PI WEB", command: "pi-web-docker --dev update" })).toEqual([
+      { kind: "restart", services: "both", label: "Restart all", command: "pi-web-docker --dev restart" },
+      { kind: "restart", services: "web", label: "Restart Web/UI", command: "pi-web-docker --dev restart-web" },
+      { kind: "restart", services: "sessiond", label: "Restart session daemon", command: "pi-web-docker --dev restart-sessiond" },
+      { kind: "status", label: "Status", command: "pi-web-docker --dev status" },
     ]);
   });
 });

@@ -1,5 +1,5 @@
 import type { TemplateResult } from "lit";
-import type { FileIconThemeContribution, PluginBackend, PluginCatalog, PluginNavigate, PluginProjects, PluginPromptEditor, PluginSelectedSession, PluginSelectionService } from "../../../plugin-api";
+import type { FileIconThemeContribution, MachineLifecycle, PluginBackend, PluginCatalog, PluginNavigate, PluginProjects, PluginPromptEditor, PluginSelectedSession, PluginSelectionService } from "../../../plugin-api";
 import type { AppAction } from "../actions";
 import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeResponse, JsonValue, Machine, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, MaintenanceTerminalCommandRun, TerminalCommandRunHandle, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse, Workspace } from "../api";
 import type { PluginCapability, PluginCapabilityProvision } from "../../../shared/pluginApiTypes";
@@ -240,7 +240,6 @@ export interface MaintenanceTerminal {
 
 export interface PiWebUnstableRuntimeContext {
   openSettings?: (section?: SettingsSection) => void;
-  openRestart?: () => void;
   openMcpAuth?: (mode: "login" | "logout") => void | Promise<void>;
 }
 
@@ -249,6 +248,7 @@ export type { PluginPromptEditor } from "../../../plugin-api";
 export type { PluginNavigate, PluginNavigationPatchDestination, PluginNavigationOptions } from "../../../plugin-api";
 
 export interface PluginRuntimeContext {
+  lifecycle?: MachineLifecycle;
   catalog?: PluginCatalog;
   backend?: PluginBackend;
   navigate: PluginNavigate;
@@ -324,6 +324,7 @@ export interface WorkspacePanelContext extends WorkspaceContext {
 }
 
 export interface ApplicationPanelContext {
+  lifecycle?: MachineLifecycle;
   catalog?: PluginCatalog;
   backend?: PluginBackend;
   machine: PluginMachine;

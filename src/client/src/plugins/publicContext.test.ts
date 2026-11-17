@@ -2,7 +2,7 @@ import { html, svg } from "lit";
 import { expect, it, vi } from "vitest";
 import { initialAppState } from "../appState";
 import { adaptPublicPlugin, publicPluginSession, publicPluginState } from "./publicContext";
-import type { SessionLabelContext, WorkspacePanelContext } from "./types";
+import type { ApplicationPanelContext, SessionLabelContext, WorkspacePanelContext } from "./types";
 
 const session = {
   id: "session", cwd: "/workspace", name: "Conversation", path: "/private/session.jsonl",
@@ -65,6 +65,27 @@ it("preserves lifecycle callback receivers while adapting contributions", async 
   expect(source.started).toBe(true);
   await activation.dispose?.(signal);
   expect(source.started).toBe(false);
+});
+
+it.each([4, 5] as const)("exposes machine lifecycle only to API v5 application callbacks (v%s)", async (apiVersion) => {
+  const render = vi.fn<(context: ApplicationPanelContext) => ReturnType<typeof html>>(() => html`panel`);
+  const plugin = adaptPublicPlugin({ apiVersion, name: "Lifecycle", activate: () => ({ contributions: {
+    applicationPanels: [{ id: "panel", title: "Panel", render }],
+  } }) });
+  const signal = new AbortController().signal;
+  const activation = await plugin.activate({ apiVersion, pluginId: "lifecycle", runtimePluginId: "lifecycle", html, svg, signal, lifetimeSignal: signal });
+  const lifecycle = { requestRestart: vi.fn().mockResolvedValue("launched") };
+  const context: ApplicationPanelContext = {
+    state: initialAppState(), machine: { id: "remote", name: "Remote", kind: "remote" }, lifecycle,
+    navigate: () => Promise.resolve(), host: { requestRender: () => undefined },
+    prompt: { insertText: () => undefined, getText: () => "", getSelection: () => null },
+  };
+  activation.contributions.applicationPanels?.[0]?.render(context);
+  const projected = render.mock.calls[0]?.[0];
+  if (apiVersion === 5) expect(projected?.lifecycle).toBe(lifecycle);
+  else expect(projected).not.toHaveProperty("lifecycle");
+  expect(context.lifecycle).toBe(lifecycle);
+  expect(lifecycle.requestRestart).not.toHaveBeenCalled();
 });
 
 it.each([4, 5] as const)("projects state for API v%s external workspace callbacks without changing the host context", async (apiVersion) => {

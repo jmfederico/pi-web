@@ -43,14 +43,16 @@ export function publicPluginState(state: AppState): PluginRuntimeState {
   };
 }
 
-function publicContext<Context extends { state: AppState }>(context: Context): Context {
-  // The loader represents opaque external callbacks with the internal contribution
-  // types. Only those callbacks receive this narrowed, public state at runtime.
-  return { ...context, state: publicPluginState(context.state) };
-}
-
 /** Adapt external callbacks at the host boundary while core plugins retain internal state. */
 export function adaptPublicPlugin(plugin: PiWebPlugin): PiWebPlugin {
+  function publicContext<Context extends { state: AppState }>(context: Context): Context {
+    // The loader represents opaque external callbacks with internal types. Keep
+    // the new lifecycle capability out of the frozen v4 callback contract.
+    const projected = { ...context, state: publicPluginState(context.state) };
+    if (plugin.apiVersion === 4) Reflect.deleteProperty(projected, "lifecycle");
+    return projected;
+  }
+
   return {
     ...plugin,
     async activate(context) {

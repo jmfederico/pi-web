@@ -112,7 +112,8 @@ export function createCoreActions(): PluginAction[] {
       get title() { return restartMessages.t("action"); },
       get description() { return restartMessages.t("actionDescription"); },
       get group() { return m.t("groupGeneral"); },
-      run: (context) => { context.piWebUnstable?.openRestart?.(); },
+      enabled: (context) => context.lifecycle !== undefined,
+      run: async (context) => { await context.lifecycle?.requestRestart(); },
     },
     {
       id: "app.reload-page",

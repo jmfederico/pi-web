@@ -45,6 +45,7 @@ export class SettingsGeneralPanel extends LitElement {
   @property() error = "";
   @property() machineError = "";
   @property() savedMessage = "";
+  @property({ attribute: false }) restartAction: TemplateResult | undefined;
   @property() targetLabel = "";
   @property() targetId = "local";
   @property({ attribute: false }) onReload?: () => void | Promise<void>;
@@ -219,6 +220,7 @@ export class SettingsGeneralPanel extends LitElement {
               <button class="primary ui-button ui-button--action ui-button--primary" ?disabled=${this.loading || this.saving}>${this.saving ? messages.t("saving") : messages.t("saveGateway")}</button>
             </footer>
           </form>
+          ${this.restartAction}
         `}
       </section>
     `;
