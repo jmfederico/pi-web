@@ -1094,7 +1094,7 @@ A few design boundaries matter before implementation:
 
 Plugins can manage a saved session by its full `{ projectId, workspaceId, sessionId }` identity, without selecting it in the browser or opening its runtime. The host resolves the workspace; plugins do not supply session file paths.
 
-Browser v5 invocation contexts expose optional `context.sessions`, bound to that context's machine. Check for its presence on older hosts. Server plugins declare `PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY` from `@jmfederico/pi-web/server-plugin-api` in `requires`, then resolve it in `start({ capabilities })`. The capability is local to that daemon and becomes available after workspace providers have settled; workspace providers must not depend on it.
+Browser v5 invocation contexts expose optional `context.sessions`, bound to that context's machine. Check for its presence on older hosts. Server plugins declare `PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY` from `@jmfederico/pi-web/server-plugin-api` in `requires`, then resolve it in `start({ capabilities })`. Plugins that need runtime control instead declare and resolve `PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY`: v2 includes all v1 methods plus `abort` and `close`. Both exact versions remain available. The capability is local to that daemon and becomes available after workspace providers have settled; workspace providers must not depend on it.
 
 | Method | Effect |
 | --- | --- |
@@ -1104,6 +1104,8 @@ Browser v5 invocation contexts expose optional `context.sessions`, bound to that
 | `archive(target)` | Archive that session, without implicitly archiving descendants. |
 | `restore(target)` | Restore an archived session without starting its runtime. |
 | `delete(target)` | Permanently delete an already-archived session. |
+| `abort(target)` | Interrupt current work and clear queued prompts, leaving the runtime open. Server capability v2; optional on the browser helper. |
+| `close(target)` | Stop work and unload the runtime, preserving any saved conversation. Server capability v2; optional on the browser helper. |
 
 ```ts
 // In a browser plugin's event handler, using IDs returned by context.catalog:
@@ -1117,6 +1119,34 @@ const state = await sessions.get(target);
 **Pins protect cleanup, not explicit plugin commands.** A plugin can explicitly archive a pinned session or delete it once archived; it does not need to unpin first. Native busy-session and archived-only deletion safeguards still apply. Plugins are trusted code and must decide when to request confirmation for destructive actions. Cleanup previews remain estimates: cleanup rechecks eligibility and pins when it runs, rather than freezing a session list.
 
 Calls accept an optional `{ signal }`. Cancellation or plugin disposal prevents new work; it does not undo a mutation already admitted by the host. Call mutations from event handlers or background work, not render or availability callbacks. Errors are reported to the caller; do not automatically retry a destructive operation after an ambiguous transport failure without checking the current state.
+
+### Interrupting current work
+
+Use the existing `catalog.sessions.list({ projectId, workspaceId })` to discover sessions and their `runtime` status (`not-hosted`, `idle`, or `busy`). Pass a selected session's full identity to `abort`; no separate listing or browser selection is needed.
+
+```ts
+// In a browser plugin's event handler:
+const sessions = context.sessions;
+if (sessions?.abort === undefined) throw new Error("This host does not support session interruption");
+await sessions.abort({ projectId, workspaceId, sessionId });
+```
+
+The browser helper keeps its v1 shape and exposes `abort` and `close` as optional methods for compatibility. Check each method before use. Method presence detects browser support, not the target daemon's version: an older remote daemon can reject the request. Report that error rather than falling back to another lifecycle operation.
+
+Aborting preserves the conversation and uses the same interruption behavior as the native Stop action. It targets current work only: it does not open a saved session, cancel pending startup, stop descendants, or persistently pause the session. Valid sessions without a hosted runtime are a no-op; missing or mismatched identities reject. Later messages and child lifecycle notices can start another run, including reopening a parent. A loop over sessions is therefore not a guaranteed bulk pause. Interrupted tools may have partial effects; abort does not roll those effects back.
+
+### Closing a runtime
+
+Use `close(target)` to discard a newly created, unused session that exists only in memory. It stops current work, clears queued prompts, and disposes the runtime; a hosted-only session then disappears from the catalog. If a transcript was already persisted, the saved conversation remains discoverable and can be reopened. Closing is therefore not a substitute for archiving or permanently deleting saved sessions.
+
+```ts
+// Discard a session created for a workflow that was cancelled before use:
+const sessions = context.sessions;
+if (sessions?.close === undefined) throw new Error("This host does not support closing session runtimes");
+await sessions.close({ projectId, workspaceId, sessionId });
+```
+
+Closing one session does not close its descendants or prevent later reopening. A child runtime's teardown suppresses its own new completion notice, but already-pending notices and other messages can still reopen a parent. Calls validate current catalog membership: after discarding a hosted-only session, another call with its now-missing identity rejects. Closing a saved session without a runtime does not open it.
 
 ### Pin-storage upgrade
 

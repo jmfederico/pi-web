@@ -190,6 +190,103 @@ describe("SessionArchiveStore", () => {
     await expect(store.list()).resolves.toEqual([]);
   });
 
+  it.each([false, true])("rejects another session's destination (already committed: %s)", async (committed) => {
+    const root = await mkdtemp(join(tmpdir(), "pi-web-archive-collision-"));
+    tempRoots.push(root);
+    const store = new SessionArchiveStore(join(root, "index.json"), join(root, "archive"));
+    const inputs = ["a", "b"].map((id) => archiveInput(id, join(root, id, "session.jsonl")));
+    for (const input of inputs) {
+      await mkdir(join(root, input.sessionId));
+      await writeFile(input.path, transcript(input.sessionId, "original"));
+    }
+    const [a, b] = inputs;
+    if (a === undefined || b === undefined) throw new Error("Expected two sessions");
+    if (committed) await store.archive(a);
+    const before = await store.list();
+
+    const attempt = committed ? store.archive(b) : store.archiveMany(inputs);
+    await expect(attempt).rejects.toThrow(/belongs to session a/);
+
+    await expect(store.list()).resolves.toEqual(before);
+    await expect(readFile(join(root, "archive", "session.jsonl"), "utf8")).resolves.toBe(transcript("a", "original"));
+    await expect(readFile(b.path, "utf8")).resolves.toBe(transcript("b", "original"));
+    if (!committed) await expect(readFile(a.path, "utf8")).resolves.toBe(transcript("a", "original"));
+  });
+
+  it.each([
+    { name: "unindexed different ID", committed: false, archived: transcript("other", "original") },
+    { name: "unverifiable destination", committed: false, archived: "not a session\n" },
+    { name: "unindexed divergent same ID", committed: false, archived: transcript("a", "different work") },
+    { name: "committed older same ID", committed: true, archived: transcript("a", "original") },
+  ])("preserves both files on a $name conflict", async ({ committed, archived }) => {
+    const root = await mkdtemp(join(tmpdir(), "pi-web-archive-content-conflict-"));
+    tempRoots.push(root);
+    const archiveDir = join(root, "archive");
+    const destination = join(archiveDir, "a.jsonl");
+    const store = new SessionArchiveStore(join(root, "index.json"), archiveDir);
+    const input = archiveInput("a", join(root, "a.jsonl"));
+    if (committed) {
+      await writeFile(input.path, archived);
+      await store.archive(input);
+    } else {
+      await mkdir(archiveDir);
+      await writeFile(destination, archived);
+    }
+    const active = transcript("a", "original", "new work");
+    await writeFile(input.path, active);
+    const before = await store.list();
+
+    const attempt = store.archive(input);
+    await expect(attempt).rejects.toThrow(input.path);
+    await expect(attempt).rejects.toThrow(destination);
+    await expect(attempt).rejects.toThrow(/conflicts/);
+    await expect(readFile(input.path, "utf8")).resolves.toBe(active);
+    await expect(readFile(destination, "utf8")).resolves.toBe(archived);
+    await expect(store.list()).resolves.toEqual(before);
+  });
+
+  it("finishes a committed retry only when the transcripts match", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-web-archive-committed-retry-"));
+    tempRoots.push(root);
+    const store = new SessionArchiveStore(join(root, "index.json"), join(root, "archive"));
+    const input = archiveInput("a", join(root, "a.jsonl"));
+    const content = transcript("a", "original");
+    await writeFile(input.path, content);
+    const record = await store.archive(input);
+    // Model a committed index whose active-file cleanup did not finish.
+    await writeFile(input.path, content);
+
+    await expect(store.archive(input)).resolves.toEqual(record);
+    expect(await exists(input.path)).toBe(false);
+    await expect(readFile(join(root, "archive", "a.jsonl"), "utf8")).resolves.toBe(content);
+    await expect(store.list()).resolves.toEqual([record]);
+  });
+
+  it("refreshes uncommitted copies on retry after a batch fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-web-archive-retry-"));
+    tempRoots.push(root);
+    const store = new SessionArchiveStore(join(root, "index.json"), join(root, "archive"));
+    const inputs = ["a", "b"].map((sessionId) => ({
+      sessionId, cwd: root, path: join(root, `${sessionId}.jsonl`),
+      created: "2026-01-01T00:00:00Z", modified: "2026-01-01T00:01:00Z", messageCount: 1, firstMessage: "hello",
+    }));
+    const initial = transcript("a", "before failure");
+    const updated = transcript("a", "before failure", "new work after failure");
+    await writeFile(join(root, "a.jsonl"), initial);
+    // A is copied before the missing B fails the batch; neither is committed.
+    await expect(store.archiveMany(inputs)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(store.list()).resolves.toEqual([]);
+    await expect(readFile(join(root, "a.jsonl"), "utf8")).resolves.toBe(initial);
+    await writeFile(join(root, "a.jsonl"), updated);
+    await writeFile(join(root, "b.jsonl"), "b\n");
+    const archived = await store.archiveMany(inputs);
+    const first = archived.find((record) => record.sessionId === "a");
+    if (first?.archivePath === undefined) throw new Error("Expected archived A");
+    await expect(readFile(first.archivePath, "utf8")).resolves.toBe(updated);
+    await store.restore("a");
+    await expect(readFile(join(root, "a.jsonl"), "utf8")).resolves.toBe(updated);
+  });
+
   it("requires exact persisted session IDs and canonicalizes stored cwd", async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-web-archive-prefix-"));
     tempRoots.push(root);
@@ -241,6 +338,20 @@ describe("SessionArchiveStore", () => {
     await expect(store.isArchived("missing")).resolves.toBe(false);
   });
 });
+
+function archiveInput(sessionId: string, path: string) {
+  return {
+    sessionId, path, cwd: "/workspace", created: "2026-01-01T00:00:00Z",
+    modified: "2026-01-01T00:01:00Z", messageCount: 1, firstMessage: "hello",
+  };
+}
+
+function transcript(id: string, ...messages: string[]): string {
+  return `${[
+    { type: "session", version: 3, id, timestamp: "2026-01-01T00:00:00Z", cwd: "/workspace" },
+    ...messages.map((text) => ({ type: "message", message: { role: "user", content: text } })),
+  ].map((entry) => JSON.stringify(entry)).join("\n")}\n`;
+}
 
 async function exists(path: string): Promise<boolean> {
   try {

@@ -1,6 +1,6 @@
 import type { PluginSessionLifecycle } from "../../../plugin-api";
 import type { PluginSessionSelection } from "../../../shared/pluginCatalogTypes";
-import { PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY, type PluginSessionLifecycleOptions } from "../../../shared/pluginSessionLifecycleTypes";
+import { PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY, PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY, type PluginSessionLifecycleOptions } from "../../../shared/pluginSessionLifecycleTypes";
 import { request } from "../api/http";
 
 export type PluginSessionLifecycleRequester = (path: string, options?: RequestInit) => Promise<unknown>;
@@ -23,14 +23,18 @@ export function createPluginSessionLifecycle(
     signal?.throwIfAborted();
     return result;
   };
-  const lifecycle = PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY.parse({
-    version: 1,
+  const lifecycle = PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY.parse({
+    version: 2,
     get: (selection: PluginSessionSelection, options?: PluginSessionLifecycleOptions) => invoke(sessionPath(selection), "GET", options),
     pin: (selection: PluginSessionSelection, options?: PluginSessionLifecycleOptions) => invoke(`${sessionPath(selection)}/pin`, "POST", options),
     unpin: (selection: PluginSessionSelection, options?: PluginSessionLifecycleOptions) => invoke(`${sessionPath(selection)}/unpin`, "POST", options),
     archive: (selection: PluginSessionSelection, options?: PluginSessionLifecycleOptions) => invoke(`${sessionPath(selection)}/archive`, "POST", options),
     restore: (selection: PluginSessionSelection, options?: PluginSessionLifecycleOptions) => invoke(`${sessionPath(selection)}/restore`, "POST", options),
     delete: (selection: PluginSessionSelection, options?: PluginSessionLifecycleOptions) => invoke(sessionPath(selection), "DELETE", options),
+    abort: (selection: PluginSessionSelection, options?: PluginSessionLifecycleOptions) => invoke(`${sessionPath(selection)}/abort`, "POST", options),
+    close: (selection: PluginSessionSelection, options?: PluginSessionLifecycleOptions) => invoke(`${sessionPath(selection)}/close`, "POST", options),
   });
-  return Object.freeze({ ...lifecycle, machineId });
+  // Keep the browser's v1 structural contract; runtime controls are additive, detectable methods.
+  const v1 = PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY.parse({ ...lifecycle, version: 1 });
+  return Object.freeze({ ...v1, abort: lifecycle.abort, close: lifecycle.close, machineId });
 }

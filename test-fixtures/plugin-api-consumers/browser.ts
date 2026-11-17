@@ -111,6 +111,8 @@ export async function manageSavedSession(context: PluginRuntimeContextV5): Promi
   if (sessions === undefined) return; // Hosts predating this optional service.
   const selected = { projectId: "fixture-project", workspaceId: "fixture-workspace", sessionId: "fixture-session" };
   await sessions.get(selected);
+  if (sessions.abort !== undefined) await sessions.abort(selected);
+  if (sessions.close !== undefined) await sessions.close(selected);
   await sessions.pin(selected);
   await sessions.unpin(selected);
   await sessions.archive(selected);

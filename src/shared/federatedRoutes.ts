@@ -61,7 +61,7 @@ export const FEDERATED_HTTP_ROUTES = [
   { method: "GET", path: "/plugin-catalog/projects/:projectId/workspaces/:workspaceId/sessions/:sessionId", propagateCancellation: true },
   { method: "GET", path: "/plugin-sessions/projects/:projectId/workspaces/:workspaceId/sessions/:sessionId", propagateCancellation: true },
   { method: "DELETE", path: "/plugin-sessions/projects/:projectId/workspaces/:workspaceId/sessions/:sessionId", propagateCancellation: true },
-  ...["pin", "unpin", "archive", "restore"].map((action): FederatedHttpRouteSpec => ({
+  ...["pin", "unpin", "archive", "restore", "abort", "close"].map((action): FederatedHttpRouteSpec => ({
     method: "POST", path: `/plugin-sessions/projects/:projectId/workspaces/:workspaceId/sessions/:sessionId/${action}`, propagateCancellation: true,
   })),
   { method: "GET", path: "/projects" },

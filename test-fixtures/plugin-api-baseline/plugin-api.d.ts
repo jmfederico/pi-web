@@ -19,8 +19,8 @@ import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeResponse
 export type { FileContentMediaType, FileContentResponse, FileTreeEntry, FileTreeResponse, JsonObject, JsonPrimitive, JsonValue, PluginBackend, PluginBackendScope, PluginPeer, PluginPeerRequestOptions, PluginPeerChannelOptions, PluginPeerChannelClose, PluginPeerChannel, MachineKind, PiWebComponentStatus, PiWebRuntimeIdentity, PiWebDockerMode, PiWebInstallationInfo, PiWebInstallationKind, PiWebReleaseStatus, PiWebServiceComponent, PiWebStatusMessage, PiWebStatusResponse, PiWebStatusSeverity, PiWebVersionResponse, PluginCapability, PluginCapabilityProvision, SessionUiMetadata, AnyTerminalCommandRun, MaintenanceTerminalCommandRun, TerminalCommandRun, TerminalCommandRunHandle, TerminalCommandRunStatus, WorkspaceProviderCapabilities, WorkspaceProviderMetadata, WorkspaceRemovalPresentation, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse, DeleteWorkspaceFileResponse, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, } from "./shared/pluginApiTypes.js";
 export type { PluginCatalogV1, PluginCatalogProject, PluginCatalogWorkspace, PluginSessionSnapshot, PluginWorkspaceSelection, PluginSessionSelection, PluginCatalogReadOptions } from "./shared/pluginCatalogTypes.js";
 import type { PluginCatalogV1 } from "./shared/pluginCatalogTypes.js";
-export type { PluginSessionLifecycleV1, PluginSessionLifecycleState, PluginSessionLifecycleOptions } from "./shared/pluginSessionLifecycleTypes.js";
-import type { PluginSessionLifecycleV1 } from "./shared/pluginSessionLifecycleTypes.js";
+export type { PluginSessionLifecycleV1, PluginSessionLifecycleV2, PluginSessionLifecycleState, PluginSessionLifecycleOptions } from "./shared/pluginSessionLifecycleTypes.js";
+import type { PluginSessionLifecycleV1, PluginSessionLifecycleV2 } from "./shared/pluginSessionLifecycleTypes.js";
 export type PiWebPlugin = LegacyPiWebPlugin | PiWebPluginV5;
 /** Current browser entrypoint. Existing contribution kinds and lifecycle behavior are unchanged. */
 export interface PiWebPluginV5 {
@@ -41,6 +41,14 @@ export interface PluginCatalog extends PluginCatalogV1 {
 }
 export interface PluginSessionLifecycle extends PluginSessionLifecycleV1 {
     readonly machineId: string;
+    /** Interrupt current work without closing the runtime. Omitted by older browser hosts;
+     * an older target daemon may still reject the request. No persistent pause or descendant control.
+     */
+    readonly abort?: PluginSessionLifecycleV2["abort"];
+    /** Stop work and unload the runtime, preserving any saved conversation.
+     * Omitted by older browser hosts; an older target daemon may still reject the request.
+     */
+    readonly close?: PluginSessionLifecycleV2["close"];
 }
 export interface PluginDiscoveryContext {
     readonly catalog: PluginCatalog;
