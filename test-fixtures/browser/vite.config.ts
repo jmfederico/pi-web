@@ -29,6 +29,7 @@ export default defineConfig({
         recovery: fileURLToPath(new URL("recovery.html", import.meta.url)),
         settingsNavigation: fileURLToPath(new URL("settings-navigation.html", import.meta.url)),
         restart: fileURLToPath(new URL("restart.html", import.meta.url)),
+        updates: fileURLToPath(new URL("updates.html", import.meta.url)),
         managedMcp: fileURLToPath(new URL("managed-mcp.html", import.meta.url)),
         filePreviews: fileURLToPath(new URL("file-previews.html", import.meta.url)),
         scheduledTasks: fileURLToPath(new URL("scheduled-tasks.html", import.meta.url)),

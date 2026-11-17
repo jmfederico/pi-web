@@ -48,8 +48,12 @@ export interface PluginDiscoveryContext {
     readonly sessions?: PluginSessionLifecycle;
     readonly backend?: PluginBackend;
 }
-export type PluginRuntimeContextV5 = PluginRuntimeContext & PluginDiscoveryContext;
-export type ApplicationPanelContextV5 = ApplicationPanelContext & PluginDiscoveryContext;
+export type PluginRuntimeContextV5 = PluginRuntimeContext & PluginDiscoveryContext & {
+    readonly lifecycle?: MachineLifecycle;
+};
+export type ApplicationPanelContextV5 = ApplicationPanelContext & PluginDiscoveryContext & {
+    readonly lifecycle?: MachineLifecycle;
+};
 export type WorkspacePanelContextV5 = WorkspacePanelContext & PluginDiscoveryContext;
 export type WorkspaceLabelContextV5 = WorkspaceLabelContext & PluginDiscoveryContext;
 export type SessionLabelContextV5 = SessionLabelContext & PluginDiscoveryContext;
@@ -557,6 +561,31 @@ export interface PluginNavigate {
     (destination: PluginNavigationPatchDestination, options: PluginNavigationOptions & {
         mode: "patch";
     }): Promise<void>;
+}
+export type RestartServices = "web" | "sessiond" | "both";
+/** Terminal acceptance is not service restart completion or health. */
+export type RestartResult = "cancelled" | "launched";
+/** Direct restarts require an explicit service choice. Confirmation is the default. */
+export type RestartRequest = {
+    services?: RestartServices;
+    confirm?: true;
+} | {
+    services: RestartServices;
+    confirm: false;
+};
+/** Host-owned lifecycle operations, bound to this context's machine. */
+export interface MachineLifecycle {
+    /**
+     * Open restart confirmation, or launch directly with confirm: false.
+     * Direct controls must identify the machine/services and warn about interruption.
+     * Returns "cancelled" when confirmation is dismissed, or "launched" when the
+     * terminal accepts the command; neither reports restart completion or health.
+     * Direct launch failures are reported by the host and reject. Confirmation
+     * errors stay in the dialog for retry or cancellation; if the dialog is removed
+     * during a launch, its promise still reports launch acceptance or rejects.
+     * Older hosts may omit this capability.
+     */
+    requestRestart(options?: RestartRequest): Promise<RestartResult>;
 }
 export interface PluginRuntimeContext {
     /** Navigate using host restoration defaults. Route failures appear in the host UI. */

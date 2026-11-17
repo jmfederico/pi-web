@@ -4,6 +4,8 @@ import { customElement, property, state } from "lit/decorators.js";
 import { cache } from "lit/directives/cache.js";
 import { live } from "lit/directives/live.js";
 import type { AppAction } from "../actions";
+import type { RestartServices } from "../../../plugin-api";
+import "./settings/SettingsRestartAction";
 import { loadThemeCatalog, type BrowserThemeCatalog } from "../themeCatalog";
 import { configApi, piPackagesApi, pluginsApi, type Machine, type MachineHealth, type MachineRuntime, type PiPackageMutationResponse, type PiPackageScope, type PiPackagesResponse, type PiWebConfigResponse, type PiWebConfigValues, type PiWebPluginsResponse } from "../api";
 import type { McpAuthContext, McpAuthHandler } from "./settings/SettingsMcpPanel";
@@ -83,6 +85,11 @@ export class SettingsDialog extends LitElement {
   private generalPanel: SettingsGeneralPanel | undefined;
   @property({ attribute: false }) onNavigate?: (section: SettingsSection) => void;
   @property({ attribute: false }) onClose?: () => void;
+  @property({ attribute: false }) onRestart?: (machineId: string, services: RestartServices) => Promise<void>;
+  @state() private restartRequest: { machineId: string; services: RestartServices } | undefined;
+  private get restarting(): boolean { return this.restartRequest !== undefined; }
+  @state() private restartFailure: { machineId: string; services: RestartServices; error: string } | undefined;
+  @state() private gatewayNetworkChanged = false;
   @property({ attribute: false }) onMachineConfigSaved?: (machineId: string) => void;
   @property({ attribute: false }) onGatewayConfigLoaded?: (response: PiWebConfigResponse) => void;
   /** A completed write from a closed dialog requires an authoritative refresh. */
@@ -263,7 +270,7 @@ export class SettingsDialog extends LitElement {
     return html`
       <div class="settings-machine">
         <label for="settings-machine">${settingsDialogMessages.t("configure")}</label>
-        <select class="ui-select" id="settings-machine" aria-describedby=${unavailable ? "settings-machine-help settings-machine-status settings-machine-error" : "settings-machine-help settings-machine-status"} .value=${live(target.id)} ?disabled=${this.saving} @change=${(event: Event) => {
+        <select class="ui-select" id="settings-machine" aria-describedby=${unavailable ? "settings-machine-help settings-machine-status settings-machine-error" : "settings-machine-help settings-machine-status"} .value=${live(target.id)} ?disabled=${this.saving || this.restarting} @change=${(event: Event) => {
           if (event.target instanceof HTMLSelectElement) this.requestMachineSwitch(event.target.value);
         }}>
           ${this.machines.map((candidate) => html`<option value=${candidate.id}>${settingsDialogMessages.t("machineOption", { name: candidate.name, kind: candidate.kind })}</option>`)}
@@ -279,7 +286,7 @@ export class SettingsDialog extends LitElement {
   }
 
   private requestMachineSwitch(machineId: string): void {
-    if (this.saving || !this.machines.some((machine) => machine.id === machineId)) return;
+    if (this.saving || this.restarting || !this.machines.some((machine) => machine.id === machineId)) return;
     if (machineId === this.settingsTarget().id) {
       this.pendingMachineId = undefined;
     } else if (this.generalPanel?.hasUnsavedMachineChanges === true) {
@@ -340,6 +347,7 @@ export class SettingsDialog extends LitElement {
           .saving=${this.saving}
           .error=${this.sessiondError}
           .savedMessage=${this.savedSection === "sessiond" ? this.savedMessage : ""}
+          .restartAction=${this.renderRestartAction(this.settingsTarget(), "sessiond", this.sessiondLoading)}
           .targetLabel=${settingsFeedbackTargetLabel(this.settingsTarget())}
           .onReload=${() => this.reloadSessiondState()}
           .onSave=${(config: PiWebConfigValues, unset?: string[]) => this.saveSessiondConfig(config, unset)}
@@ -388,6 +396,7 @@ export class SettingsDialog extends LitElement {
           .recoveryCommandsSupported=${this.pluginLifecycleSupport().state === "supported"}
           .error=${this.pluginError}
           .savedMessage=${this.savedSection === "plugins" ? this.savedMessage : ""}
+          .restartAction=${this.renderRestartAction(this.settingsTarget(), "sessiond", this.pluginLoading)}
           .targetLabel=${settingsFeedbackTargetLabel(this.settingsTarget())}
           .onReload=${() => this.loadPluginsForTarget()}
           .onTogglePlugin=${(pluginId: string, enabled: boolean) => this.togglePlugin(pluginId, enabled)}
@@ -405,6 +414,7 @@ export class SettingsDialog extends LitElement {
         .error=${this.error}
         .machineError=${this.accessError}
         .savedMessage=${this.savedSection === "general" ? this.savedMessage : ""}
+        .restartAction=${this.gatewayRestartRequired() ? this.renderRestartAction(settingsMachineTarget(this.machines.find((machine) => machine.kind === "local")), "web", this.loading) : undefined}
         .targetLabel=${settingsFeedbackTargetLabel(this.settingsTarget())}
         .targetId=${this.settingsTarget().id}
         .onReload=${() => this.loadConfig()}
@@ -442,6 +452,48 @@ export class SettingsDialog extends LitElement {
         ></settings-file-icon-theme-panel>
       </settings-general-panel>
     `;
+  }
+
+  private gatewayRestartRequired(): boolean {
+    const response = this.configResponse;
+    if (response === undefined) return false;
+    if (this.gatewayNetworkChanged) return true;
+    const desired = response.effectiveConfig.hostAccess ?? null;
+    const active = response.activeHostAccess;
+    // Older gateways cannot confirm that a saved hostname policy is active.
+    if (active === undefined) return desired !== null;
+    if (desired === null || active === null) return desired !== active;
+    return desired.mode !== active.mode || (desired.mode === "restricted" && active.mode === "restricted"
+      && (desired.hosts.length !== active.hosts.length || desired.hosts.some((host, index) => host !== active.hosts[index])));
+  }
+
+  private renderRestartAction(target: SettingsMachineTarget, services: "web" | "sessiond", loading: boolean): TemplateResult | undefined {
+    if (this.onRestart === undefined) return undefined;
+    const failure = this.restartFailure;
+    return html`<settings-restart-action
+      .targetLabel=${settingsFeedbackTargetLabel(target)}
+      .services=${services}
+      .disabled=${loading || this.saving || this.restarting}
+      .pending=${this.restartRequest?.machineId === target.id && this.restartRequest.services === services}
+      .error=${failure?.machineId === target.id && failure.services === services ? failure.error : ""}
+      .onRestart=${() => this.restart(target.id, services)}
+    ></settings-restart-action>`;
+  }
+
+  private async restart(machineId: string, services: RestartServices): Promise<void> {
+    const onRestart = this.onRestart;
+    if (this.restarting || this.saving || onRestart === undefined) return;
+    this.restartRequest = { machineId, services };
+    this.restartFailure = undefined;
+    try {
+      // The parent owns terminal navigation and may close Settings after launch.
+      // Resolving the callback does not prove that services have restarted.
+      await onRestart(machineId, services);
+    } catch (error) {
+      this.restartFailure = { machineId, services, error: errorMessage(error) };
+    } finally {
+      this.restartRequest = undefined;
+    }
   }
 
   private renderNavButton(section: SettingsSection, label: string, detail: string): TemplateResult {
@@ -681,6 +733,11 @@ export class SettingsDialog extends LitElement {
       }
       this.saving = true;
       const response = await configApi.updateConfig(update);
+      // Network startup values are not reported by the API. Retain a reminder
+      // after a saved change; neither refresh nor launch proves activation.
+      if (snapshot !== undefined && (snapshot.effectiveConfig.host !== response.effectiveConfig.host || snapshot.effectiveConfig.port !== response.effectiveConfig.port)) {
+        this.gatewayNetworkChanged = true;
+      }
       this.configResponse = response;
       this.publishGatewayConfig(response);
       this.showSavedMessage(() => section === "shortcuts" ? settingsDialogMessages.t("shortcutsSaved")
