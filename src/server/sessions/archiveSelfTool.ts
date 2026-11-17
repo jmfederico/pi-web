@@ -14,7 +14,7 @@ export function createArchiveSelfToolDefinition(check?: CheckSelfArchive) {
     promptSnippet: "archive_self: immediately end execution and request archival of this session and its tracked subsessions",
     promptGuidelines: [
       "Use archive_self only when the user clearly requests archiving this session, such as ‘archive yourself,’ ‘archive this session,’ or equivalent wording that explicitly conveys archival.",
-      "A successful archive_self call ends your run immediately. Complete all required work, handoffs, reports, and the final summary first; call archive_self alone as your final action. The result acknowledges the request, not completed archival.",
+      "Called alone, a successful archive_self call ends the current run immediately. Further actions require a new run. The result confirms an archival request; archival occurs after the run settles.",
     ],
     parameters: Parameters,
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
