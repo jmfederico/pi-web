@@ -190,6 +190,29 @@ describe("SessionArchiveStore", () => {
     await expect(store.list()).resolves.toEqual([]);
   });
 
+  it("refreshes uncommitted copies on retry after a batch fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-web-archive-retry-"));
+    tempRoots.push(root);
+    const store = new SessionArchiveStore(join(root, "index.json"), join(root, "archive"));
+    const inputs = ["a", "b"].map((sessionId) => ({
+      sessionId, cwd: root, path: join(root, `${sessionId}.jsonl`),
+      created: "2026-01-01T00:00:00Z", modified: "2026-01-01T00:01:00Z", messageCount: 1, firstMessage: "hello",
+    }));
+    await writeFile(join(root, "a.jsonl"), "before failure\n");
+    // A is copied before the missing B fails the batch; neither is committed.
+    await expect(store.archiveMany(inputs)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(store.list()).resolves.toEqual([]);
+    await expect(readFile(join(root, "a.jsonl"), "utf8")).resolves.toBe("before failure\n");
+    await writeFile(join(root, "a.jsonl"), "before failure\nnew work after failure\n");
+    await writeFile(join(root, "b.jsonl"), "b\n");
+    const archived = await store.archiveMany(inputs);
+    const first = archived.find((record) => record.sessionId === "a");
+    if (first?.archivePath === undefined) throw new Error("Expected archived A");
+    await expect(readFile(first.archivePath, "utf8")).resolves.toBe("before failure\nnew work after failure\n");
+    await store.restore("a");
+    await expect(readFile(join(root, "a.jsonl"), "utf8")).resolves.toBe("before failure\nnew work after failure\n");
+  });
+
   it("requires exact persisted session IDs and canonicalizes stored cwd", async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-web-archive-prefix-"));
     tempRoots.push(root);

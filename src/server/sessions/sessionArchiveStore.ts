@@ -83,7 +83,7 @@ export class SessionArchiveStore {
           archivePath,
         });
 
-        await copySessionFileToArchive(session.path, archivePath);
+        await copySessionFileToArchive(session.path, archivePath, existing !== undefined);
 
         if (existingIndex === -1) data.sessions.push(record);
         else data.sessions[existingIndex] = record;
@@ -197,10 +197,12 @@ function archiveRecordFromInput(session: ArchiveSessionInput, archive: { archive
   };
 }
 
-async function copySessionFileToArchive(source: string, archivePath: string): Promise<void> {
+async function copySessionFileToArchive(source: string, archivePath: string, committed: boolean): Promise<void> {
   if (source === archivePath) return;
   await mkdir(dirname(archivePath), { recursive: true });
-  if (await pathExists(archivePath)) return;
+  // A failed batch can leave copies without an index entry. The active file
+  // remains authoritative and may have grown before the user retries.
+  if (committed && await pathExists(archivePath)) return;
   await copyFile(source, archivePath);
 }
 
