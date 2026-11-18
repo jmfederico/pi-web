@@ -234,7 +234,8 @@ async function createSessionDaemonRuntime() {
     catalog: serverPluginCatalog,
     ...(serverPluginRecovery.safeStart === undefined ? {} : { safeStart: serverPluginRecovery.safeStart }),
     logger: app.log,
-    execFile: createServerPluginExecFile({ env: daemonEnvironment }),
+    // Fork the command helper now, while this process is still small.
+    execFile: createServerPluginExecFile({ env: daemonEnvironment, prestartHelper: true }),
     projectSettingsResolver: (pluginId, settings, project, signal) => projectSettings.resolve(pluginId, settings, project, signal),
     workspaceNotificationsFactory: createWorkspaceNotificationCommandFactory({
       env: daemonEnvironment,

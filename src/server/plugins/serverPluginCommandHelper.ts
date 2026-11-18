@@ -39,7 +39,8 @@ export type HelperResponse =
 function serveCommands(): void {
   const children = new Map<number, ChildProcess>();
   const reply = (response: HelperResponse): void => {
-    if (process.connected) process.send?.(response);
+    // The daemon can exit before this process notices; without a callback a failed send is an uncaught error.
+    if (process.connected) process.send?.(response, () => undefined);
   };
   // Once the daemon disconnects, this process exits after its commands and kill timers finish.
   process.on("message", (message: unknown) => {

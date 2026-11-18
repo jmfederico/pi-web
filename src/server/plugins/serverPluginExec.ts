@@ -17,6 +17,8 @@ export interface ServerPluginExecFileOptions {
   env?: NodeJS.ProcessEnv;
   maxTimeoutMs?: number;
   maxOutputBytes?: number;
+  /** Starts the command helper now instead of with the first command. */
+  prestartHelper?: boolean;
 }
 
 /** Creates the argv-only, host-bounded command helper exposed to server plugins. */
@@ -27,7 +29,8 @@ export function createServerPluginExecFile(
   const maxTimeoutMs = positiveInteger(options.maxTimeoutMs, DEFAULT_EXEC_TIMEOUT_MS, "maxTimeoutMs");
   const maxOutputBytes = positiveInteger(options.maxOutputBytes, DEFAULT_OUTPUT_LIMIT_BYTES, "maxOutputBytes");
 
-  const helper = new CommandHelperClient(forkCommandHelper);
+  const helper = new CommandHelperClient();
+  if (options.prestartHelper === true) helper.prestart();
 
   return async (request) => runExecFile(request, { baseEnv, maxTimeoutMs, maxOutputBytes, helper });
 }
@@ -57,12 +60,12 @@ class CommandHelperClient {
   private nextId = 0;
   private readonly pending = new Map<number, PendingCommand>();
 
-  constructor(private readonly startHelper: () => ChildProcess) {
-    // Fork while the daemon is still small; a helper that exits later is replaced on demand.
+  /** Forks the helper before a command needs it. */
+  prestart(): void {
     this.updateRef(this.connectedHelper());
   }
 
-  /** Returns a function that terminates the command's process group. */
+  /** Returns a function that terminates the command's process group. Throws when no helper can be started. */
   start(command: HelperCommand, settle: (outcome: CommandOutcome) => void): () => void {
     const helper = this.connectedHelper();
     const id = ++this.nextId;
@@ -76,7 +79,7 @@ class CommandHelperClient {
 
   private connectedHelper(): ChildProcess {
     if (this.helper?.connected === true) return this.helper;
-    const helper = this.startHelper();
+    const helper = forkCommandHelper();
     helper.on("message", (message: unknown) => {
       if (!isHelperResponse(message)) return;
       const pending = this.pending.get(message.id);
@@ -91,29 +94,34 @@ class CommandHelperClient {
         ? { error: Object.assign(new Error(message.error.message), message.error) }
         : { result: message.result });
     });
-    let lostHelper = false;
-    const lost = (): void => {
-      if (lostHelper) return;
-      lostHelper = true;
+    let cause: Error | undefined;
+    // Every failed send emits an error, so this listener must stay installed.
+    helper.on("error", (error) => {
+      if (cause !== undefined) return;
+      cause = error;
       if (this.helper === helper) this.helper = undefined;
-      helper.kill();
+      helper.kill("SIGKILL");
+    });
+    // Emitted after the helper exits or fails to start. A failed send is reported
+    // earlier, before unread replies that carry the PIDs of running commands.
+    helper.once("close", () => {
+      if (this.helper === helper) this.helper = undefined;
       for (const [id, pending] of this.pending) {
         if (pending.helper !== helper) continue;
         this.pending.delete(id);
         // Nothing else can enforce the command's deadline once its helper is gone.
         if (pending.pid !== undefined) killProcessGroup(pending.pid);
-        pending.settle({ error: new Error("Server plugin command helper exited before the command finished") });
+        pending.settle({
+          error: new Error("Server plugin command helper exited before the command finished", cause === undefined ? {} : { cause }),
+        });
       }
-    };
-    helper.once("exit", lost);
-    // Every failed send emits an error, so this listener must stay installed.
-    helper.on("error", lost);
+    });
     this.helper = helper;
     return helper;
   }
 
   private send(helper: ChildProcess, request: HelperRequest): void {
-    // A helper that has just exited reports through its exit event.
+    // A helper that has just exited reports through its close event.
     if (helper.connected) helper.send(request);
   }
 
@@ -153,6 +161,9 @@ function forkCommandHelper(): ChildProcess {
     // Do not inherit daemon flags such as --inspect.
     execArgv: loader === undefined ? [] : ["--import", loader],
     stdio: ["ignore", "inherit", "inherit", "ipc"],
+    // A signal sent to the daemon's process group must not end the helper, or its commands would be killed.
+    detached: process.platform !== "win32",
+    windowsHide: true,
   });
 }
 
@@ -166,6 +177,17 @@ function runExecFile(
   const timeoutMs = Math.min(request.timeoutMs ?? options.maxTimeoutMs, options.maxTimeoutMs);
 
   return new Promise((resolvePromise, rejectPromise) => {
+    // Runs first, so a helper that cannot be started rejects before there is a deadline to cancel.
+    const terminate = options.helper.start({
+      file: request.file,
+      args: [...(request.args ?? [])],
+      ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
+      env: commandEnvironment(options.baseEnv, request),
+      maxOutputBytes: options.maxOutputBytes,
+    }, (outcome) => {
+      if ("error" in outcome) reject(outcome.error);
+      else resolve(outcome.result);
+    });
     let settled = false;
 
     const timeout = setTimeout(() => {
@@ -198,16 +220,6 @@ function runExecFile(
       abortChild(abortReason(request.signal));
     };
 
-    const terminate = options.helper.start({
-      file: request.file,
-      args: [...(request.args ?? [])],
-      ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
-      env: commandEnvironment(options.baseEnv, request),
-      maxOutputBytes: options.maxOutputBytes,
-    }, (outcome) => {
-      if ("error" in outcome) reject(outcome.error);
-      else resolve(outcome.result);
-    });
     request.signal.addEventListener("abort", onAbort, { once: true });
   });
 }
