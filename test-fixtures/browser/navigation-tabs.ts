@@ -47,10 +47,10 @@ function openNavigation(): void {
   next.preferences = preferences;
   next.onSelect = select;
   next.onClose = () => { next.remove(); };
-  next.onPreferencesChange = (value) => {
+  next.onPreferencesChange = (value, changedField) => {
     preferences = value;
     next.preferences = value;
-    saveNavigationPreferences(value);
+    next.preferencesSaveFailed = !saveNavigationPreferences(value, undefined, [changedField]);
     updateBar();
   };
   dialog = next;

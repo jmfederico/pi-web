@@ -176,9 +176,9 @@ it("moves destinations without navigating or changing pins, and keeps keyboard f
   expect(dialog.preferences).toBe(before);
 });
 
-it.each(["", "a"])("keeps the highlighted destination after resetting the whole order during search %j", async (query) => {
+it.each(["", "a", "chat"])("keeps the highlighted destination after resetting the whole order during search %j", async (query) => {
   const dialog = new NavigationDialog();
-  const defaults = [{ id: "chat", label: "Chat" }, { id: "tools:files", label: "Files" }, { id: "tools:find", label: "Find" }] as const;
+  const defaults = [{ id: "chat", label: "Chat" }, { id: "tools:files", label: "File manager" }, { id: "tools:find", label: "Find" }] as const;
   dialog.preferences = { pinnedIds: ["chat"], mobileCollapsed: true, orderedIds: ["tools:files", "chat", "tools:find"] };
   dialog.tabs = orderedNavigationTabs(defaults, dialog.preferences.orderedIds);
   dialog.selectedTab = "chat";
@@ -197,6 +197,11 @@ it.each(["", "a"])("keeps the highlighted destination after resetting the whole 
   if (query !== "") {
     input.value = query;
     input.dispatchEvent(new Event("input", { bubbles: true }));
+    await dialog.updateComplete;
+  }
+  if (query === "a") {
+    expect(dialog.shadowRoot?.querySelectorAll(".destination-button")).toHaveLength(2);
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, composed: true }));
     await dialog.updateComplete;
   }
   expect(dialog.shadowRoot?.querySelector(".destination-button.selected")?.textContent).toBe("Chat");

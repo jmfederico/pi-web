@@ -18,9 +18,9 @@ function browserStorage(): Storage | undefined {
   }
 }
 
-export function loadNavigationPreferences(storage: Pick<Storage, "getItem"> | undefined = browserStorage()): NavigationPreferences {
+function parseNavigationPreferences(raw: string | null): NavigationPreferences {
   try {
-    const value: unknown = JSON.parse(storage?.getItem(storageKey) ?? "null");
+    const value: unknown = JSON.parse(raw ?? "null");
     if (typeof value === "object" && value !== null) {
       const pins: unknown = "pinnedIds" in value ? value.pinnedIds : undefined;
       return {
@@ -35,10 +35,31 @@ export function loadNavigationPreferences(storage: Pick<Storage, "getItem"> | un
   return { pinnedIds: [], mobileCollapsed: false };
 }
 
-export function saveNavigationPreferences(preferences: NavigationPreferences, storage: Pick<Storage, "setItem"> | undefined = browserStorage()): boolean {
+export function loadNavigationPreferences(storage: Pick<Storage, "getItem"> | undefined = browserStorage()): NavigationPreferences {
+  try {
+    return parseNavigationPreferences(storage?.getItem(storageKey) ?? null);
+  } catch {
+    return { pinnedIds: [], mobileCollapsed: false };
+  }
+}
+
+/** Merge only edited fields; an absent orderedIds explicitly resets saved order. */
+export function saveNavigationPreferences(
+  preferences: NavigationPreferences,
+  storage: Pick<Storage, "getItem" | "setItem"> | undefined = browserStorage(),
+  changedFields: readonly (keyof NavigationPreferences)[] = ["pinnedIds", "orderedIds", "mobileCollapsed"],
+): boolean {
   if (storage === undefined) return false;
   try {
-    storage.setItem(storageKey, JSON.stringify(preferences));
+    // A failed read must not become a default snapshot that overwrites another tab.
+    const saved = parseNavigationPreferences(storage.getItem(storageKey));
+    if (changedFields.includes("pinnedIds")) saved.pinnedIds = preferences.pinnedIds;
+    if (changedFields.includes("mobileCollapsed")) saved.mobileCollapsed = preferences.mobileCollapsed;
+    if (changedFields.includes("orderedIds")) {
+      if (preferences.orderedIds === undefined) delete saved.orderedIds;
+      else saved.orderedIds = preferences.orderedIds;
+    }
+    storage.setItem(storageKey, JSON.stringify(saved));
     return true;
   } catch {
     return false;

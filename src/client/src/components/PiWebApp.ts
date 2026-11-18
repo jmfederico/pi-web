@@ -4370,6 +4370,8 @@ export class PiWebApp extends LitElement {
   private readonly handleReloadApp = () => { this.hardReloadApp(); };
 
   @state() private navigationPreferences = loadNavigationPreferences();
+  @state() private navigationPreferencesSaveFailed = false;
+  private readonly pendingNavigationPreferenceFields = new Set<keyof NavigationPreferences>();
   @state() private navigationDialogOpen = false;
 
   private navigationOpener: HTMLElement | undefined;
@@ -4395,11 +4397,12 @@ export class PiWebApp extends LitElement {
       }
     });
   };
-  private readonly changeNavigationPreferences = (preferences: NavigationPreferences) => {
+  private readonly changeNavigationPreferences = (preferences: NavigationPreferences, changedField: keyof NavigationPreferences) => {
     this.navigationPreferences = preferences;
-    if (!saveNavigationPreferences(preferences)) {
-      this.browserErrors.reportLocalized({ kind: "global" }, () => appFeedback.t("navigationPreferencesSaveFailed"));
-    }
+    // Retry all unsaved edits, not untouched fields from this tab's stale snapshot.
+    this.pendingNavigationPreferenceFields.add(changedField);
+    this.navigationPreferencesSaveFailed = !saveNavigationPreferences(preferences, undefined, [...this.pendingNavigationPreferenceFields]);
+    if (!this.navigationPreferencesSaveFailed) this.pendingNavigationPreferenceFields.clear();
   };
 
   private renderContextBar() {
@@ -4671,6 +4674,7 @@ export class PiWebApp extends LitElement {
           .pinUniverse=${this.mobileMainTabs().map((tab) => tab.id)}
           .selectedTab=${this.selectedNavigationTab()}
           .preferences=${this.navigationPreferences}
+          .preferencesSaveFailed=${this.navigationPreferencesSaveFailed}
           .onPreferencesChange=${this.changeNavigationPreferences}
           .onSelect=${this.selectNavigationTab}
           .onClose=${this.closeNavigation}

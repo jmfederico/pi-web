@@ -81,6 +81,7 @@ for (const width of [1280, 360]) {
     await test.info().attach("navigation-tabs-drag", { path: screenshot, contentType: "image/png" });
     await page.mouse.up();
     await expect.poll(() => order(page)).toEqual(["fixture:workspaces", "chat", "fixture:tasks", "fixture:notices", "fixture:terminal"]);
+    await expect(source.locator(".reorder-handle")).toBeFocused();
     await expect(page.locator("#selected")).toBeEmpty();
     await expect(page.locator("navigation-dialog dialog")).toBeVisible();
     await expect(ghost).toHaveCount(0);
@@ -88,6 +89,7 @@ for (const width of [1280, 360]) {
     await startDrag(page, source, row(page, "fixture:terminal"), "after");
     await page.mouse.up();
     await expect.poll(() => order(page)).toEqual(["chat", "fixture:tasks", "fixture:notices", "fixture:terminal", "fixture:workspaces"]);
+    await expect(source.locator(".reorder-handle")).toBeFocused();
     await expect(page.locator("#selected")).toBeEmpty();
     await expect(preview(page)).toHaveCount(0);
     await expect(page.locator("navigation-dialog .drop-before, navigation-dialog .drop-after")).toHaveCount(0);
@@ -127,6 +129,9 @@ test("closing a shortcut-opened dialog restores focus to the same destination af
   await page.keyboard.press("Alt+n");
   await expect(page.locator("navigation-dialog dialog")).toBeVisible();
   await row(page, "fixture:workspaces").locator(".move-up").click();
+  const strip = page.locator("app-mobile-main-tabs .mobile-tabs button");
+  await expect(strip.nth(1)).toHaveAttribute("aria-label", /^Workspaces/);
+  await expect(strip.nth(2)).toHaveAttribute("aria-label", "Tasks");
   await page.keyboard.press("Escape");
   await expect(page.locator("navigation-dialog")).toHaveCount(0);
   await expect(tasks).toBeFocused();
@@ -209,6 +214,57 @@ test("search disables drag and move controls without changing the saved order", 
   await page.reload();
   await page.getByRole("button", { name: "Open navigation", exact: true }).click();
   await expect.poll(() => order(page)).toEqual(expected);
+});
+
+test("a stale browser tab changes only its chosen preference and can explicitly reset order", async ({ page, context }) => {
+  await open(page);
+  const other = await context.newPage();
+  try {
+    await open(other);
+    await row(page, "fixture:tasks").locator(".move-up").click();
+    await other.getByRole("button", { name: "Collapsed", exact: true }).click();
+    await page.reload();
+    await page.getByRole("button", { name: "Open navigation", exact: true }).click();
+    await expect.poll(() => order(page)).toEqual(["fixture:tasks", "chat", "fixture:workspaces", "fixture:notices", "fixture:terminal"]);
+    await expect(page.getByRole("button", { name: "Collapsed", exact: true })).toHaveAttribute("aria-pressed", "true");
+    // The stale dialog still displays the default order; reset must remain explicit.
+    await expect.poll(() => order(other)).toEqual(initialOrder);
+    await other.getByRole("button", { name: "Reset order", exact: true }).click();
+    await page.reload();
+    await page.getByRole("button", { name: "Open navigation", exact: true }).click();
+    await expect.poll(() => order(page)).toEqual(initialOrder);
+    await expect(page.getByRole("button", { name: "Collapsed", exact: true })).toHaveAttribute("aria-pressed", "true");
+  } finally {
+    await other.close();
+  }
+});
+
+test("save failures are visible inside the open dialog and clear after recovery", async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 740 });
+  await open(page);
+  // Preserve the native method for restoration, not for an unbound invocation.
+  // eslint-disable-next-line @typescript-eslint/unbound-method
+  const originalSetItem = await page.evaluateHandle(() => Storage.prototype.setItem);
+  await page.evaluate(() => {
+    Storage.prototype.setItem = () => { throw new DOMException("Storage full", "QuotaExceededError"); };
+  });
+  await row(page, "fixture:tasks").locator(".move-up").click();
+  const dialog = page.locator("navigation-dialog");
+  const warning = dialog.getByRole("alert");
+  await expect(dialog.locator("dialog")).toBeVisible();
+  await expect(warning).toBeVisible();
+  await expect(warning).toContainText(/reload/);
+  await expect(dialog.locator(".list-reorder-status")).toBeEmpty();
+  await expect.poll(() => order(page)).toEqual(["fixture:tasks", "chat", "fixture:workspaces", "fixture:notices", "fixture:terminal"]);
+  const screenshot = test.info().outputPath("navigation-save-failure-360.png");
+  await page.screenshot({ path: screenshot });
+  await test.info().attach("navigation-save-failure", { path: screenshot, contentType: "image/png" });
+  await page.evaluate((original) => { Storage.prototype.setItem = original; }, originalSetItem);
+  await originalSetItem.dispose();
+  await dialog.getByRole("button", { name: "Reset order", exact: true }).click();
+  await expect(warning).toHaveCount(0);
+  await expect(dialog.locator(".list-reorder-status")).not.toBeEmpty();
+  await expect.poll(() => order(page)).toEqual(initialOrder);
 });
 
 test("the fully visible final row keeps its midpoint drop target at the end of a scrolled list", async ({ page }) => {

@@ -9,6 +9,7 @@ import type { DropPosition } from "../listReorder";
 import { listReorderStyles } from "../ui/listReorderStyles";
 import { uiDialogStyles, uiSelectionStyles } from "../ui/dialogStyles";
 import { uiToolbarStyles } from "../ui/controlStyles";
+import { uiNoticeStyles } from "../ui/noticeStyles";
 import { scrollWhenSelected } from "../scrollWhenSelected";
 import { isNavigationPinned, toggleNavigationPin, orderedNavigationTabs, moveNavigationTab, type NavigationPreferences } from "../../navigationPreferences";
 import type { AppMobileMainTab } from "./AppMobileMainTabs";
@@ -28,7 +29,8 @@ export class NavigationDialog extends LitElement {
   @property({ attribute: false }) preferences: NavigationPreferences = { pinnedIds: [], mobileCollapsed: false };
   @property({ attribute: false }) selectedTab?: AppMobileMainTab["id"];
   @property({ attribute: false }) onSelect?: (id: AppMobileMainTab["id"]) => void;
-  @property({ attribute: false }) onPreferencesChange?: (preferences: NavigationPreferences) => void;
+  @property({ type: Boolean }) preferencesSaveFailed = false;
+  @property({ attribute: false }) onPreferencesChange?: (preferences: NavigationPreferences, changedField: keyof NavigationPreferences) => void;
   @property({ attribute: false }) onClose?: () => void;
 
   @state() private query = "";
@@ -43,7 +45,7 @@ export class NavigationDialog extends LitElement {
     listSelector: ".options",
     label: (tab: AppMobileMainTab) => tab.label,
     onStart: () => { this.moveAnnouncement = ""; },
-    onDrop: (tab, neighbor, position) => { this.move(tab, neighbor, position); },
+    onDrop: (tab, neighbor, position) => { this.move(tab, neighbor, position, ".reorder-handle"); },
   });
 
   private canReorder(): boolean {
@@ -57,7 +59,7 @@ export class NavigationDialog extends LitElement {
     this.selectedIndex = index;
     this.moveAnnouncement = m.t("destinationMoved", { label: tab.label, index: index + 1, count: this.tabs.length });
     if (selector !== undefined) this.pendingFocus = { id: tab.id, selector, orderedIds };
-    this.onPreferencesChange?.({ ...this.preferences, orderedIds });
+    this.onPreferencesChange?.({ ...this.preferences, orderedIds }, "orderedIds");
   }
 
   private resetOrder(): void {
@@ -66,7 +68,7 @@ export class NavigationDialog extends LitElement {
     this.resetHighlightedId = this.filteredTabs()[this.selectedIndex]?.id;
     const preferences = { ...this.preferences };
     delete preferences.orderedIds;
-    this.onPreferencesChange?.(preferences);
+    this.onPreferencesChange?.(preferences, "orderedIds");
     this.moveAnnouncement = m.t("orderReset");
   }
 
@@ -135,7 +137,8 @@ export class NavigationDialog extends LitElement {
         <p>${m.t("pinHint")}</p>
         <p id="reorder-hint">${m.t(this.query.trim() === "" ? "reorderHint" : "reorderSearchHint")}</p>
         <span id="reorder-keyboard-hint" class="sr-only">${m.t("reorderKeyboardHint")}</span>
-        <span class="list-reorder-status" role="status" aria-live="polite" aria-atomic="true">${this.moveAnnouncement || this.reorder.announcement}</span>
+        ${this.preferencesSaveFailed ? html`<p class="ui-notice ui-notice--error" role="alert">${m.t("navigationPreferencesSaveFailed")}</p>` : nothing}
+        <span class="list-reorder-status" role="status" aria-live="polite" aria-atomic="true">${this.preferencesSaveFailed ? "" : this.moveAnnouncement || this.reorder.announcement}</span>
         <nav class="options ui-selection-list" aria-label=${m.t("destinations")} @click=${(event: MouseEvent) => {
           if (this.reorder.consumeClick()) { event.preventDefault(); event.stopImmediatePropagation(); }
         }}>
@@ -161,7 +164,7 @@ export class NavigationDialog extends LitElement {
                 aria-label=${m.t("moveDown", { label: tab.label })} title=${m.t("moveDown", { label: tab.label })}
                 @click=${() => { this.moveBy(tab, 1, ".move-down"); }}><span aria-hidden="true">↓</span></button>
               <button type="button" class="pin-button ui-button ui-button--icon" aria-label=${m.t("pin", { label: tab.label })} title=${m.t(isNavigationPinned(tab.id, this.preferences.pinnedIds) ? "unpin" : "pin", { label: tab.label })} aria-pressed=${String(isNavigationPinned(tab.id, this.preferences.pinnedIds))} @click=${() => {
-                this.onPreferencesChange?.({ ...this.preferences, pinnedIds: toggleNavigationPin(tab.id, this.preferences.pinnedIds, this.pinUniverse ?? this.tabs.map((item) => item.id)) });
+                this.onPreferencesChange?.({ ...this.preferences, pinnedIds: toggleNavigationPin(tab.id, this.preferences.pinnedIds, this.pinUniverse ?? this.tabs.map((item) => item.id)) }, "pinnedIds");
               }}>
                 <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill=${isNavigationPinned(tab.id, this.preferences.pinnedIds) ? "currentColor" : "none"} stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M8 3h8l-1 7 4 4v2H5v-2l4-4-1-7Z"></path><path d="M12 16v6"></path>
@@ -172,17 +175,17 @@ export class NavigationDialog extends LitElement {
         </nav>
         <footer class="ui-dialog-footer">
           <div class="tab-actions">
-            <button class="ui-button" @click=${() => { this.onPreferencesChange?.({ ...this.preferences, pinnedIds: [] }); }}>${m.t("showAll")}</button>
+            <button class="ui-button" @click=${() => { this.onPreferencesChange?.({ ...this.preferences, pinnedIds: [] }, "pinnedIds"); }}>${m.t("showAll")}</button>
             <button class="ui-button" ?disabled=${this.onPreferencesChange === undefined} @click=${() => { this.resetOrder(); }}>${m.t("resetOrder")}</button>
           </div>
           <div class="mobile-navigation" role="group" aria-label=${m.t("mobileNavigation")}>
             <span>${m.t("mobileNavigation")}</span>
             <div class="toggle-options ui-toolbar ui-toolbar--borderless">
               <button type="button" class="ui-button" aria-pressed=${String(!this.preferences.mobileCollapsed)} @click=${() => {
-                this.onPreferencesChange?.({ ...this.preferences, mobileCollapsed: false });
+                this.onPreferencesChange?.({ ...this.preferences, mobileCollapsed: false }, "mobileCollapsed");
               }}>${m.t("expanded")}</button>
               <button type="button" class="ui-button" aria-pressed=${String(this.preferences.mobileCollapsed)} @click=${() => {
-                this.onPreferencesChange?.({ ...this.preferences, mobileCollapsed: true });
+                this.onPreferencesChange?.({ ...this.preferences, mobileCollapsed: true }, "mobileCollapsed");
               }}>${m.t("collapsed")}</button>
             </div>
           </div>
@@ -231,7 +234,7 @@ export class NavigationDialog extends LitElement {
     buttons[next]?.scrollIntoView({ block: "nearest" });
   };
 
-  static override styles = [uiDialogStyles, uiSelectionStyles, uiToolbarStyles, listReorderStyles, css`
+  static override styles = [uiDialogStyles, uiSelectionStyles, uiToolbarStyles, uiNoticeStyles, listReorderStyles, css`
     @layer pi-web-base {
     .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
     footer { justify-content: space-between; flex-wrap: wrap; }

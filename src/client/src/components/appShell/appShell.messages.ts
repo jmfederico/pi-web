@@ -38,6 +38,7 @@ export default {
   showAll: message("Show all tabs", "Clear destination pins"),
   resetOrder: message("Reset order", "Restore default tab order without changing visibility"),
   orderReset: message("Tab order reset.", "Announcement after restoring the default tab order"),
+  navigationPreferencesSaveFailed: message("Could not save navigation preferences in this browser. Changes will be lost on reload. Change any navigation preference to retry.", "Browser storage failed; edits remain active in memory and the next preference change retries all unsaved edits"),
   mobileNavigation: message("Mobile navigation", "Mobile tab bar visibility control group"),
   expanded: message("Expanded", "Show mobile tab bar"),
   collapsed: message("Collapsed", "Hide mobile tab bar"),

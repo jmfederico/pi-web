@@ -70,7 +70,7 @@ it("keeps destination search, focus, selection and pin behavior across live lang
     expect(show).not.toHaveBeenCalled();
   }
   required(dialog.shadowRoot?.querySelector<HTMLButtonElement>(".pin-button")).click();
-  expect(dialog.onPreferencesChange).toHaveBeenCalledWith({ pinnedIds: ["navigation"], mobileCollapsed: false });
+  expect(dialog.onPreferencesChange).toHaveBeenCalledWith({ pinnedIds: ["navigation"], mobileCollapsed: false }, "pinnedIds");
   search.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, composed: true }));
   expect(dialog.onSelect).toHaveBeenCalledWith("chat");
   expect(dialog.onClose).toHaveBeenCalledOnce();

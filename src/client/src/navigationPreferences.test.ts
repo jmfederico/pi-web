@@ -72,6 +72,27 @@ describe("navigation preferences", () => {
     expect(loadNavigationPreferences(storage)).toEqual(changed);
   });
 
+  it("merges edited fields with current storage and lets the latest explicit order win", () => {
+    let raw: string | null = null;
+    const storage = { getItem: () => raw, setItem: (_key: string, value: string) => { raw = value; } };
+    const stale = { pinnedIds: [], mobileCollapsed: false };
+    saveNavigationPreferences({ ...stale, orderedIds: ["plugin:files", "chat"] }, storage, ["orderedIds"]);
+    saveNavigationPreferences({ ...stale, mobileCollapsed: true }, storage, ["mobileCollapsed"]);
+    saveNavigationPreferences({ ...stale, pinnedIds: ["chat"] }, storage, ["pinnedIds"]);
+    expect(loadNavigationPreferences(storage)).toEqual({ pinnedIds: ["chat"], mobileCollapsed: true, orderedIds: ["plugin:files", "chat"] });
+    saveNavigationPreferences({ ...stale, orderedIds: ["chat", "plugin:files"] }, storage, ["orderedIds"]);
+    expect(loadNavigationPreferences(storage).orderedIds).toEqual(["chat", "plugin:files"]);
+    // Reset is intent, even when the caller never observed a customized order.
+    saveNavigationPreferences(stale, storage, ["orderedIds"]);
+    expect(loadNavigationPreferences(storage)).toEqual({ pinnedIds: ["chat"], mobileCollapsed: true });
+  });
+
+  it("does not overwrite storage when reading the latest preferences fails", () => {
+    const storage = { getItem: () => { throw new Error("Blocked"); }, setItem: vi.fn() };
+    expect(saveNavigationPreferences({ pinnedIds: [], mobileCollapsed: true }, storage, ["mobileCollapsed"])).toBe(false);
+    expect(storage.setItem).not.toHaveBeenCalled();
+  });
+
   it.each([
     { orderedIds: ["chat", 5, "chat", "", null, "missing:tool"], expected: ["chat", "missing:tool"] },
     { orderedIds: "chat", expected: [] },

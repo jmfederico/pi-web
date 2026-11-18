@@ -596,7 +596,7 @@ describe("application rendering boundaries", () => {
     expect(app.shadowRoot?.querySelector("workspace-panel")?.shadowRoot?.querySelector(".panel-content")?.textContent).toContain("Test content");
   });
 
-  it.each([false, true])("keeps changed navigation preferences active and reports only failed saves (blocked=%s)", async (blocked) => {
+  it.each(["read", "write"] as const)("keeps failed navigation edits through reopening and retries them after blocked %s recovers", async (blocked) => {
     const initial = { pinnedIds: [], mobileCollapsed: false };
     saveNavigationPreferences(initial);
     const { app } = await mountMobileNavigationApp({ mainView: "chat" });
@@ -605,31 +605,85 @@ describe("application rendering boundaries", () => {
     await settle(app);
     const dialog = app.shadowRoot?.querySelector<NavigationDialog>("navigation-dialog");
     if (dialog == null) throw new Error("Expected navigation dialog");
-    if (blocked) {
-      const storage = localStorage;
-      vi.stubGlobal("localStorage", {
-        getItem: (key) => storage.getItem(key),
-        setItem: () => { throw new Error("Storage blocked"); },
-        removeItem: (key) => { storage.removeItem(key); },
-        clear: () => { storage.clear(); },
-        key: (index) => storage.key(index),
-        get length() { return storage.length; },
-      } satisfies Storage);
-    }
-    const changed = { ...initial, orderedIds: ["chat", "navigation"], pinnedIds: ["chat"] };
-    dialog.onPreferencesChange?.(changed);
+    const unrelatedErrors = reportBrowserError({}, { kind: "global" }, "Unrelated failure");
+    patchState(app, { browserErrors: unrelatedErrors });
+    const storage = localStorage;
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => { if (blocked === "read") throw new Error("Storage blocked"); return storage.getItem(key); },
+      setItem: () => { throw new Error("Storage blocked"); },
+      clear: () => { storage.clear(); },
+    });
+    namedButton(dialog.shadowRoot, "Move Chat up").click();
     await settle(app);
+    namedButton(dialog.shadowRoot, "Pin Sessions").click();
+    await settle(app);
+    const changed = { ...initial, orderedIds: ["chat", "navigation"], pinnedIds: ["chat"] };
     expect(dialog.preferences).toEqual(changed);
     expect(strip?.tabs.map((tab) => tab.id)).toEqual(["chat"]);
-    expect(loadNavigationPreferences()).toEqual(blocked ? initial : changed);
+    expect(loadNavigationPreferences(storage)).toEqual(initial);
+    expect(dialog.preferencesSaveFailed).toBe(true);
+    expect(dialog.shadowRoot?.querySelector("modal-surface [role=alert]")).not.toBeNull();
+    expect(dialog.shadowRoot?.querySelector(".list-reorder-status")?.textContent).toBe("");
     namedButton(dialog.shadowRoot, "Close").click();
     await settle(app);
-    const messages = app.shadowRoot?.querySelector("notification-area")?.shadowRoot?.querySelectorAll(".notification-message");
-    expect(messages?.length ?? 0).toBe(blocked ? 1 : 0);
-    if (blocked) {
-      expect(messages?.[0]?.textContent.trim()).toBe(appFeedbackMessages.t("navigationPreferencesSaveFailed"));
-      expect(Reflect.get(app, "state")).toMatchObject({ browserErrors: { global: { scope: { kind: "global" } } } });
-    }
+    namedButton(strip?.shadowRoot, "Navigation").click();
+    await settle(app);
+    const reopened = app.shadowRoot?.querySelector<NavigationDialog>("navigation-dialog");
+    expect(reopened?.preferencesSaveFailed).toBe(true);
+    expect(reopened?.preferences).toEqual(changed);
+    vi.stubGlobal("localStorage", storage);
+    // A different field retries every pending edit, including the earlier order.
+    namedButton(reopened?.shadowRoot, "Collapsed").click();
+    await settle(app);
+    expect(loadNavigationPreferences()).toEqual({ ...changed, mobileCollapsed: true });
+    expect(reopened?.preferencesSaveFailed).toBe(false);
+    expect(reopened?.shadowRoot?.querySelector("[role=alert]")).toBeNull();
+    expect(Reflect.get(app, "state")).toMatchObject({ browserErrors: unrelatedErrors });
+  });
+
+  it("saves only edited fields from a stale tab, including an explicit reset of an unseen order", async () => {
+    const { app } = await mountMobileNavigationApp();
+    namedButton(app.shadowRoot?.querySelector("app-mobile-main-tabs")?.shadowRoot, "Navigation").click();
+    await settle(app);
+    const dialog = app.shadowRoot?.querySelector<NavigationDialog>("navigation-dialog");
+    if (dialog == null) throw new Error("Expected navigation dialog");
+    // Another tab reorders after this app loaded its default snapshot.
+    const external = { pinnedIds: [], orderedIds: ["chat", "navigation"], mobileCollapsed: false };
+    saveNavigationPreferences(external);
+    namedButton(dialog.shadowRoot, "Collapsed").click();
+    await settle(app);
+    namedButton(dialog.shadowRoot, "Pin Sessions").click();
+    await settle(app);
+    expect(loadNavigationPreferences()).toEqual({ ...external, pinnedIds: ["chat"], mobileCollapsed: true });
+    expect(dialog.preferences.orderedIds).toBeUndefined();
+    namedButton(dialog.shadowRoot, "Reset order").click();
+    await settle(app);
+    expect(loadNavigationPreferences()).toEqual({ pinnedIds: ["chat"], mobileCollapsed: true });
+  });
+
+  it("retries a failed explicit reset without overwriting another tab's unrelated preferences", async () => {
+    const { app } = await mountMobileNavigationApp();
+    namedButton(app.shadowRoot?.querySelector("app-mobile-main-tabs")?.shadowRoot, "Navigation").click();
+    await settle(app);
+    const dialog = app.shadowRoot?.querySelector<NavigationDialog>("navigation-dialog");
+    if (dialog == null) throw new Error("Expected navigation dialog");
+    saveNavigationPreferences({ pinnedIds: [], orderedIds: ["chat", "navigation"], mobileCollapsed: false });
+    const storage = localStorage;
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.getItem(key),
+      setItem: () => { throw new Error("Storage blocked"); },
+      clear: () => { storage.clear(); },
+    });
+    namedButton(dialog.shadowRoot, "Reset order").click();
+    await settle(app);
+    expect(dialog.preferencesSaveFailed).toBe(true);
+    vi.stubGlobal("localStorage", storage);
+    // Pins change elsewhere while our reset is pending. Retry must preserve them.
+    saveNavigationPreferences({ pinnedIds: ["chat"], orderedIds: ["chat", "navigation"], mobileCollapsed: false });
+    namedButton(dialog.shadowRoot, "Collapsed").click();
+    await settle(app);
+    expect(loadNavigationPreferences()).toEqual({ pinnedIds: ["chat"], mobileCollapsed: true });
+    expect(dialog.preferencesSaveFailed).toBe(false);
   });
 
   it("persists order changes across the dialog, mobile tabs, and desktop tools without changing selection", async () => {
@@ -666,7 +720,7 @@ describe("application rendering boundaries", () => {
 
     // Drive the dialog's public preference boundary; reorder gestures have their own UI tests.
     const move = async (id: string, neighbor: string, position: "before" | "after") => {
-      dialog.onPreferencesChange?.({ ...dialog.preferences, orderedIds: moveNavigationTab(id, neighbor, position, dialog.preferences.orderedIds, dialog.pinUniverse ?? []) });
+      dialog.onPreferencesChange?.({ ...dialog.preferences, orderedIds: moveNavigationTab(id, neighbor, position, dialog.preferences.orderedIds, dialog.pinUniverse ?? []) }, "orderedIds");
       await settle(app);
       expect(app.shadowRoot?.querySelector("workspace-panel")?.shadowRoot?.querySelector(".panel-content")?.textContent).toContain("Selected content");
       expect(dialog.selectedTab).toBe("render-test:panel");
@@ -688,7 +742,7 @@ describe("application rendering boundaries", () => {
     expect(loadNavigationPreferences().orderedIds).toEqual(["missing:tool", "render-test:panel", "render-test:second", "navigation", "chat"]);
 
     // Pin filtering must not undo ordering, including when the shared strip returns.
-    dialog.onPreferencesChange?.({ ...dialog.preferences, pinnedIds: ["chat", "render-test:second"] });
+    dialog.onPreferencesChange?.({ ...dialog.preferences, pinnedIds: ["chat", "render-test:second"] }, "pinnedIds");
     await settle(app);
     expect(toolTitles()).toEqual(["Second"]);
     for (const mobile of [false, true]) {
@@ -699,7 +753,7 @@ describe("application rendering boundaries", () => {
       expect(sharedTitles()).toEqual(["Second", "Chat", "Navigation"]);
       expect(destinations()).toEqual(["render-test:panel", "render-test:second", ...(mobile ? ["navigation"] : []), "chat"]);
     }
-    dialog.onPreferencesChange?.({ ...dialog.preferences, pinnedIds: [] });
+    dialog.onPreferencesChange?.({ ...dialog.preferences, pinnedIds: [] }, "pinnedIds");
     await settle(app);
     document.body.replaceChildren();
     const reloaded = await mountApp({ selectedWorkspace: workspace }, () => html`<p>Restored tool</p>`);
