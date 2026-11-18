@@ -7,6 +7,8 @@ import { uiFormStyles } from "../../src/client/src/components/ui/formStyles";
 import { PiWebApp } from "../../src/client/src/components/PiWebApp";
 import { saveNavigationPreferences } from "../../src/client/src/navigationPreferences";
 import type { RestartDialog } from "../../src/client/src/components/RestartDialog";
+import { RestartController } from "../../src/client/src/controllers/restartController";
+import { initialAppState } from "../../src/client/src/appState";
 
 function deferred() {
   let resolve!: () => void;
@@ -49,6 +51,7 @@ pluginsApi.plugins = () => Promise.resolve({
 piPackagesApi.packages = () => Promise.resolve({ packages: [] });
 api.runtime = () => Promise.resolve({ machineId: "local", ok: true, checkedAt: "fixture", capabilities: [] });
 const terminalLaunches: { command: string; title: string }[] = [];
+const restartTargets: { machineId: string; services: string }[] = [];
 
 // An extra consumer of the public target convention, placed in the real
 // General panel's appearance slot. No copy of the target-navigation algorithm.
@@ -94,6 +97,10 @@ async function openSettings(): Promise<void> {
   dialog.onClose = () => { dialog?.remove(); };
   dialog.onNavigate = (section) => { if (dialog) dialog.section = section; };
   dialog.onConfigSaved = (config) => { document.body.dataset["savedPort"] = String(config.port); };
+  dialog.onRestart = (machineId, services) => {
+    restartTargets.push({ machineId, services });
+    return Promise.resolve();
+  };
   application.append(dialog);
   await dialog.updateComplete;
   if (target === "fixture-preference") {
@@ -124,6 +131,7 @@ declare global {
       configUpdates: () => typeof configUpdates;
       selection: () => { session: unknown; workspace: unknown };
       terminalLaunches: () => { command: string; title: string }[];
+      restartTargets: () => { machineId: string; services: string }[];
     };
   }
 }
@@ -141,6 +149,7 @@ window.settingsNavigationFixture = {
   releaseSave: async () => { configSave.resolve(); await painted(); },
   configUpdates: () => configUpdates,
   terminalLaunches: () => terminalLaunches,
+  restartTargets: () => restartTargets,
   selection: () => {
     const state: unknown = Reflect.get(app ?? {}, "state");
     if (typeof state !== "object" || state === null || !("selectedSession" in state) || !("selectedWorkspace" in state)) {
@@ -156,22 +165,24 @@ if (noticesMode) {
   // loadClientConfig still reads through the public fake config API above.
   class FixtureNoticesApp extends PiWebApp {
     override connectedCallback(): void { LitElement.prototype.connectedCallback.call(this); }
-    protected override updated(): void {
-      super.updated();
-      const restart = this.renderRoot.querySelector<RestartDialog>("restart-dialog");
-      if (restart) {
-        restart.loadCommands = () => Promise.resolve({ restartWeb: "pi-web-docker --dev restart-web" });
-        restart.activity = "idle";
-        restart.onRun = (command, title) => {
-          terminalLaunches.push({ command, title });
-          return Promise.resolve();
-        };
-      }
-    }
   }
   customElements.define("fixture-notices-app", FixtureNoticesApp);
   saveNavigationPreferences({ pinnedIds: ["chat", "core:notices"], mobileCollapsed: false });
   app = new FixtureNoticesApp();
+  const gateway = { id: "local", name: "Gateway", kind: "local" as const, createdAt: "fixture", updatedAt: "fixture" };
+  Reflect.set(app, "state", { ...initialAppState(), machines: [gateway], selectedMachine: gateway });
+  Reflect.set(app, "restarts", new RestartController({
+    loadCommands: () => Promise.resolve({ restartWeb: "pi-web-docker --dev restart-web" }),
+    confirm: (request) => {
+      const restart = app?.renderRoot.querySelector<RestartDialog>("restart-dialog");
+      if (!restart) throw new Error("Missing restart dialog");
+      return restart.show(request);
+    },
+    launch: (_machineId, command, title) => {
+      terminalLaunches.push({ command, title });
+      return Promise.resolve();
+    },
+  }));
   application.append(app);
   configLoad.resolve();
   const load: unknown = Reflect.get(app, "loadClientConfig");

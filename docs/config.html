@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PI WEB configuration — settings, defaults, scope, and restarts</title>
+    <title>Configure PI WEB — appearance, agent tools, files, and plugins</title>
     <meta
       name="description"
-      content="Configure PI WEB config files, external path access, manual upload defaults, session daemon tools, plugins, shortcuts, and runtime environment variables."
+      content="Make PI WEB fit your workflow: choose appearance and model defaults, manage file access and agent tools, and add plugins. Find Settings routes and the full technical reference."
     />
     <link rel="canonical" href="https://pi-web.dev/config" />
     <meta property="og:type" content="website" />
@@ -79,30 +79,34 @@
 
 <main id="main" class="config-reference">
 <section class="page-hero"><div class="container">
-<p class="overline">Quick reference</p>
+<p class="overline">Make it yours</p>
 <h1>Configuration</h1>
-<p>Settings grouped by what they affect. Each row shows scope, default, and when a change takes effect. Use your browser’s Find command to look up a key or environment variable.</p>
-<p><a href="config.md">Detailed Markdown reference →</a></p>
+<p>Choose how PI WEB looks, which model new sessions use, where files go, and what your agents can do. Start in Settings for everyday changes; use config files for shared project choices and deployment policy.</p>
+<p>Each section below starts with what you can change and where to find it. Expand its technical reference for exact keys, defaults, and restart rules, or search the <a href="config.md">full Markdown reference</a>.</p>
 </div></section>
 <div class="container reference-layout">
 <nav class="reference-nav" aria-label="Configuration sections">
 <strong>On this page</strong>
-<a href="#files">Config files</a>
-<a href="#ui-settings">UI &amp; defaults</a>
+<a href="#files">Where settings live</a>
+<a href="#ui-settings">Appearance &amp; defaults</a>
 <a href="#file-settings">Files &amp; uploads</a>
-<a href="#session-tools">Session daemon</a>
+<a href="#session-tools">Agent capabilities</a>
 <a href="#plugin-config">Plugins</a>
 <a href="#network">Networking</a>
 <a href="#storage">Storage</a>
 <a href="#managed-mcp">MCP servers</a>
-<a href="#providers">Providers &amp; trust</a>
-<a href="#environment">Environment overrides</a>
+<a href="#providers">Models &amp; trust</a>
+<a href="#environment">Deployment policy</a>
 <a href="#worktree-pre-remove-hook">Cleanup hook</a>
 </nav>
 <div class="doc-content reference-content">
-<div class="reference-legend" id="keys"><p class="reference-scroll-hint">On narrow screens, scroll each table sideways to see all columns.</p><p><strong>Scope:</strong> “Machine” means the selected machine in Fleet. “Gateway” means the machine serving your browser. “Project” means all workspaces in that repository.</p><p><strong>Restart:</strong> “Sessiond” means the session daemon. Restarting it can interrupt active sessions. A web/API restart or browser reload is not a substitute.</p></div>
+<div class="reference-legend" id="keys"><p><strong>Check the machine:</strong> Settings can target a different machine from the sidebar. “Gateway” means the machine serving your browser; “project” means the repository and its workspaces, except where noted.</p><p><strong>Before restarting:</strong> the session daemon (“sessiond” in the reference) owns agent work and terminals. Restarting it interrupts both. Finish important work and restart from outside its hosted sessions. A browser reload or web-only restart is not a substitute.</p></div>
 
-<section id="files"><h2>Config files & precedence</h2>
+<section id="files"><h2>Where settings live</h2>
+<p>Use <strong>Settings</strong> for everyday changes. Each machine has its own saved configuration; supported project settings can travel with your repository in <code>.pi-web/config.json</code>. Pi keeps model defaults, credentials, and packages separately.</p>
+<p>Settings shows inherited values and locked deployment policy. Where available, <strong>Reset saved override</strong> returns a setting to its inherited value.</p>
+<details class="config-details"><summary>Technical reference: config files, precedence, and API</summary>
+<p class="reference-scroll-hint">On narrow screens, scroll reference tables sideways to see all columns.</p>
 <div class="table-scroll" role="region" aria-label="Choose the configuration location" tabindex="0">
 <table class="reference-table ">
 <caption>Choose the configuration location</caption>
@@ -185,6 +189,7 @@
 <td>Not supported in project config. Plugins may own separate files, such as <code>.pi-web/tasks.json</code>.</td>
 </tr>
 </tbody></table></div>
+</details>
 <details class="config-details"><summary>Minimal project config example</summary><p>Merge these keys into the existing file; preserve other settings.</p><div class="code-card"><div class="copy-row"><strong>.pi-web/config.json</strong><button class="copy-button" data-copy="#project-config-example">Copy</button></div><pre id="project-config-example"><code>{
   "version": 1,
   "uploads": { "defaultFolder": "manual/uploads" },
@@ -230,7 +235,14 @@
 </tbody></table></div>
 </details>
 </section>
-<section id="ui-settings"><h2>UI & new-session defaults</h2>
+<section id="ui-settings"><h2>Appearance &amp; new-session defaults</h2>
+<ul>
+<li><strong>Settings → General:</strong> name your machine, choose a theme and file icons, set language and region, or turn on Quiet mode to collapse agent activity.</li>
+<li><strong>Settings → Keyboard shortcuts:</strong> customize shortcuts, the send key, and whether messages steer a running agent or wait as follow-ups.</li>
+<li><strong>Chat’s model and thinking selectors:</strong> use the default star to choose how new sessions start. Resumed sessions keep their saved choices.</li>
+</ul>
+<p>Appearance preferences can apply to this browser or inherit deployment defaults; file icons are browser-only. Machine names and Quiet mode are shared. These changes need no service restart.</p>
+<details class="config-details"><summary>Technical reference: UI preferences, defaults, and composer shortcuts</summary>
 <h3>Machine name</h3>
 <p>Set <code>installationName</code> in the machine’s config, enforce it with <code>PI_WEB_INSTALLATION_NAME</code>, or edit <strong>Settings → General → Machine name</strong> for the selected machine. Names are trimmed and limited to 120 characters without control characters. An empty or unset name uses <strong>PI-WEB</strong>. This machine-global setting needs no restart; reload other windows to refresh their labels.</p>
 <pre><code>{ "installationName": "Build lab" }</code></pre>
@@ -351,9 +363,13 @@
 </tr>
 </tbody></table></div>
 <p id="completion-tools"><strong>Optional:</strong> install <code>fzf</code> on the server’s PATH for better file completion ranking. Completions also work without it.</p>
+</details>
 </section>
-<section id="file-settings"><h2>Files & uploads</h2>
-<p>Edit machine defaults in <strong>Settings → General</strong>. Use project config for repository-specific folders and access roots.</p>
+<section id="file-settings"><h2>Files &amp; uploads</h2>
+<p>Choose which external folders appear in Files and path completions, where uploads land, and where prompt attachments are saved. Edit machine defaults in <strong>Settings → General</strong>; use project config for repository-specific folders and access roots.</p>
+<p>Upload and attachment folders must stay inside the workspace. Direct file drops never overwrite existing files. Folder and access changes need no service restart; changing the upload size limit does.</p>
+<div class="callout warning"><strong>External paths are not an agent sandbox.</strong> The allowlist controls PI WEB browser/API file exposure, not the underlying agent’s or OS user’s permissions.</div>
+<details class="config-details"><summary>Technical reference: file access, destinations, and upload limits</summary>
 <div class="table-scroll" role="region" aria-label="File settings" tabindex="0">
 <table class="reference-table settings-table">
 <caption>File settings</caption>
@@ -402,11 +418,13 @@
 </tr>
 </tbody></table></div>
 <p>Higher layers replace each root list rather than appending to its lower-layer list. Project additions remain a separate contribution unless <code>PI_WEB_PATH_ACCESS</code> supplies <code>allowedPaths</code>, including an empty list. The empty container <code>{}</code> enforces nothing.</p>
-<div class="callout warning"><strong>External paths are not an agent sandbox.</strong> The allowlist controls PI WEB browser/API file exposure, not the underlying agent’s or OS user’s permissions.</div>
 <details class="config-details"><summary>Path formats, overwrite behavior, and folder rules</summary><ul><li><strong>External roots:</strong> existing directories using absolute paths or <code>~</code>, such as <code>/opt/reference</code>, <code>~/SDKs</code>, or Windows absolute paths on Windows hosts. Relative roots are not supported; symlink escapes are rejected.</li><li><strong>Upload/attachment folders:</strong> nonempty workspace-relative paths. Absolute paths and <code>..</code> traversal are rejected.</li><li><strong>Uploads:</strong> create parent folders; existing files are preserved unless overwrite is enabled in the review dialog. Direct drops never overwrite.</li><li><strong>Upload dialog only:</strong> clear the destination field to upload that batch to the workspace root.</li><li><strong>Attachments API:</strong> an explicit per-request folder overrides the configured default.</li></ul></details>
+</details>
 </section>
-<section id="session-tools"><h2>Session daemon</h2>
-<p>Edit capability toggles in <strong>Settings → Session daemon</strong>. Timeout and environment-facts settings can be edited in machine config.</p>
+<section id="session-tools"><h2>Agent capabilities</h2>
+<p>In <strong>Settings → Session daemon</strong>, choose whether agents can start independent sessions, delegate to tracked subsessions, message other sessions, and ask you questions through browser forms. Tracked delegation also requires independent session spawning.</p>
+<p>These changes require restarting the selected machine’s session daemon, interrupting active sessions and terminals. Dialog timeouts and environment guidance are configured in the machine’s config file.</p>
+<details class="config-details"><summary>Technical reference: agent tools, dialogs, and session naming</summary>
 <div class="table-scroll" role="region" aria-label="Agent capabilities and dialogs" tabindex="0">
 <table class="reference-table settings-table">
 <caption>Agent capabilities and dialogs</caption>
@@ -440,6 +458,13 @@
 <td>Sessiond restart</td>
 </tr>
 <tr>
+<th scope="row">Cross-project messaging<br><code>crossProjectSessionMessages</code></th>
+<td>Machine config file or environment</td>
+<td><code>false</code></td>
+<td>Allow messaging across all projects on this machine. Requires <code>sessionMessages</code>.</td>
+<td>Sessiond restart</td>
+</tr>
+<tr>
 <th scope="row">Question forms<br><code>askUser</code></th>
 <td>Machine</td>
 <td><code>true</code></td>
@@ -461,8 +486,8 @@
 <td>Sessiond restart</td>
 </tr>
 </tbody></table></div>
-<details class="config-details" id="session-naming"><summary>Session naming Pi package</summary>
-<p>The bundled <strong>Session naming</strong> Pi extension (<code>@jmfederico/pi-session-naming</code>) names new conversations from their first prompt. PI WEB installs it in the active Pi profile. The TUI also loads it when using that profile.</p>
+<details class="config-details" id="session-naming"><summary>Session naming options</summary>
+<p><strong>Session naming</strong> is included with PI WEB and names new conversations from their first prompt. It also works in Pi’s terminal interface when using the same agent profile.</p>
 <p>To use another naming extension, remove <strong>Session naming</strong> through <strong>Settings → Pi packages</strong>. Reinstall it from <strong>Available packages</strong> to restore automatic naming. Package changes apply to new conversations.</p>
 <p>Configure naming in <code>&lt;active-agent-profile&gt;/session-naming/config.json</code> (normally <code>~/.pi/agent/session-naming/config.json</code>):</p>
 <pre><code>{ "model": "provider/model-id", "maxTokens": 2048, "thinkingLevel": "off", "timeoutMs": 90000 }</code></pre>
@@ -484,14 +509,15 @@
 <p>Independent sessions run in a workspace of the same project without granting management rights or sending automatic lifecycle notices to the initiating session. Tracked subsessions run in the parent’s working directory and give the parent inspection and lifecycle controls. When a tracked child’s run ends, the parent receives an idle or error notice—not the child’s final answer or a claim that its task is complete. A working parent receives notices at the next safe turn boundary, without waiting for its run to finish. The parent can keep working or use <code>yield_to_subsessions</code> to suspend until a new notice arrives. Received notices are not automatically repeated; explicit inspection remains available through <code>check_subsession</code> and <code>read_subsession</code>.</p>
 <p>Both kinds of session use the same <code>send_session_message</code> tool for communication when messaging is enabled. What to communicate, when to reply, and whether a task is finished are decisions for the agents and their instructions, skills, or workflows.</p>
 <p>Parents use <code>manage_subsession</code> with a direct child’s <code>sessionId</code> and an <code>action</code>: <code>stop</code> interrupts its current run, <code>resume</code> continues its conversation, and <code>archive</code> archives it. The optional <code>prompt</code> supplies new instructions for <code>resume</code> only; other actions reject it. Stop interrupts work rather than freezing a process or undoing changes; a later resume or message can start another run. Resume rejects a child that is already working. Archive requires the child to be idle; stop it first if needed. These controls do not extend to unrelated sessions or grandchildren.</p>
-<p><code>sessionMessages</code> controls whether sessions, including tracked children, receive <code>send_session_message</code>. It defaults to <code>true</code>, independently of the spawning flags. Set it to <code>false</code> or set <code>PI_WEB_SESSION_MESSAGES=0</code> to remove the tool and block session-message delivery after restarting the session daemon. It sends a message to a known session ID in any workspace of the same registered project on the same machine. An idle recipient starts a turn; a busy recipient receives steering at the next safe agent boundary rather than after its run finishes. Messages do not interrupt an executing tool; delivery during compaction or standalone shell execution waits until that activity ends. Sending creates no parent/child relationship, grants no inspection or control rights, and subscribes to no results. Messages include the runtime-provided sender session ID so recipients can reply. Children also receive their parent’s session ID in runtime context; neither identity implies additional permissions or a required collaboration workflow. The tool returns acceptance, not an answer or confirmation that the message was read. Queued messages use the runtime’s normal queue and are not a durable mailbox; stopping or closing the recipient can discard pending work. Archived sessions cannot receive messages.</p>
+<p><code>sessionMessages</code> controls whether sessions, including tracked children, receive <code>send_session_message</code>. It defaults to <code>true</code>, independently of the spawning flags. Set it to <code>false</code> or set <code>PI_WEB_SESSION_MESSAGES=0</code> to remove the tool and block session-message delivery after restarting the session daemon. By default, it sends a message to a known session ID in any workspace of the same registered project on the same machine. An idle recipient starts a turn; a busy recipient receives steering at the next safe agent boundary rather than after its run finishes. Messages do not interrupt an executing tool; delivery during compaction or standalone shell execution waits until that activity ends. Sending creates no parent/child relationship, grants no inspection or control rights, and subscribes to no results. Messages include the runtime-provided sender session ID so recipients can reply. Children also receive their parent’s session ID in runtime context; neither identity implies additional permissions or a required collaboration workflow. The tool returns acceptance, not an answer or confirmation that the message was read. Queued messages use the runtime’s normal queue and are not a durable mailbox; stopping or closing the recipient can discard pending work. Archived sessions cannot receive messages.</p>
+<p>To allow messaging across all projects on a machine, add <code>"crossProjectSessionMessages": true</code> to that machine’s <a href="#global-config">writable machine config</a> (selected by <code>PI_WEB_CONFIG</code> when set), or set <code>PI_WEB_CROSS_PROJECT_SESSION_MESSAGES=1</code>. This setting defaults to <code>false</code> and has no project-local override or per-project allowlist. It lets agents wake idle sessions and steer busy sessions in other projects, including reopening inactive conversations. <code>sessionMessages: false</code> still blocks all messaging. Spawning, transcript-inspection tools, and subsession controls keep their existing scope; archived sessions remain read-only. Restart the session daemon to apply the change; restarting interrupts active sessions and terminals.</p>
 <p>Agent-created tracked subsessions are collapsed under their parent. Use <strong>Agent subsessions</strong> to expand them. User-created forks and clones, unknown-origin sessions, children without an available parent, and independent sessions remain visible.</p>
 <p>New sessions inherit the parent’s model and thinking level unless another model is requested, for example with a <code>#provider/model-id</code> prompt reference. Thinking levels are limited to what the chosen model supports.</p>
 </details>
 <details class="config-details"><summary>Agent self-archival</summary>
-<p>Agents can call <code>archive_self</code> with no arguments to end their run and archive their own session. The transcript is preserved and can be restored through normal archive controls. Other sessions, descendants, and scheduled task definitions are unchanged. The tool is available independently of spawning, messaging, and question-form settings.</p>
-<p>Put archival conditions in your instructions: the tool does not check task outcomes or decide whether a result needs review. Agents should finish reports and any final summary before calling it, alone and last.</p>
-<p>The result acknowledges a request, not completed archival. PI WEB waits for the saved tool result and an idle session. New conversation work, queued work, interruption, or a branch change cancels the request; reopening a session does not replay it. Failures appear in session notifications and daemon logs without an automatic retry. Restart the session daemon after upgrading to activate the tool.</p>
+<p>Agents are instructed to use <code>archive_self</code> only for an explicit, unequivocal request to archive this session, such as “archive yourself” or “archive this session.” The tool takes no arguments and ends the run, requesting archival of the session and its tracked subsessions recursively. Archival makes these sessions unavailable for new work while preserving their transcripts. They remain restorable through normal archive controls. Independent sessions, forks, and scheduled task definitions stay unchanged. The tool is available independently of spawning, messaging, and question-form settings.</p>
+<p>Every tracked descendant must be idle. The tool reports blocking session IDs so the agent can finish or deliberately stop that work before retrying. PI WEB checks again after the caller settles; it cancels archival if any session has started work in the meantime. It does not wait in the background for children to finish.</p>
+<p>Outcome and review conditions come from your instructions. Called alone, a successful <code>archive_self</code> call ends the current run immediately. The result confirms an archival request; archival occurs after the run settles. New conversation work, queued work, interruption, or a branch change cancels the request; reopening a session does not replay it. Failures appear in session notifications and daemon logs without an automatic retry. After a persistence failure, check the archive before retrying because some sessions may already be archived. Restart the session daemon after upgrading to activate the changes. Restarting interrupts active sessions and terminals; finish important work first and restart from outside its hosted sessions.</p>
 </details>
 <details class="config-details"><summary>Human intervention and the Needs input indicator</summary>
 <p>An agent can call <code>request_human_intervention</code> with a short, self-contained <code>reason</code> to mark the session <strong>Needs input</strong> and end its run. The reason appears in the transcript as an <strong>Input requested</strong> card, so the request is visible even when the agent wrote nothing else. This tool is always available, independently of the spawning, messaging, and question-form settings. It also covers approvals and actions outside PI WEB; questions in text alone do not set the indicator.</p>
@@ -504,9 +530,13 @@
 <p>Forms are saved in the conversation and survive restarts. Only a form at the end of the active conversation is open; answering, skipping, or sending another message closes it. Earlier forms remain expandable for read-only review. Returning the conversation to a question reopens it; archived conversations remain read-only.</p>
 <p>Extension dialogs are always supported, independently of <code>askUser</code>. The sooner of the extension’s timeout and the configured daemon timeout cancels an unanswered dialog.</p>
 </details>
+</details>
 </section>
-<section id="plugin-config"><h2>Plugins & packages</h2>
-<p>Use <strong>Settings → PI WEB plugins</strong> for enablement/settings and <strong>Settings → Pi packages</strong> for package installation. These are separate operations.</p>
+<section id="plugin-config"><h2>Plugins &amp; packages</h2>
+<p>Add capabilities through <strong>Settings → Pi packages</strong>. Then use <strong>Settings → PI WEB plugins</strong> to enable web integrations and check their status. Installation and enablement are separate operations.</p>
+<p><strong>Saved does not always mean active.</strong> Browser-only plugins need a tab reload; server-backed plugin changes need a manual session-daemon restart, then a tab reload. That restart interrupts sessions and terminals. Server plugins run as trusted code, not in isolation.</p>
+<p>For package choices and setup, see the <a href="plugins">plugin guide</a>.</p>
+<details class="config-details"><summary>Technical reference: plugin settings, activation, and recovery commands</summary>
 <div class="table-scroll" role="region" aria-label="Plugin configuration" tabindex="0">
 <table class="reference-table settings-table">
 <caption>Plugin configuration</caption>
@@ -622,8 +652,13 @@
 </tbody></table></div>
 <p><strong>Restart caution:</strong> <code>--restart</code> acts only for a recognized safe installation and can interrupt sessions. Config is saved first; follow manual guidance if restart fails.</p><p>Server plugins are trusted in-process code, not crash-isolated. <a href="plugins">Plugin guide →</a></p></details>
 <details class="config-details"><summary>Fleet compatibility and unavailable plugin UI</summary><ul><li>Upgrade the gateway and target together; mixed-version plugin operation is unsupported.</li><li>Restart updated web/API processes and target sessiond, then reload the browser.</li><li>By default, a paired UI is withheld when its package/settings do not match running server code, or the server plugin is unhealthy/incompatible.</li><li>The <code>npm run dev:web</code> launcher defaults the process-only <code>PI_WEB_DEV_PLUGIN_PAIRING</code> flag to <code>1</code>, allowing rebuilt plugin UI to use the running old backend. Set it to <code>0</code> for strict development pairing. It accepts <code>1</code>/<code>true</code> and <code>0</code>/<code>false</code> (case-insensitive); invalid values fail web/API startup. Other startup paths stay strict by default. Update-pending notices remain, and backend changes still need a daemon restart that can interrupt sessions and terminals. See <a href="plugins">plugin development and restart guidance</a>.</li></ul></details>
+</details>
 </section>
-<section id="network"><h2>Networking & deployment</h2>
+<section id="network"><h2>Networking &amp; deployment</h2>
+<p>Use <strong>Settings → General → Allowed hostnames</strong> to choose which hostnames can reach the gateway. Bind address and port control where the web service listens. For remote access and proxy setup, follow the <a href="remote-first">remote access guide</a>.</p>
+<div class="callout warning"><strong>Hostname checks are not authentication.</strong> Before exposing PI WEB remotely, protect HTTP and WebSocket traffic with authentication. Leaving the hostname policy undecided or accepting any hostname disables application-level DNS-rebinding protection.</div>
+<p>Hostname-policy changes need a web/API restart and, if running, a development UI restart—not a daemon restart. Include the address you use now to avoid losing access. Saving settings alone never restarts a service.</p>
+<details class="config-details"><summary>Technical reference: networking, request security, and service restarts</summary>
 <div class="table-scroll" role="region" aria-label="Web/API settings" tabindex="0">
 <table class="reference-table settings-table">
 <caption>Web/API settings</caption>
@@ -666,7 +701,8 @@
 </tbody></table></div>
 <p id="deployment-paths"><strong>Serving at a URL prefix?</strong> No config key is needed. The proxy must redirect to a trailing slash and strip the prefix before forwarding HTTP and WebSocket traffic. <a href="install#reverse-proxy-prefix">Reverse-proxy example →</a></p>
 <h3 id="restart-services">Restarting from PI WEB</h3>
-<p>Open <strong>Restart…</strong> from the actions menu, choose <strong>Web service</strong>, <strong>Session daemon</strong>, or <strong>Both services</strong>, and select <strong>Run in terminal</strong>. This opens the displayed command in the gateway's maintenance terminal, like the Updates panel. Confirmation switches to the gateway if a remote machine is selected. A missing targeted command disables that choice rather than restarting additional services.</p>
+<p>Open <strong>Restart…</strong> from the actions menu, choose <strong>Web service</strong>, <strong>Session daemon</strong>, or <strong>Both services</strong>, and select <strong>Run in terminal</strong>. The dialog names the selected machine and opens its displayed command in that machine's maintenance terminal. A missing targeted command disables that choice rather than restarting additional services.</p>
+<p><strong>Updates</strong> and <strong>Settings</strong> offer direct restart buttons without another confirmation dialog. Read the machine, service, and interruption warning before clicking. Updates targets its selected machine. Gateway network/hostname settings target the gateway's web service; session-daemon and server-plugin settings target the machine selected inside Settings, which can differ from the sidebar. Saving settings alone never starts a restart. All entry points use the same core restart handling and the target machine's installation-specific commands. Updates disables restart buttons while preparing the command and opening its terminal; pending feedback ends at terminal acceptance, not restart completion.</p>
 <p>Web-only restart preserves agent sessions. Restarting the daemon interrupts agent work and terminals; the dialog shows a simple activity hint. Check terminal output for errors. The command owns the restart: the dialog does not track completion or retry it. If the daemon restart closes the terminal or web does not return, use your installation's service controls to inspect and recover it. After hostname-policy changes, reconnect using an allowed address and refresh the page.</p>
 <h3 id="browser-request-security">Browser request security</h3>
 <p>Choose one gateway <code>hostAccess</code> policy for both production and development in <strong>Settings → General → Allowed hostnames</strong>:</p>
@@ -748,9 +784,12 @@
 <td>Web/API restart</td>
 </tr>
 </tbody></table></div>
+</details>
 </section>
 <section id="storage"><h2>Storage locations</h2>
-<p>Most storage paths are <strong>environment-only</strong>; the archive destination also has a global JSON config key. Changing a path does not migrate existing data. Neither the managed data directory nor the archive destination is exposed in Settings.</p>
+<p>Choose where PI WEB keeps machine state, session archives, and Pi’s agent profile. Most paths use environment variables; the archive destination also has a global config key. Managed data and archive locations are not exposed in Settings.</p>
+<p><strong>Changing a path does not move existing data.</strong> Plan migration separately and stop the affected services before switching active storage. A second instance needs its own data directory, daemon endpoint, and web port.</p>
+<details class="config-details"><summary>Technical reference: storage paths, archives, and process environment</summary>
 <div class="table-scroll" role="region" aria-label="State and storage paths" tabindex="0">
 <table class="reference-table settings-table">
 <caption>State and storage paths</caption>
@@ -820,9 +859,14 @@
 </details>
 <details class="config-details"><summary>Changing directories or running a second instance</summary><ul><li><strong>State migration:</strong> a new PI WEB data directory starts with empty registries and no archive index. Changing paths does not migrate data; archive records retain their stored paths. See <a href="#session-archive-directory">archive path rules</a>.</li><li><strong>Second instance:</strong> use a distinct data directory, daemon endpoint, and web port. One live session daemon owns each data directory.</li><li><strong>Agent state:</strong> uses the bundled Pi SDK’s data layout. PI WEB does not convert profiles or move PI WEB-managed archives when the agent directory changes.</li><li><strong>Active paths:</strong> changing Pi state or session paths requires a sessiond restart; web/API-only restarts do not apply it. Sessions, terminals, and package operations use the daemon’s active paths. If those paths are unavailable, profile-dependent operations are unavailable too.</li></ul></details>
 <details class="config-details"><summary>Environment inherited by agent processes</summary><ul><li>Agent shells, terminals, and child sessions inherit the daemon environment, including its Pi state paths.</li><li><code>NODE_ENV</code> and <code>PORT</code> are removed so they do not interfere with development commands.</li><li><code>PI_WEB_SESSION=1</code> marks nested processes. Inherited <code>PI_WEB_*</code> values still point to the hosting instance. Use a separate data directory, daemon endpoint, and web port for a second instance.</li><li>Do not restart the hosting session daemon from inside an active session you need to preserve.</li><li><code>environmentFacts</code> includes nesting and deployment guidance in session system prompts by default. Set it to <code>false</code>, or use <code>PI_WEB_ENVIRONMENT_FACTS=false</code>, to omit that guidance. Restart sessiond after changing it.</li></ul></details>
+</details>
 </section>
-<section id="managed-mcp"><h2>Managed MCP servers</h2>
-<p>The <strong>MCP</strong> tab belongs to <code>@jmfederico/pi-mcp-manager</code> (plugin ID <code>mcp-manager</code>). Its thin Pi extension loads configured servers in standalone Pi TUI sessions and PI WEB without a web runtime dependency. Management controls are web-plugin-only; the package adds no TUI management commands. Disabling the plugin hides management but leaves the installed extension active. See <a href="plugins#mcp-manager">package installation and removal</a>.</p>
+<section id="managed-mcp"><h2>Connect MCP tools</h2>
+<p>Use the <strong>MCP</strong> tab to connect agents to external tools and data. <strong>MCP Manager</strong> is included with PI WEB. Enable connections globally, for a workspace, or for a session. For agent-assisted setup, choose <strong>Add or edit servers → Copy instruction</strong>, add the server’s details, and send it to your agent.</p>
+<p>Project servers require saved Pi trust approval and a trusted runtime; use Pi’s <code>/trust</code> command, then reload. Keep credentials out of committed files. Once the package is loaded, enablement changes apply after the current run settles without a daemon restart.</p>
+<p>For supported OAuth servers, use <strong>Settings → MCP</strong> to sign in or out with an idle session in a trusted workspace. Logging out affects other sessions sharing those credentials; it does not revoke access at the provider.</p>
+<details class="config-details"><summary>Technical reference: MCP definitions, scope, trust, and migration</summary>
+<p>MCP Manager’s connections work in both PI WEB and Pi’s terminal interface; management controls are available only in the web interface. Disabling the web plugin hides its controls but leaves the installed extension loading connections. See <a href="plugins#mcp-manager">installation and removal</a>.</p>
 <p>For agent-assisted setup, open <strong>Add or edit servers</strong> in the MCP tab and select <strong>Copy instruction</strong>. Replace the placeholder at the end with the server's name, URL, or installation instructions, then send it to your agent. The instruction includes the configuration paths and this reference so the agent can choose the appropriate scope.</p>
 <p>Put shared definitions in <code>&lt;Pi agent dir&gt;/mcp-manager/config.json</code> and workspace-only definitions in <code>&lt;workspace&gt;/.pi/mcp-manager.json</code>. Both use this JSON root, without an <code>mcp</code> wrapper:</p>
 <pre><code>{
@@ -846,8 +890,12 @@
 <p><code>PI_MCP_MANAGER</code> accepts JSON and enforces only supplied fields. Supplying <code>servers</code> enforces the catalog and excludes project additions; supplying <code>enabledServers</code> enforces enablement across all scopes, including sessions. Saved choices remain intact. <code>PI_MCP_MANAGER='{"enabledServers":[]}'</code> disables manager-owned servers, not native Pi servers. Restart the consuming Pi process or PI WEB session daemon after environment changes; daemon restarts interrupt active sessions and terminals.</p>
 <p><strong>Manual migration:</strong> move the old <code>mcp</code> object's contents from PI WEB global/defaults config to <code>&lt;Pi agent dir&gt;/mcp-manager/config.json</code>, and from <code>.pi-web/config.json</code> to <code>.pi/mcp-manager.json</code>. Replace <code>PI_WEB_MCP</code> with <code>PI_MCP_MANAGER</code>, then remove old keys. There is no automatic migration. Preserve names and URLs; native Pi entries remain authoritative. Old session choices used <code>pi-web.mcp-enabled</code>; the package uses the generic <code>mcp-manager</code> namespace. Reselect existing <strong>Session</strong> checkboxes once after migration; do not manually edit live session JSONL.</p>
 <p>Stale edits fail with a refresh-and-retry message. Package writers use an advisory lock and atomic replacement; avoid concurrent external edits. Remove an abandoned <code>&lt;config-path&gt;.mcp-manager-lock</code> only after verifying no writer is active. Pi still owns validation, connections, authentication, tools, and resources. <a href="config.md#managed-mcp">Detailed reference →</a></p>
+</details>
 </section>
-<section id="providers"><h2>Providers, catalogs & project trust</h2>
+<section id="providers"><h2>Models &amp; project trust</h2>
+<p>Choose a model in chat. For custom provider connections, configure Pi’s active agent profile or a globally installed Pi extension, then restart the session daemon. Model catalogs normally refresh automatically; offline deployments can turn refresh off.</p>
+<p><strong>Trust project code deliberately.</strong> Project resources run with agent permissions. Use Pi’s trust settings or the workspace trust toggle; PI WEB has no browser trust prompt. Pi virtual models are unsupported—select a physical model instead.</p>
+<details class="config-details"><summary>Technical reference: providers, offline mode, trust, and MCP sign-in</summary>
 <div class="table-scroll" role="region" aria-label="Provider and trust configuration" tabindex="0">
 <table class="reference-table ">
 <caption>Provider and trust configuration</caption>
@@ -940,8 +988,12 @@
 <p>Pi owns OAuth tokens and server reconnection, storing MCP credentials in the active profile’s <code>mcp-auth.json</code>, separate from model-provider authentication. Ordinary <code>/mcp</code> commands entered in Chat still use Pi’s inline extension UI.</p>
 <p>After updating PI WEB, manually restart the session daemon to activate this flow. A browser reload or web/API restart is insufficient. For the systemd user service, run <code>systemctl --user restart pi-web-sessiond</code> from outside its hosted sessions; restarting interrupts active sessions and terminals.</p>
 <details class="config-details"><summary>Provider safety and logging</summary><ul><li>Provider registrations/configuration are a startup snapshot. <code>/reload</code> cannot rebuild it.</li><li>Accepted model-list updates are machine-wide; if two workspaces register lists for one provider, the last registration wins.</li><li>Model entries can override provider URLs/headers. Pi extensions remain trusted code; this is not a security boundary.</li><li>Provider decisions are recorded in daemon logs, not browser notifications. Entries omit provider configuration and credentials. See <a href="faq#provider-extension-no-effect">provider extension troubleshooting</a> for ignored changes.</li></ul></details>
+</details>
 </section>
-<section id="environment"><h2>Environment overrides</h2>
+<section id="environment"><h2>Deployment policy</h2>
+<p>Use environment overrides when a deployment must enforce a setting rather than offer a default. Enforced controls are read-only in Settings; saved choices remain available when policy is removed.</p>
+<p>Set policy in the affected service environments and follow each setting’s restart rules. Invalid policy can prevent startup. To remove enforcement, unset the variable; an empty value is not a general reset.</p>
+<details class="config-details"><summary>Technical reference: environment variables, formats, and enforcement</summary>
 <p>Every nondeprecated runtime core key has a <code>PI_WEB_&lt;SNAKE_CASE_KEY&gt;</code> override. These enforce values over machine, supported project, and applicable browser choices. Look up the setting above for scope and restart requirements. Offline plugin recovery state is managed separately by the recovery CLI.</p>
 <p>Strings/numbers use scalar values; object/array settings use JSON. Container JSON variables retain their existing names and enforce only supplied namespace leaves, including <code>pathAccess.allowedPaths</code> and plugin leaves; <code>{}</code> enforces none. Atomic settings lock the whole value. Boolean inputs accept only <code>true</code>/<code>false</code> (case-insensitive) or <code>1</code>/<code>0</code>. Invalid supplied policy fails startup rather than being ignored. Unknown fields in declared core containers, including misspellings in <code>pathAccess</code>, <code>uploads</code>, and <code>attachments</code>, are errors. Plugin environment envelopes accept only <code>enabled</code> and <code>settings</code>; keys inside <code>settings</code> remain plugin-owned.</p>
 <pre><code>PI_WEB_INSTALLATION_NAME='Build lab'
@@ -1015,6 +1067,11 @@ PI_WEB_PLUGINS='{"git":{"settings":{"workspaceDiscoveryHooks":false}}}'</code></
 <td><code>0 | 1 | true | false</code></td>
 </tr>
 <tr>
+<th scope="row"><code>crossProjectSessionMessages</code></th>
+<td><code>PI_WEB_CROSS_PROJECT_SESSION_MESSAGES</code></td>
+<td><code>0 | 1 | true | false</code></td>
+</tr>
+<tr>
 <th scope="row"><code>askUser</code></th>
 <td><code>PI_WEB_ASK_USER</code></td>
 <td><code>0 | 1 | true | false</code></td>
@@ -1037,8 +1094,11 @@ PI_WEB_PLUGINS='{"git":{"settings":{"workspaceDiscoveryHooks":false}}}'</code></
 <tr><th scope="row"><code>plugins</code></th><td><code>PI_WEB_PLUGINS</code></td><td>JSON plugin map; enablement and each top-level setting resolve independently</td></tr>
 </tbody></table></div>
 <p><strong>Environment-only settings:</strong> config paths are under <a href="#files">Config files</a>; daemon endpoints under <a href="#network">Networking</a>; directory overrides under <a href="#storage">Storage</a>; offline flags under <a href="#providers">Providers</a>.</p>
+</details>
 </section>
-<section id="worktree-pre-remove-hook"><h2>Workspace cleanup hook</h2>
+<section id="worktree-pre-remove-hook"><h2>Workspace cleanup</h2>
+<p>Stop containers or release workspace resources automatically before removing a workspace. This uses an optional executable script, not a Settings control. A failed hook blocks removal and keeps the workspace on disk.</p>
+<details class="config-details"><summary>Technical reference: cleanup hook path and execution contract</summary>
 <p>Optional executable script at <code>.pi-web/hooks/worktree-pre-remove</code>. Use it to stop containers or release workspace resources before removal.</p>
 <div class="table-scroll" role="region" aria-label="Hook contract" tabindex="0">
 <table class="reference-table ">
@@ -1074,6 +1134,7 @@ PI_WEB_PLUGINS='{"git":{"settings":{"workspaceDiscoveryHooks":false}}}'</code></
 </tr>
 </tbody></table></div>
 <p><a href="config.md#worktree-pre-remove-hook">Workspace cleanup hook in Markdown →</a></p>
+</details>
 </section>
 <div class="doc-actions"><a class="button" href="config.md">Markdown version</a></div></div></div></main>
 

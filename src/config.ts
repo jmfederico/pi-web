@@ -29,11 +29,12 @@ export interface LoadedPiWebConfig {
   deprecatedAgentInputs: readonly DeprecatedAgentInput[];
 }
 
-export interface EffectivePiWebConfig extends Omit<PiWebConfig, "uploads" | "attachments" | "spawnSessions" | "sessionMessages" | "subsessions" | "askUser" | "dockerEnvironmentFacts" | "agent" | "extensionDialogsTimeoutMs"> {
+export interface EffectivePiWebConfig extends Omit<PiWebConfig, "uploads" | "attachments" | "spawnSessions" | "sessionMessages" | "crossProjectSessionMessages" | "subsessions" | "askUser" | "dockerEnvironmentFacts" | "agent" | "extensionDialogsTimeoutMs"> {
   uploads: NonNullable<PiWebConfig["uploads"]>;
   attachments: NonNullable<PiWebConfig["attachments"]>;
   spawnSessions: boolean;
   sessionMessages: boolean;
+  crossProjectSessionMessages: boolean;
   subsessions: boolean;
   askUser: boolean;
   environmentFacts: boolean;
@@ -239,6 +240,7 @@ export function resolveEffectivePiWebConfig(loaded: LoadedPiWebConfig, options: 
       // source of truth for the runtime state and the settings UI toggle.
       spawnSessions: spawnSessionsEnabled({}, config),
       sessionMessages: sessionMessagesEnabled({}, config),
+      crossProjectSessionMessages: config.crossProjectSessionMessages ?? false,
       // Resolved on by default like the other capabilities,
       // so the effective config is the single source of truth for the runtime
       // state and the settings UI toggle.
@@ -407,6 +409,7 @@ export function parsePiWebConfig(value: Record<string, unknown>, path = "request
     ...(value["sessionArchive"] !== undefined ? { sessionArchive: parseSessionArchiveConfig(value["sessionArchive"], path) } : {}),
     ...(value["spawnSessions"] !== undefined ? { spawnSessions: parseSpawnSessions(value["spawnSessions"], path) } : {}),
     ...(value["sessionMessages"] !== undefined ? { sessionMessages: parseBooleanKey(value["sessionMessages"], "sessionMessages", path) } : {}),
+    ...(value["crossProjectSessionMessages"] !== undefined ? { crossProjectSessionMessages: parseBooleanKey(value["crossProjectSessionMessages"], "crossProjectSessionMessages", path) } : {}),
     ...(value["subsessions"] !== undefined ? { subsessions: parseSubsessions(value["subsessions"], path) } : {}),
     ...(value["askUser"] !== undefined ? { askUser: parseAskUser(value["askUser"], path) } : {}),
     ...(value["environmentFacts"] !== undefined ? { environmentFacts: parseBooleanKey(value["environmentFacts"], "environmentFacts", path) } : {}),

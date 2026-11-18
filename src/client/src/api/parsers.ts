@@ -1561,6 +1561,7 @@ function parsePiWebConfigValues(value: unknown): PiWebConfigValues {
     ...optionalField("spawnSessions", optionalBoolean(record, "spawnSessions")),
     ...optionalField("subsessions", optionalBoolean(record, "subsessions")),
     ...optionalField("sessionMessages", optionalBoolean(record, "sessionMessages")),
+    ...optionalField("crossProjectSessionMessages", optionalBoolean(record, "crossProjectSessionMessages")),
     ...optionalField("askUser", optionalBoolean(record, "askUser")),
     ...optionalField("environmentFacts", optionalBoolean(record, "environmentFacts")),
     ...optionalField("extensionDialogsTimeoutMs", optionalNumber(record, "extensionDialogsTimeoutMs")),

@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { html, svg } from "lit";
 import { describe, expect, it, vi } from "vitest";
-import type { PluginRuntimeContext } from "@jmfederico/pi-web/plugin-api";
+import type { PluginRuntimeContextV5 } from "@jmfederico/pi-web/plugin-api";
 import plugin from "./pi-web-plugin.js";
 import { LocalizationService } from "../../src/client/src/localization/service.js";
 import { createPluginLocalization } from "../../src/client/src/plugins/localization.js";
@@ -44,7 +44,7 @@ describe("Updates plugin actions", () => {
 function activationContext() {
   return {
     localization: createPluginLocalization(new LocalizationService({ preferences: { language: "en", formatLocale: "en-US", timeZone: "UTC" } }), "updates", "updates", new AbortController().signal),
-    apiVersion: 4 as const,
+    apiVersion: 5 as const,
     pluginId: "updates",
     runtimePluginId: "updates",
     html,
@@ -54,10 +54,16 @@ function activationContext() {
   };
 }
 
-function runtimeContext(patch: Partial<PluginRuntimeContext> = {}): PluginRuntimeContext {
+function runtimeContext(patch: Partial<PluginRuntimeContextV5> = {}): PluginRuntimeContextV5 {
   const noop = () => undefined;
   return {
     navigate: () => Promise.resolve(),
+    catalog: {
+      version: 1, machineId: "local",
+      projects: { list: vi.fn(), get: vi.fn() },
+      workspaces: { list: vi.fn(), get: vi.fn() },
+      sessions: { list: vi.fn(), get: vi.fn() },
+    },
     state: {},
     prompt: { insertText: noop, getText: () => "", getSelection: () => null },
     openActionPalette: noop,

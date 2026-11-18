@@ -166,7 +166,9 @@ Use `PATCH /api/config` for explicit updates, or `PATCH /api/machines/<machineId
 
 ### Restarting from PI WEB
 
-Open **Restart…** from the actions menu, choose **Web service**, **Session daemon**, or **Both services**, and select **Run in terminal**. This opens the displayed restart command in the gateway's maintenance terminal, like the Updates panel. Confirmation switches to the gateway if a remote machine is selected. A missing targeted command disables that choice rather than restarting additional services.
+Open **Restart…** from the actions menu, choose **Web service**, **Session daemon**, or **Both services**, and select **Run in terminal**. The dialog names the selected machine and opens its displayed command in that machine's maintenance terminal. A missing targeted command disables that choice rather than restarting additional services.
+
+**Updates** and **Settings** offer direct restart buttons without another confirmation dialog. Read the machine, service, and interruption warning before clicking. Updates targets its selected machine. Gateway network/hostname settings target the gateway's web service; session-daemon and server-plugin settings target the machine selected inside Settings, which can differ from the sidebar. Saving settings alone never starts a restart. All entry points use the same core restart handling and the target machine's installation-specific commands. Updates disables restart buttons while preparing the command and opening its terminal; pending feedback ends at terminal acceptance, not restart completion.
 
 Web-only restart preserves agent sessions. Restarting the daemon interrupts agent work and terminals; the dialog shows a simple activity hint. Check terminal output for errors. The command owns the restart: the dialog does not track completion or retry it. If the daemon restart closes the terminal or web does not return, use your installation's service controls to inspect and recover it. After hostname-policy changes, reconnect using an allowed address and refresh the page.
 
@@ -177,7 +179,7 @@ Process restarts depend on the key:
 - `host` / `port`: restart the gateway web/API service or process.
 - `hostAccess`: restart web/API and, if running, the development UI server. The UI compares the effective policy, including the host list, with the running web/API snapshot; it cannot confirm the development server's running policy. Legacy `allowedHosts` changes require only a development UI restart and have no effect while `hostAccess` is supplied. No session-daemon restart is needed.
 - `maxUploadBytes`: restart both the web/API process and the session daemon on that machine.
-- `spawnSessions` / `subsessions` / `sessionMessages` / `askUser` / `extensionDialogsTimeoutMs` / `environmentFacts`: restart the session daemon on that machine.
+- `spawnSessions` / `subsessions` / `sessionMessages` / `crossProjectSessionMessages` / `askUser` / `extensionDialogsTimeoutMs` / `environmentFacts`: restart the session daemon on that machine.
 - `sessionArchive.directory`: restart the session daemon on that machine; changes only the destination for new archives.
 - Session naming is owned by a removable Pi package. Its config file is read for each new title. Old core file values are migrated and removed when configuration is loaded; they are no longer core settings. See [Session naming](#session-naming).
 - `pathAccess`: applies on the next request; existing file views may need a browser refresh.
@@ -241,6 +243,7 @@ Turn it on in **Settings → General → Chat display → Quiet mode**. It is of
   "spawnSessions": true,
   "subsessions": true,
   "sessionMessages": true,
+  "crossProjectSessionMessages": false,
   "askUser": true,
   "extensionDialogsTimeoutMs": 300000,
   "plugins": {
@@ -318,6 +321,7 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 | Agent can spawn sessions | `spawnSessions` | `PI_WEB_SPAWN_SESSIONS` | Global/session daemon | Not supported locally | Restart session daemon on that machine |
 | Tracked subsessions | `subsessions` | `PI_WEB_SUBSESSIONS` | Global/session daemon | Not supported locally; also requires `spawnSessions` | Restart session daemon on that machine |
 | Session messaging | `sessionMessages` | `PI_WEB_SESSION_MESSAGES` | Global/session daemon | Not supported locally; independent of spawning flags | Restart session daemon on that machine |
+| Cross-project messaging | `crossProjectSessionMessages` | `PI_WEB_CROSS_PROJECT_SESSION_MESSAGES` | Global/session daemon | Not supported locally; defaults to `false`, requires `sessionMessages` | Restart session daemon on that machine |
 | Agent can post question forms | `askUser` | `PI_WEB_ASK_USER` | Global/session daemon | Not supported locally | Restart session daemon on that machine |
 | Session archive directory | `sessionArchive.directory` | `PI_WEB_SESSION_ARCHIVE` (JSON object), `PI_WEB_SESSION_ARCHIVE_DIR` alias | Global/session daemon | Not supported locally | Restart session daemon on that machine; new archives only |
 | Extension dialog auto-cancel timeout | `extensionDialogsTimeoutMs` | `PI_WEB_EXTENSION_DIALOGS_TIMEOUT_MS` | Global/session daemon | Not supported locally | Restart session daemon on that machine |
@@ -586,21 +590,23 @@ Both kinds of session use the same `send_session_message` tool for communication
 
 Parents use `manage_subsession` with a direct child's `sessionId` and an `action`: `stop` interrupts its current run, `resume` continues its conversation, and `archive` archives it. The optional `prompt` supplies new instructions for `resume` only; other actions reject it. Stop interrupts work rather than freezing a process or undoing changes; a later resume or message can start another run. Resume rejects a child that is already working. Archive requires the child to be idle; stop it first if needed. These controls do not extend to unrelated sessions or grandchildren.
 
-`sessionMessages` controls whether sessions, including tracked children, receive `send_session_message`. It defaults to `true`, independently of the spawning flags. Set it to `false` or set `PI_WEB_SESSION_MESSAGES=0` to remove the tool and block session-message delivery after restarting the session daemon. It sends a message to a known session ID in any workspace of the same registered project on the same machine. An idle recipient starts a turn; a busy recipient receives steering at the next safe agent boundary rather than after its run finishes. Messages do not interrupt an executing tool; delivery during compaction or standalone shell execution waits until that activity ends. Sending creates no parent/child relationship, grants no inspection or control rights, and subscribes to no results. Messages include the runtime-provided sender session ID so recipients can reply. Children also receive their parent's session ID in runtime context; neither identity implies additional permissions or a required collaboration workflow. The tool returns acceptance, not an answer or confirmation that the message was read. Queued messages use the runtime's normal queue and are not a durable mailbox; stopping or closing the recipient can discard pending work. Archived sessions cannot receive messages.
+`sessionMessages` controls whether sessions, including tracked children, receive `send_session_message`. It defaults to `true`, independently of the spawning flags. Set it to `false` or set `PI_WEB_SESSION_MESSAGES=0` to remove the tool and block session-message delivery after restarting the session daemon. By default, it sends a message to a known session ID in any workspace of the same registered project on the same machine. An idle recipient starts a turn; a busy recipient receives steering at the next safe agent boundary rather than after its run finishes. Messages do not interrupt an executing tool; delivery during compaction or standalone shell execution waits until that activity ends. Sending creates no parent/child relationship, grants no inspection or control rights, and subscribes to no results. Messages include the runtime-provided sender session ID so recipients can reply. Children also receive their parent's session ID in runtime context; neither identity implies additional permissions or a required collaboration workflow. The tool returns acceptance, not an answer or confirmation that the message was read. Queued messages use the runtime's normal queue and are not a durable mailbox; stopping or closing the recipient can discard pending work. Archived sessions cannot receive messages.
+
+To allow messaging across all projects on a machine, add `"crossProjectSessionMessages": true` to that machine's [writable global config](#config-files) (selected by `PI_WEB_CONFIG` when set), or set `PI_WEB_CROSS_PROJECT_SESSION_MESSAGES=1`. This setting defaults to `false` and has no project-local override or per-project allowlist. It lets agents wake idle sessions and steer busy sessions in other projects, including reopening inactive conversations. `sessionMessages: false` still blocks all messaging. Spawning, transcript-inspection tools, and subsession controls keep their existing scope; archived sessions remain read-only. Restart the session daemon to apply the change; restarting interrupts active sessions and terminals.
 
 Agent-created tracked subsessions are collapsed under their parent. Use **Agent subsessions** to expand them. User-created forks and clones, unknown-origin sessions, children without an available parent, and independent sessions remain visible.
 
 New sessions inherit the parent's model and thinking level unless another model is requested, for example with a `#provider/model-id` prompt reference. Thinking levels are limited to what the chosen model supports.
 
-In **Settings → Session daemon**, these keys are saved on the selected machine. Restart the session daemon on that machine after changing them.
+In **Settings → Session daemon**, the spawning, subsession, messaging, and question-form toggles are saved on the selected machine. Configure cross-project messaging through the global config file or environment. Restart the session daemon on that machine after changing these settings.
 
 #### Self-archival
 
-Agents can call `archive_self` with no arguments to end their run and archive their own session. The transcript is preserved and can be restored through the normal archive controls. Other sessions, descendants, and scheduled task definitions are unchanged. The tool is available independently of spawning, messaging, and question-form settings.
+Agents are instructed to use `archive_self` only for an explicit, unequivocal request to archive this session, such as “archive yourself” or “archive this session.” The tool takes no arguments and ends the run, requesting archival of the session and its tracked subsessions recursively. Archival makes these sessions unavailable for new work while preserving their transcripts. They remain restorable through normal archive controls. Independent sessions, forks, and scheduled task definitions stay unchanged. The tool is available independently of spawning, messaging, and question-form settings.
 
-Archival policy belongs in your instructions. The tool does not check task outcomes or decide whether a result needs your review. Agents should finish reports and any final summary before calling it, alone and last.
+Every tracked descendant must be idle. The tool reports blocking session IDs so the agent can finish or deliberately stop that work before retrying. PI WEB checks again after the caller settles; it cancels archival if any session has started work in the meantime. It does not wait in the background for children to finish.
 
-The tool acknowledges a request, not completed archival. PI WEB waits for the saved tool result and an idle session before archiving. New conversation work, queued work, interruption, or a branch change cancels the pending request; it is not replayed when a session reopens. Failures appear in session notifications and daemon logs rather than triggering an automatic retry. Restart the session daemon after upgrading to activate the tool.
+Outcome and review conditions come from your instructions. Called alone, a successful `archive_self` call ends the current run immediately. The result confirms an archival request; archival occurs after the run settles. New conversation work, queued work, interruption, or a branch change cancels the request; reopening a session does not replay it. Failures appear in session notifications and daemon logs without an automatic retry. After a persistence failure, check the archive before retrying because some sessions may already be archived. Restart the session daemon after upgrading to activate the changes. Restarting interrupts active sessions and terminals; finish important work first and restart from outside its hosted sessions.
 
 #### Human intervention
 

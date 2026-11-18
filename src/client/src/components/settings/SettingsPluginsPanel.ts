@@ -35,6 +35,7 @@ export class SettingsPluginsPanel extends LitElement {
   @property({ type: Boolean }) recoveryCommandsSupported = false;
   @property() error = "";
   @property() savedMessage = "";
+  @property({ attribute: false }) restartAction: TemplateResult | undefined;
   @property() targetLabel = "";
   private get target(): string { return this.targetLabel || pluginsMessages.t("localTarget"); }
   @property({ attribute: false }) onReload?: () => void | Promise<void>;
@@ -101,7 +102,7 @@ export class SettingsPluginsPanel extends LitElement {
       notices.push({
         type: "warning",
         title: pluginsMessages.t("restartTitle"),
-        content: pluginsMessages.t("restart", { target: this.target }),
+        content: this.restartAction ?? pluginsMessages.t("restart", { target: this.target }),
       });
     }
     for (const diagnostic of this.pluginsResponse?.diagnostics ?? []) {

@@ -59,6 +59,54 @@ describe("unified MCP auth controller", () => {
     expect(state().authDialog).toBeUndefined();
   });
 
+  it.each([
+    ["http:", "127.0.0.1:43123"],
+    ["http:", "localhost:43123"],
+    ["http:", "[::1]:43123"],
+    ["https:", "localhost:43123"],
+  ])("restores %s for a copied %s callback without changing OAuth parameters", async (scheme, host) => {
+    const redirectUri = `${scheme}//${host}/callback/server-id`;
+    const query = "?code=a%2Bb%2Fc&state=s%2Bt&iss=https%3A%2F%2Fauth.example";
+    const respond = vi.fn<typeof api.respondMcpAuthFlow>().mockResolvedValue(flow({ status: "complete" }));
+    const { controller } = fixture({
+      startMcpAuth: () => Promise.resolve(flow({
+        auth: { url: `https://auth.example/authorize?redirect_uri=${encodeURIComponent(redirectUri)}` },
+        prompt: { requestId: "redirect", message: "Paste URL", promptType: "text" },
+      })),
+      respondMcpAuthFlow: respond,
+    });
+    await controller.openMcpAuth("login");
+    controller.updateOAuthInput(`  ${host}/callback/server-id${query}\n`);
+    await controller.respondOAuth();
+    expect(respond).toHaveBeenCalledWith("mcp-flow", "redirect", `${redirectUri}${query}`, machine.id);
+  });
+
+  it.each([
+    { input: "http://127.0.0.1:43123/callback?code=abc&state=xyz" },
+    { input: "https://127.0.0.1:43123/callback?code=abc&state=xyz" },
+    { input: "127.0.0.1:9999/callback?code=abc&state=xyz" },
+    { input: "127.0.0.1:43123/other?code=abc&state=xyz" },
+    { input: "127.0.0.1.evil.example:43123/callback?code=abc&state=xyz" },
+    { input: "raw-code" },
+    { input: "127.0.0.1:43123/callback?code=abc", authUrl: "https://auth.example/authorize" },
+    { input: "127.0.0.1:43123/callback?code=abc", authUrl: "not a URL" },
+    { input: "127.0.0.1:43123/callback?code=abc", select: true },
+  ])("leaves unrelated or already complete input unchanged: $input ($authUrl, $select)", async ({ input, authUrl, select }) => {
+    const respond = vi.fn<typeof api.respondMcpAuthFlow>().mockResolvedValue(flow({ status: "complete" }));
+    const { controller } = fixture({
+      startMcpAuth: () => Promise.resolve(flow({
+        auth: { url: authUrl ?? `https://auth.example/authorize?redirect_uri=${encodeURIComponent("http://127.0.0.1:43123/callback")}` },
+        ...(select === true
+          ? { select: { requestId: "redirect", message: "Choose server", options: [{ value: input, label: input }] } }
+          : { prompt: { requestId: "redirect", message: "Paste URL", promptType: "text" } }),
+      })),
+      respondMcpAuthFlow: respond,
+    });
+    await controller.openMcpAuth("login");
+    await controller.respondOAuth(input);
+    expect(respond).toHaveBeenCalledWith("mcp-flow", "redirect", input, machine.id);
+  });
+
   it("polls the MCP endpoint and removes a callback prompt without cancelling the operation", async () => {
     const prompt = { requestId: "redirect", message: "Paste URL", promptType: "manual_code" as const };
     const read = vi.fn<typeof api.mcpAuthFlow>()

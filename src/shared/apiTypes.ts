@@ -216,6 +216,8 @@ export interface PiWebConfigValues {
   spawnSessions?: boolean;
   /** When true, LLMs can send messages to other sessions. On by default; independent of spawning. */
   sessionMessages?: boolean;
+  /** Allow messaging across all projects on this machine. Off by default; requires sessionMessages. */
+  crossProjectSessionMessages?: boolean;
   /**
    * When true, LLMs can start, inspect, stop, resume, and archive tracked
    * child sessions through the subsession tools.

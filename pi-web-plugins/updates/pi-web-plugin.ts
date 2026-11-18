@@ -1,10 +1,13 @@
 import type { TemplateResult } from "lit";
-import type { HtmlTemplateTag, PiWebComponentStatus, PiWebPlugin, PiWebStatusMessage, PluginRuntimeState, MaintenanceTerminal, PluginLocalization, PiWebInstallationInfo, PiWebStatusResponse } from "@jmfederico/pi-web/plugin-api";
+import type { HtmlTemplateTag, PiWebComponentStatus, PiWebPluginV5, PiWebStatusMessage, MaintenanceTerminal, PluginLocalization, PiWebInstallationInfo, PiWebStatusResponse, ApplicationPanelContextV5, RestartServices } from "@jmfederico/pi-web/plugin-api";
 import { additionalCommands, fallbackDockerStatus, messageCount, recommendedCommand, shouldShowUpdatesPanel, statusFor, type CommandEntry, type UpdatesRuntimeHint } from "./updatesLogic.js";
 
 import definitions from "./updates.messages.js";
 
-function createUpdatesContent(localization: PluginLocalization) {
+function createUpdatesContent(localization: PluginLocalization, lifetimeSignal: AbortSignal) {
+  // Only command preparation and terminal launch are pending, never service recovery.
+  const pendingRestarts = new Map<string, RestartServices>();
+  lifetimeSignal.addEventListener("abort", () => { pendingRestarts.clear(); }, { once: true });
   const messages = localization.registerMessages("panel", definitions);
   const t: typeof messages.t = messages.t.bind(messages);
   const formatVersion = (version: string | undefined): string => version === undefined || version === "" ? t("unknown") : version;
@@ -47,21 +50,46 @@ function createUpdatesContent(localization: PluginLocalization) {
     `;
   }
 
-  function renderCommandActions(html: HtmlTemplateTag, terminal: MaintenanceTerminal | undefined, label: string, command: string): TemplateResult {
+  async function requestRestart(context: ApplicationPanelContextV5, services: RestartServices): Promise<void> {
+    const { lifecycle, machine, host } = context;
+    const machineId = machine.id;
+    if (lifetimeSignal.aborted || lifecycle === undefined || pendingRestarts.has(machineId)) return;
+    // Guard immediately, before a rerender can disable the controls.
+    pendingRestarts.set(machineId, services);
+    host.requestRender();
+    try {
+      await lifecycle.requestRestart({ services, confirm: false });
+    } catch (error: unknown) {
+      // Core presents failures; consume the rejection without attempting a fallback.
+      console.error("Updates plugin restart request failed", error);
+    } finally {
+      // Teardown clears the map, preventing late completion from rendering a disposed host.
+      if (pendingRestarts.delete(machineId)) host.requestRender();
+    }
+  }
+
+  function renderCommandActions(html: HtmlTemplateTag, context: ApplicationPanelContextV5, entry: CommandEntry): TemplateResult {
+    const { lifecycle, maintenanceTerminal } = context;
+    const pending = pendingRestarts.get(context.machine.id);
     return html`
       <span class="updates-command-actions">
-        <button type="button" class="ui-button ui-button--action ui-button--compact" @click=${() => { void navigator.clipboard.writeText(command); }}>${t("copy")}</button>
-        ${terminal === undefined ? null : html`<button type="button" class="ui-button ui-button--action ui-button--compact ui-button--primary" @click=${() => { runCommandInTerminal(terminal, label, command); }}>${t("run")}</button>`}
+        <button type="button" class="ui-button ui-button--action ui-button--compact" @click=${() => { void navigator.clipboard.writeText(entry.command); }}>${t("copy")}</button>
+        ${entry.kind === "restart"
+          ? lifecycle === undefined ? null : html`<button type="button" class="ui-button ui-button--action ui-button--compact ui-button--primary" ?disabled=${pending !== undefined} @click=${() => {
+            void requestRestart(context, entry.services);
+          }}>${pending === entry.services ? t("starting") : entry.label}</button>`
+          : maintenanceTerminal === undefined ? null : html`<button type="button" class="ui-button ui-button--action ui-button--compact ui-button--primary" @click=${() => { runCommandInTerminal(maintenanceTerminal, entry.label, entry.command); }}>${t("run")}</button>`}
       </span>
     `;
   }
 
-  function renderCommand(html: HtmlTemplateTag, terminal: MaintenanceTerminal | undefined, label: string, command: string): TemplateResult {
+  function renderCommand(html: HtmlTemplateTag, context: ApplicationPanelContextV5, entry: CommandEntry): TemplateResult {
     return html`
       <div class="updates-command">
-        <span>${label}</span>
-        <code>${command}</code>
-        ${renderCommandActions(html, terminal, label, command)}
+        <span>${entry.label}</span>
+        <code>${entry.command}</code>
+        ${renderCommandActions(html, context, entry)}
+        ${entry.kind !== "restart" ? null : html`<small class="updates-restart-warning">${t(entry.services === "web" ? "restartWebWarning" : entry.services === "sessiond" ? "restartSessiondWarning" : "restartAllWarning")}${context.lifecycle === undefined ? ` ${t("restartUnavailable")}` : ""}</small>`}
       </div>
     `;
   }
@@ -115,31 +143,31 @@ function createUpdatesContent(localization: PluginLocalization) {
     `;
   }
 
-  function renderRecommended(html: HtmlTemplateTag, terminal: MaintenanceTerminal | undefined, recommended: CommandEntry, messages: readonly PiWebStatusMessage[]): TemplateResult {
+  function renderRecommended(html: HtmlTemplateTag, context: ApplicationPanelContextV5, recommended: CommandEntry, messages: readonly PiWebStatusMessage[]): TemplateResult {
     return html`
       <section class="updates-recommended">
         <strong>${t("recommended")}</strong>
         ${messages.length === 0
-          ? html`<p class="muted">${t("recommendedHelp")}</p>`
+          ? recommended.kind === "update" ? html`<p class="muted">${t("recommendedHelp")}</p>` : null
           : messages.map((message) => renderNotice(html, message))}
-        ${renderCommand(html, terminal, recommended.label, recommended.command)}
+        ${renderCommand(html, context, recommended)}
       </section>
     `;
   }
 
-  function renderAdditionalCommands(html: HtmlTemplateTag, terminal: MaintenanceTerminal | undefined, additional: readonly CommandEntry[], hasRecommended: boolean): TemplateResult | undefined {
+  function renderAdditionalCommands(html: HtmlTemplateTag, context: ApplicationPanelContextV5, additional: readonly CommandEntry[], hasRecommended: boolean): TemplateResult | undefined {
     if (additional.length === 0) return undefined;
     return html`
       <section>
         <strong>${t(hasRecommended ? "additional" : "suggested")}</strong>
         ${hasRecommended ? html`<p class="muted">${t("additionalHelp")}</p>` : null}
-        ${additional.map((entry) => renderCommand(html, terminal, entry.label, entry.command))}
+        ${additional.map((entry) => renderCommand(html, context, entry))}
       </section>
     `;
   }
 
-  function renderUpdatesPanel(html: HtmlTemplateTag, terminal: MaintenanceTerminal | undefined, state: PluginRuntimeState | undefined): TemplateResult {
-    const status = statusFor(state) ?? fallbackDockerStatus(runtimeHint);
+  function renderUpdatesPanel(html: HtmlTemplateTag, context: ApplicationPanelContextV5): TemplateResult {
+    const status = statusFor(context.state) ?? fallbackDockerStatus(runtimeHint);
     if (status === undefined) {
       return html`
         <section class="ui-toolbar"><strong class="ui-toolbar-title">${t("updates")}</strong></section>
@@ -165,6 +193,7 @@ function createUpdatesContent(localization: PluginLocalization) {
         .updates-command { min-width: 0; display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; gap: 8px; align-items: center; }
         .updates-command code { overflow: auto; border: 1px solid var(--pi-border-muted); border-radius: 6px; background: var(--pi-bg); padding: 5px 7px; white-space: nowrap; }
         .updates-command-actions { display: inline-flex; gap: 6px; }
+        .updates-restart-warning { grid-column: 1 / -1; }
         .updates-recommended { border: 1px solid var(--pi-accent-border); border-radius: 8px; padding: 10px; background: var(--pi-surface); }
         .updates-recommended > strong { color: var(--pi-text-bright); }
         .updates-recommended .updates-message { border: none; background: none; padding: 0; }
@@ -176,9 +205,13 @@ function createUpdatesContent(localization: PluginLocalization) {
       </style>
       <section class="ui-toolbar updates-toolbar"><strong class="ui-toolbar-title">${t("updates")}</strong>${messages.length > 0 ? html`<span class="stale">${localization.number(messages.length)}</span>` : null}</section>
       <section class="viewer updates-status">
+        <section>
+          <strong>${t("machine", { name: context.machine.name })}</strong>
+          ${context.lifecycle !== undefined && (recommended?.kind === "restart" || additional.some((entry) => entry.kind === "restart")) ? html`<p>${t("restartDirect")}</p>` : null}
+        </section>
         ${recommended === undefined
           ? renderNotices(html, messages)
-          : renderRecommended(html, terminal, recommended, messages)}
+          : renderRecommended(html, context, recommended, messages)}
 
         <section>
           <strong>${t("services")}</strong>
@@ -186,7 +219,7 @@ function createUpdatesContent(localization: PluginLocalization) {
           ${renderComponent(html, status.components.sessiond)}
         </section>
 
-        ${renderAdditionalCommands(html, terminal, additional, recommended !== undefined)}
+        ${renderAdditionalCommands(html, context, additional, recommended !== undefined)}
 
         <section class="updates-meta">
           <span>${t("generated", { time: timestamp(status.generatedAt) })}</span>
@@ -203,11 +236,11 @@ function createUpdatesContent(localization: PluginLocalization) {
 }
 
 const plugin = {
-  apiVersion: 4,
+  apiVersion: 5,
   name: "Updates",
-  activate: ({ html, svg, localization }) => {
+  activate: ({ html, svg, localization, lifetimeSignal }) => {
     if (localization === undefined) throw new Error("Updates requires a localization-capable PI WEB host");
-    const { messages, renderUpdatesPanel, runtimeHint } = createUpdatesContent(localization);
+    const { messages, renderUpdatesPanel, runtimeHint } = createUpdatesContent(localization, lifetimeSignal);
     return {
       contributions: {
         actions: [
@@ -239,12 +272,12 @@ const plugin = {
               const count = messageCount(context.state);
               return count > 0 ? count : undefined;
             },
-            render: (context) => renderUpdatesPanel(html, context.maintenanceTerminal, context.state),
+            render: (context) => renderUpdatesPanel(html, context),
           },
         ],
       },
     };
   },
-} satisfies PiWebPlugin;
+} satisfies PiWebPluginV5;
 
 export default plugin;

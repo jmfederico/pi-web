@@ -107,6 +107,26 @@ test("routes the gateway warning through existing Notices without a session or w
   expect(sockets).toEqual([]);
 });
 
+test("keeps the direct gateway restart warning and action reachable inside Settings", async ({ page }, testInfo) => {
+  await openSettings(page, "?locked");
+  await page.evaluate(() => window.settingsNavigationFixture.releaseConfig());
+  const action = page.locator("settings-general-panel settings-restart-action");
+  await action.scrollIntoViewIfNeeded();
+  const warning = action.locator("#restart-warning");
+  const button = action.getByRole("button", { name: "Restart web/API", exact: true });
+  await expect(warning).toBeInViewport({ ratio: 1 });
+  await expect(button).toBeInViewport({ ratio: 1 });
+  const content = await page.locator("settings-dialog .settings-content").boundingBox();
+  const bounds = await action.boundingBox();
+  if (!content || !bounds) throw new Error("Missing restart action geometry");
+  expect(bounds.x).toBeGreaterThanOrEqual(content.x);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(content.x + content.width);
+  await page.screenshot({ path: testInfo.outputPath("settings-direct-restart.png") });
+  await button.click();
+  expect(await page.evaluate(() => window.settingsNavigationFixture.restartTargets())).toEqual([{ machineId: "local", services: "web" }]);
+  await expect(page.getByRole("dialog", { name: "Restart PI WEB", exact: true })).toHaveCount(0);
+});
+
 test("reveals hostname policy after delayed config without stealing focus on rerender or save", async ({ page }, testInfo) => {
   const { content } = await openSettings(page);
   const group = page.locator('[data-settings-target="host-access"]');
