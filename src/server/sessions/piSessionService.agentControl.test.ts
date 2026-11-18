@@ -542,6 +542,77 @@ describe("PiSessionService session messaging", () => {
     expect(service.activeCount()).toBe(0);
   });
 
+  it("rejects rather than joining a lifecycle-owned pending runtime open", async () => {
+    const target = journalRuntime(CHILD);
+    const replacement = journalRuntime(CHILD);
+    const gateway = sessionGateway([{ ...sessionRecord(CHILD), path: target.session.sessionFile ?? "" }]);
+    const { service, createAgentRuntime } = fixture([target, replacement], {
+      sessionManager: { ...gateway, open: () => replacement.session.sessionManager },
+      crossProjectSessionMessages: true,
+    });
+    await service.start(CWD);
+    const openingEntered = deferred<undefined>();
+    const opening = deferred<typeof replacement.runtime>();
+    createAgentRuntime.mockImplementationOnce(() => {
+      openingEntered.resolve(undefined);
+      return opening.promise;
+    });
+    const reloading = service.reload({ id: CHILD, cwd: CWD });
+    let sending: Promise<unknown> | undefined;
+    try {
+      await Promise.race([
+        openingEntered.promise,
+        reloading.then(() => { throw new Error("Reload settled before opening started"); }),
+      ]);
+      const rejected = vi.fn();
+      sending = send(service).then(
+        () => { throw new Error("Send should reject during reload"); },
+        (error: unknown) => { rejected(error); },
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(rejected).toHaveBeenCalledOnce();
+      expect(rejected.mock.calls[0]?.[0]).toHaveProperty("message", expect.stringMatching(/session lifecycle.*active/i));
+      expect(replacement.calls.sendCustomMessage).toEqual([]);
+    } finally {
+      opening.resolve(replacement.runtime);
+      await reloading;
+      await sending;
+    }
+  });
+
+  it("rejects a stale runtime if reload finishes during final admission, allowing the sender to retry", async () => {
+    const target = journalRuntime(CHILD);
+    const replacement = journalRuntime(CHILD);
+    const gateway = sessionGateway([{ ...sessionRecord(CHILD), path: target.session.sessionFile ?? "" }]);
+    const { service, archiveStore } = fixture([target, replacement], {
+      sessionManager: { ...gateway, open: () => replacement.session.sessionManager },
+      crossProjectSessionMessages: true,
+    });
+    await service.start(CWD);
+    const writabilityEntered = deferred<undefined>();
+    const writability = deferred<ArchiveRecord | undefined>();
+    vi.spyOn(archiveStore, "get")
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(() => { writabilityEntered.resolve(undefined); return writability.promise; });
+    const sending = send(service);
+    try {
+      await Promise.race([
+        writabilityEntered.promise,
+        sending.then(() => { throw new Error("Send settled before the final writability check"); }),
+      ]);
+      await service.reload({ id: CHILD, cwd: CWD });
+      writability.resolve(undefined);
+      await expect(sending).rejects.toThrow(/session changed.*retry/i);
+      expect(target.calls.sendCustomMessage).toEqual([]);
+      expect(replacement.calls.sendCustomMessage).toEqual([]);
+    } finally {
+      writability.resolve(undefined);
+      await Promise.allSettled([sending]);
+    }
+    await expect(send(service)).resolves.toMatchObject({ delivery: "started" });
+    expect(replacement.calls.sendCustomMessage).toHaveLength(1);
+  });
+
   it("rejects admission when tree archival reserves the target during the final writability check", async () => {
     const target = journalRuntime(CHILD);
     const { service, archiveStore } = fixture([target], { crossProjectSessionMessages: true });
@@ -609,7 +680,7 @@ describe("PiSessionService session messaging", () => {
     const get = vi.fn<ArchiveStore["get"]>().mockResolvedValue(record).mockResolvedValueOnce(undefined);
     const gateway = sessionGateway([sessionRecord(CHILD)]);
     const open = vi.fn(() => target.session.sessionManager);
-    const { service } = fixture([target], {
+    const { service, createAgentRuntime } = fixture([target], {
       sessionManager: { ...gateway, open },
       archiveStore: {
         get,
@@ -621,7 +692,8 @@ describe("PiSessionService session messaging", () => {
       crossProjectSessionMessages,
     });
     await expect(send(service)).rejects.toThrow(/archived.*read.only/i);
-    expect(open).toHaveBeenCalledWith(archivePath);
+    expect(open).not.toHaveBeenCalled();
+    expect(createAgentRuntime).not.toHaveBeenCalled();
     expect(target.calls.sendCustomMessage).toEqual([]);
   });
 
