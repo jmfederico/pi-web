@@ -17,6 +17,12 @@ type RuntimeFixture = ReturnType<typeof fakeRuntime>;
 type ArchiveStore = NonNullable<PiSessionServiceDependencies["archiveStore"]>;
 type ArchiveRecord = Awaited<ReturnType<ArchiveStore["archive"]>>;
 
+function deferred<T>() {
+  let resolve: (value: T) => void = () => { throw new Error("Deferred promise is not initialized"); };
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
 function journalRuntime(id: string, file = `/sessions/${id}.jsonl`, cwd = CWD) {
   const entries: unknown[] = [];
   const appendCustomEntry = vi.fn((customType: string, data?: unknown) => {
@@ -75,7 +81,7 @@ function fixture(runtimes: RuntimeFixture[], deps: Partial<PiSessionServiceDepen
     ...deps,
   });
   services.add(service);
-  return { service, events, archived, archive, restore, createAgentRuntime, listAll, open, resolveSpawnTarget };
+  return { service, events, archived, archiveStore, archive, restore, createAgentRuntime, listAll, open, resolveSpawnTarget };
 }
 
 async function trackedFixture() {
@@ -509,14 +515,17 @@ describe("PiSessionService session messaging", () => {
       notifyDispose();
       return disposing;
     });
-    const { service, archive, archived } = fixture([target, reopened], {
+    const { service, archive, archived, createAgentRuntime } = fixture([target, reopened], {
       sessionManager: { ...gateway, open: () => reopened.session.sessionManager },
       crossProjectSessionMessages,
     });
     await service.start(CWD);
     const archiving = service.archive({ id: CHILD, cwd: CWD });
     try {
-      await disposeEntered;
+      await Promise.race([
+        disposeEntered,
+        archiving.then(() => { throw new Error("Archival settled before disposal started"); }),
+      ]);
       expect(dispose).toHaveBeenCalledOnce();
       expect(archive).not.toHaveBeenCalled();
       expect(archived.has(CHILD)).toBe(false);
@@ -524,11 +533,51 @@ describe("PiSessionService session messaging", () => {
       await expect(send(service)).rejects.toThrow(/session lifecycle.*active/i);
       expect(target.calls.sendCustomMessage).toEqual([]);
       expect(reopened.calls.sendCustomMessage).toEqual([]);
+      expect(createAgentRuntime).toHaveBeenCalledOnce();
     } finally {
       releaseDispose();
       await archiving;
     }
     expect(archive).toHaveBeenCalledOnce();
+    expect(service.activeCount()).toBe(0);
+  });
+
+  it("rejects admission when tree archival reserves the target during the final writability check", async () => {
+    const target = journalRuntime(CHILD);
+    const { service, archiveStore } = fixture([target], { crossProjectSessionMessages: true });
+    await service.start(CWD);
+    const writabilityEntered = deferred<undefined>();
+    const writability = deferred<ArchiveRecord | undefined>();
+    const discoveryEntered = deferred<undefined>();
+    const discovery = deferred<ArchiveRecord[]>();
+    vi.spyOn(archiveStore, "get")
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(() => { writabilityEntered.resolve(undefined); return writability.promise; });
+    vi.spyOn(archiveStore, "list").mockImplementationOnce(() => {
+      discoveryEntered.resolve(undefined);
+      return discovery.promise;
+    });
+    const sending = send(service);
+    let archiving: ReturnType<PiSessionService["archiveTree"]> | undefined;
+    try {
+      await Promise.race([
+        writabilityEntered.promise,
+        sending.then(() => { throw new Error("Send settled before the final writability check"); }),
+      ]);
+      archiving = service.archiveTree({ id: CHILD, cwd: CWD });
+      await Promise.race([
+        discoveryEntered.promise,
+        archiving.then(() => { throw new Error("Archival settled before discovery started"); }),
+      ]);
+      writability.resolve(undefined);
+      await expect(sending).rejects.toThrow(/archival is in progress/i);
+      expect(target.calls.sendCustomMessage).toEqual([]);
+    } finally {
+      writability.resolve(undefined);
+      discovery.resolve([]);
+      await Promise.allSettled([sending, ...(archiving === undefined ? [] : [archiving])]);
+    }
+    await expect(archiving).resolves.toMatchObject({ archived: true });
   });
 
   it.each([false, true])("blocks archival when message delivery already holds the mutation receipt, cross-project=%s", async (crossProjectSessionMessages) => {

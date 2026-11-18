@@ -2374,11 +2374,12 @@ export class PiSessionService implements SessionRouteService {
     if (!decision.allowed) throw new Error("Session messaging is limited to sessions in the same registered project");
     const ref = { id: input.sessionId, cwd: decision.cwd };
     await this.assertWritable(ref);
-    const session = await this.getOrOpen(ref);
+    const session = await this.getOrOpen(ref, { requireLifecycleIdle: true });
     // Archival may finish after preflight; getOrOpen can then open the archived transcript.
     await this.assertWritable(ref);
     // Teardown can remove the old runtime before persisting its archive record.
-    // Do not yield between this reservation check and acquiring the mutation receipt below.
+    // Do not yield between these reservation checks and acquiring the mutation receipt below.
+    this.assertSessionArchiveInactive(session.sessionId);
     if (this.isTreeExclusiveOperationActive(session)) throw new Error("Cannot receive a session message while a session lifecycle operation is active");
     this.assertTreeNavigationInactive(session, "receive a session message");
     const delivery = this.hasActiveWork(session) ? "queued" : "started";
@@ -4520,8 +4521,8 @@ export class PiSessionService implements SessionRouteService {
     this.mcpAuthFlows.assertSessionAvailable(ref.id);
   }
 
-  private async getOrOpen(ref: PiSessionRef): Promise<PiAgentSession> {
-    return (await this.getActive(ref)).runtime.session;
+  private async getOrOpen(ref: PiSessionRef, options: { requireLifecycleIdle?: boolean } = {}): Promise<PiAgentSession> {
+    return (await this.getActive(ref, options)).runtime.session;
   }
 
   /**
@@ -4576,7 +4577,7 @@ export class PiSessionService implements SessionRouteService {
     return match?.path;
   }
 
-  private async getActive(ref: PiSessionRef, options: Pick<CreateSessionRuntimeOptions, "notificationGeneration"> = {}): Promise<ActiveSession<PiSessionRuntime>> {
+  private async getActive(ref: PiSessionRef, options: Pick<CreateSessionRuntimeOptions, "notificationGeneration"> & { requireLifecycleIdle?: boolean } = {}): Promise<ActiveSession<PiSessionRuntime>> {
     this.assertSessionArchiveInactive(ref.id);
     const active = this.activeForRef(ref);
     const pending = this.pendingSessionOpens.get(JSON.stringify([canonicalizeStoredCwd(ref.cwd), active?.runtime.session.sessionId ?? ref.id]));
@@ -4590,7 +4591,7 @@ export class PiSessionService implements SessionRouteService {
         archived.sessionId,
         archived.cwd,
         () => this.sessionManager.open(archivePath),
-        { notifications: "disabled" },
+        { notifications: "disabled", requireLifecycleIdle: options.requireLifecycleIdle === true },
       );
     }
 
@@ -4607,9 +4608,14 @@ export class PiSessionService implements SessionRouteService {
     sessionId: string,
     cwd: string,
     openSessionManager: () => PiSessionManager,
-    options: Pick<CreateSessionRuntimeOptions, "notificationGeneration" | "notifications"> = {},
+    options: Pick<CreateSessionRuntimeOptions, "notificationGeneration" | "notifications"> & { requireLifecycleIdle?: boolean } = {},
   ): Promise<ActiveSession<PiSessionRuntime>> {
     this.assertSessionArchiveInactive(sessionId);
+    // Messaging cannot initialize a runtime while archival/replacement owns its identity.
+    // Lifecycle owners such as reload still need to open their own replacement runtime.
+    if (options.requireLifecycleIdle === true && this.isTreeExclusiveSessionIdentityActive(sessionId)) {
+      throw new Error("Cannot open a session while a session lifecycle operation is active");
+    }
     const key = JSON.stringify([canonicalizeStoredCwd(cwd), sessionId]);
     const existing = this.pendingSessionOpens.get(key);
     if (existing !== undefined) return existing.promise;
