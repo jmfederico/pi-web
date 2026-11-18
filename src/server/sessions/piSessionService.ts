@@ -2375,6 +2375,8 @@ export class PiSessionService implements SessionRouteService {
     const ref = { id: input.sessionId, cwd: decision.cwd };
     await this.assertWritable(ref);
     const session = await this.getOrOpen(ref);
+    // Archival may finish after preflight; getOrOpen can then open the archived transcript.
+    await this.assertWritable(ref);
     this.assertTreeNavigationInactive(session, "receive a session message");
     const delivery = this.hasActiveWork(session) ? "queued" : "started";
     let agentStarted = false;

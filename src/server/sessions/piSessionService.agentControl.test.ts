@@ -497,6 +497,30 @@ describe("PiSessionService session messaging", () => {
     expect(target.calls.sendCustomMessage).toHaveLength(0);
   });
 
+  it.each([false, true])("rejects a target archived between the preflight and runtime lookup, cross-project=%s", async (crossProjectSessionMessages) => {
+    const archivePath = "/archive/child-1.jsonl";
+    const target = journalRuntime(CHILD, archivePath);
+    const record: ArchiveRecord = { sessionId: CHILD, cwd: CWD, archivePath, archivedAt: "2026-01-01T00:00:00.000Z" };
+    // The preflight sees a writable target; archival completes before getOrOpen reads it.
+    const get = vi.fn<ArchiveStore["get"]>().mockResolvedValue(record).mockResolvedValueOnce(undefined);
+    const gateway = sessionGateway([sessionRecord(CHILD)]);
+    const open = vi.fn(() => target.session.sessionManager);
+    const { service } = fixture([target], {
+      sessionManager: { ...gateway, open },
+      archiveStore: {
+        get,
+        list: () => Promise.resolve([record]),
+        isArchived: () => Promise.resolve(true),
+        archive: () => Promise.reject(new Error("Unexpected archival")),
+        restore: () => Promise.reject(new Error("Unexpected restore")),
+      },
+      crossProjectSessionMessages,
+    });
+    await expect(send(service)).rejects.toThrow(/archived.*read.only/i);
+    expect(open).toHaveBeenCalledWith(archivePath);
+    expect(target.calls.sendCustomMessage).toEqual([]);
+  });
+
   it("returns acceptance without waiting for the recipient's full turn and publishes later delivery failures", async () => {
     const target = journalRuntime(CHILD);
     let rejectTurn: ((error: Error) => void) | undefined;

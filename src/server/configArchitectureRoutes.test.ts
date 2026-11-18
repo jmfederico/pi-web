@@ -76,6 +76,9 @@ describe("layered config updates", () => {
       enforcedSettings: { [`/${key}`]: envName },
       configSources: { [`/${key}`]: envName },
     });
+    if (key === "sessionMessages") {
+      expect(parsePiWebConfigResponseBody(read.json()).envOverrides.sessionMessages).toBe(true);
+    }
     for (const payload of [{ set: { [key]: false } }, { unset: [`/${key}`] }]) {
       const rejected = await app.inject({ method: "PATCH", url, payload });
       expect(rejected.statusCode).toBe(400);
