@@ -58,6 +58,13 @@ function openNavigation(): void {
 }
 bar.onSelect = select;
 opener.addEventListener("click", openNavigation);
+// Open without moving focus away from a tab, like the app navigation shortcut.
+document.addEventListener("keydown", (event) => {
+  if (event.altKey && event.key === "n") {
+    event.preventDefault();
+    openNavigation();
+  }
+});
 updateBar();
 application.append(opener, bar, selected);
 await bar.updateComplete;

@@ -35,11 +35,13 @@ export function loadNavigationPreferences(storage: Pick<Storage, "getItem"> | un
   return { pinnedIds: [], mobileCollapsed: false };
 }
 
-export function saveNavigationPreferences(preferences: NavigationPreferences, storage: Pick<Storage, "setItem"> | undefined = browserStorage()): void {
+export function saveNavigationPreferences(preferences: NavigationPreferences, storage: Pick<Storage, "setItem"> | undefined = browserStorage()): boolean {
+  if (storage === undefined) return false;
   try {
-    storage?.setItem(storageKey, JSON.stringify(preferences));
+    storage.setItem(storageKey, JSON.stringify(preferences));
+    return true;
   } catch {
-    // Ignore quota/privacy errors for this optional browser layout preference.
+    return false;
   }
 }
 

@@ -1,6 +1,7 @@
 import { message } from "./localization/service";
 
 export default {
+  navigationPreferencesSaveFailed: message("Could not save navigation preferences in this browser. Changes will last only until you reload.", "Browser storage failed; navigation changes remain active in memory but are not saved"),
   navigationOrderFailed: message<{ detail: string }>("Failed to load or save navigation order: {detail}", "Navigation ordering failure; diagnostic stays unchanged"),
   workspaceRemovalUnavailable: message("Workspace removal is not available", "Requested workspace has no supported removal action"),
   workspaceRemovalFailed: message<{ detail: string }>("Failed to start workspace removal: {detail}", "Workspace removal could not start; diagnostic stays unchanged"),

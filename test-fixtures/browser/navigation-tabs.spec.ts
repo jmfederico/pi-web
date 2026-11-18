@@ -119,12 +119,29 @@ test("keyboard moves keep focus on the moved item, including boundary moves", as
   await expect(page.locator("navigation-dialog")).toHaveCount(0);
 });
 
+test("closing a shortcut-opened dialog restores focus to the same destination after reordering", async ({ page }) => {
+  await page.goto("/navigation-tabs.html");
+  await expect(page.locator("body")).toHaveAttribute("data-ready", "true");
+  const tasks = page.locator("app-mobile-main-tabs").getByRole("button", { name: "Tasks", exact: true });
+  await tasks.focus();
+  await page.keyboard.press("Alt+n");
+  await expect(page.locator("navigation-dialog dialog")).toBeVisible();
+  await row(page, "fixture:workspaces").locator(".move-up").click();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("navigation-dialog")).toHaveCount(0);
+  await expect(tasks).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#selected")).toHaveText("fixture:tasks");
+});
+
 test("reordered and unpinned destinations survive reload and feed the real tab strip", async ({ page }) => {
   await open(page);
   await row(page, "fixture:tasks").locator(".move-up").click();
+  await row(page, "fixture:workspaces").locator(".move-up").click();
+  await row(page, "fixture:workspaces").locator(".move-up").click();
   await row(page, "chat").locator(".pin-button").click();
   await expect(row(page, "chat").locator(".pin-button")).toHaveAttribute("aria-pressed", "false");
-  const expected = ["fixture:tasks", "chat", "fixture:workspaces", "fixture:notices", "fixture:terminal"];
+  const expected = ["fixture:workspaces", "fixture:tasks", "chat", "fixture:notices", "fixture:terminal"];
   await expect.poll(() => order(page)).toEqual(expected);
   // Reload, rather than re-opening the same component, exercises save/load storage.
   await page.reload();
@@ -132,15 +149,15 @@ test("reordered and unpinned destinations survive reload and feed the real tab s
   const buttons = page.locator("app-mobile-main-tabs .mobile-tabs button");
   await expect(buttons).toHaveCount(4);
   expect(await buttons.evaluateAll((elements) => elements.map((element) => element.getAttribute("aria-label"))))
-    .toEqual(["Tasks", "Workspaces with a long destination label that must leave every action reachable", "Notices", "Terminal"]);
+    .toEqual(["Workspaces with a long destination label that must leave every action reachable", "Tasks", "Notices", "Terminal"]);
   await page.getByRole("button", { name: "Open navigation", exact: true }).click();
   await expect.poll(() => order(page)).toEqual(expected);
   await expect(row(page, "chat").locator(".pin-button")).toHaveAttribute("aria-pressed", "false");
   await row(page, "chat").locator(".pin-button").click();
   await page.keyboard.press("Escape");
-  await expect(buttons.nth(0)).toHaveAttribute("aria-label", "Tasks");
-  await expect(buttons.nth(1)).toHaveAttribute("aria-label", "Chat");
-  await buttons.nth(1).click();
+  await expect(buttons.nth(1)).toHaveAttribute("aria-label", "Tasks");
+  await expect(buttons.nth(2)).toHaveAttribute("aria-label", "Chat");
+  await buttons.nth(2).click();
   await expect(page.locator("#selected")).toHaveText("chat");
 });
 
@@ -192,6 +209,31 @@ test("search disables drag and move controls without changing the saved order", 
   await page.reload();
   await page.getByRole("button", { name: "Open navigation", exact: true }).click();
   await expect.poll(() => order(page)).toEqual(expected);
+});
+
+test("the fully visible final row keeps its midpoint drop target at the end of a scrolled list", async ({ page }) => {
+  await open(page, "?long");
+  const list = page.locator("navigation-dialog nav.options");
+  await list.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  const source = row(page, "fixture:extra-21");
+  const last = row(page, "fixture:extra-23");
+  const handle = await box(source.locator(".reorder-handle"));
+  const bounds = await box(last);
+  const listBounds = await box(list);
+  expect(bounds.y + bounds.height).toBeLessThanOrEqual(listBounds.y + listBounds.height + 1);
+  const x = handle.x + handle.width / 2;
+  // This point is above the midpoint but inside the bottom autoscroll zone.
+  const y = bounds.y + bounds.height / 2 - 4;
+  expect(y).toBeGreaterThan(listBounds.y + listBounds.height - 36);
+  await page.mouse.move(x, handle.y + handle.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(x, y, { steps: 8 });
+  await expect(last).toHaveClass(/drop-before/);
+  await page.mouse.up();
+  await expect.poll(async () => (await order(page)).slice(-3)).toEqual(["fixture:extra-22", "fixture:extra-21", "fixture:extra-23"]);
+  await startDrag(page, source, last, "after");
+  await page.mouse.up();
+  await expect.poll(async () => (await order(page)).slice(-3)).toEqual(["fixture:extra-22", "fixture:extra-23", "fixture:extra-21"]);
 });
 
 test("native touch: a handle swipe scrolls; a held handle reorders and then releases scrolling", async ({ page, context, browserName, isMobile }) => {

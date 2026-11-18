@@ -35,6 +35,7 @@ export class NavigationDialog extends LitElement {
   @state() private selectedIndex = 0;
   @state() private moveAnnouncement = "";
   private pendingFocus: { id: string; selector: string; orderedIds: string[] } | undefined;
+  private resetHighlightedId: string | undefined;
   private readonly reorder: ListReorderController<AppMobileMainTab> = new ListReorderController<AppMobileMainTab>(this, {
     items: () => this.filteredTabs(),
     enabled: () => this.canReorder(),
@@ -62,6 +63,7 @@ export class NavigationDialog extends LitElement {
   private resetOrder(): void {
     this.reorder.cancel();
     this.pendingFocus = undefined;
+    this.resetHighlightedId = this.filteredTabs()[this.selectedIndex]?.id;
     const preferences = { ...this.preferences };
     delete preferences.orderedIds;
     this.onPreferencesChange?.(preferences);
@@ -96,6 +98,13 @@ export class NavigationDialog extends LitElement {
     const previousPreferences = changed.get("preferences");
     if ((previousTabs !== undefined && previousTabs.map((tab) => tab.id).join("\0") !== this.tabs.map((tab) => tab.id).join("\0"))
       || (previousPreferences !== undefined && previousPreferences.orderedIds !== this.preferences.orderedIds)) this.reorder.cancel();
+    // The parent supplies both the reset preference and the newly ordered tabs.
+    // Wait for that render rather than interpreting the old highlighted slot.
+    if (this.resetHighlightedId !== undefined && this.preferences.orderedIds === undefined) {
+      const index = this.filteredTabs().findIndex((tab) => tab.id === this.resetHighlightedId);
+      if (index >= 0) this.selectedIndex = index;
+      this.resetHighlightedId = undefined;
+    }
     if (changed.has("selectedTab")) {
       this.selectedIndex = Math.max(0, this.filteredTabs().findIndex((tab) => tab.id === this.selectedTab));
     }

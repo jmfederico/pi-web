@@ -99,7 +99,7 @@ Form content uses `ui-dialog-body ui-form-body`. Labels use `ui-form-field`, tex
 
 Keep only content-specific rules in each dialog. Existing dimension differences can use the internal composition properties `--ui-dialog-width`, `--ui-dialog-max-height`, and `--ui-dialog-top`; do not copy the common backdrop or header styles. These primitives use the base theme; selected themes can override their presentation through the existing contributed stylesheet mechanism.
 
-The Navigation dialog also uses `ListReorderController`, restricted to dedicated drag handles with its selection list as the scroll container. It supplies arrow buttons and handle keyboard shortcuts as non-drag alternatives. Reordering is disabled during search; visibility and order remain independent browser preferences. Keep focus on the moved destination and announce its new position. The controller's preview remains inside the modal's themed subtree.
+The Navigation dialog also uses `ListReorderController`, restricted to dedicated drag handles with its selection list as the scroll container. It supplies arrow buttons and handle keyboard shortcuts as non-drag alternatives. Individual moves are disabled during search; Reset order still restores the whole default arrangement. Visibility and order remain independent browser preferences. Keep focus on the moved destination and announce its new position. The controller's preview remains inside the modal's themed subtree.
 
 ## Settings and configuration groups
 

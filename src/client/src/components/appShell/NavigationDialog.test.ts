@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { NavigationDialog } from "./NavigationDialog";
 import type { ModalSurface } from "../ModalSurface";
 import { deepActiveElement } from "../modalLayerRegistry";
+import { orderedNavigationTabs } from "../../navigationPreferences";
 
 afterEach(() => {
   document.body.replaceChildren();
@@ -173,6 +174,42 @@ it("moves destinations without navigating or changing pins, and keeps keyboard f
   button("Reorder Files").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, composed: true, cancelable: true }));
   button("Move Files down").click();
   expect(dialog.preferences).toBe(before);
+});
+
+it.each(["", "a"])("keeps the highlighted destination after resetting the whole order during search %j", async (query) => {
+  const dialog = new NavigationDialog();
+  const defaults = [{ id: "chat", label: "Chat" }, { id: "tools:files", label: "Files" }, { id: "tools:find", label: "Find" }] as const;
+  dialog.preferences = { pinnedIds: ["chat"], mobileCollapsed: true, orderedIds: ["tools:files", "chat", "tools:find"] };
+  dialog.tabs = orderedNavigationTabs(defaults, dialog.preferences.orderedIds);
+  dialog.selectedTab = "chat";
+  dialog.onSelect = vi.fn();
+  // Like the app, the owner publishes preferences together with ordered tabs.
+  dialog.onPreferencesChange = (preferences) => {
+    queueMicrotask(() => {
+      dialog.preferences = preferences;
+      dialog.tabs = orderedNavigationTabs(defaults, preferences.orderedIds);
+    });
+  };
+  document.body.append(dialog);
+  await dialog.updateComplete;
+  const input = dialog.shadowRoot?.querySelector("input");
+  if (input == null) throw new Error("Missing search");
+  if (query !== "") {
+    input.value = query;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await dialog.updateComplete;
+  }
+  expect(dialog.shadowRoot?.querySelector(".destination-button.selected")?.textContent).toBe("Chat");
+  const reset = [...dialog.shadowRoot?.querySelectorAll<HTMLButtonElement>("footer button") ?? []].find((button) => button.textContent === "Reset order");
+  if (reset === undefined) throw new Error("Missing reset button");
+  expect(reset.disabled).toBe(false);
+  reset.click();
+  await dialog.updateComplete;
+  await dialog.updateComplete;
+  expect(dialog.preferences).toEqual({ pinnedIds: ["chat"], mobileCollapsed: true });
+  expect(dialog.shadowRoot?.querySelector(".destination-button.selected")?.textContent).toBe("Chat");
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, composed: true }));
+  expect(dialog.onSelect).toHaveBeenCalledWith("chat");
 });
 
 it("toggles icon pins and mobile layout independently, resets tabs, and uses shared Escape handling", async () => {

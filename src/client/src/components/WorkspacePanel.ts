@@ -4,6 +4,7 @@ import { appShellMessages as m } from "../appShellMessages";
 import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, html, type TemplateResult } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
+import { repeat } from "lit/directives/repeat.js";
 import type { Workspace } from "../api";
 import type { QualifiedContributionId } from "../plugins/types";
 import { renderNavigationMenuIcon } from "./tabIcons";
@@ -91,7 +92,7 @@ export class WorkspacePanel extends LitElement {
           <div class=${this.workspaceHeaderFrameClass()}>
             <div class="workspace-header-strip" @scroll=${this.onWorkspaceHeaderScroll}>
               <div class="tabs ui-tabs ui-tabs--primary">
-                ${pinnedPanels.map((panel) => {
+                ${repeat(pinnedPanels, (panel) => panel.id, (panel) => {
                   const selected = selectedPanel?.id === panel.id;
                   const badge = panel.badge?.();
                   const ariaLabel = this.panelTabAriaLabel(panel, badge);

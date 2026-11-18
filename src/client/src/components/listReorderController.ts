@@ -244,17 +244,19 @@ export class ListReorderController<T extends { id: string }> implements Reactive
     this.ghost = undefined;
   }
 
-  /** Insertion slot for a pointer position inside a clipping, scrollable list.
-   * Once the list cannot scroll further, a pointer parked in the bottom edge zone
-   * means "end of list", not "first row still hidden below the fold".
+  /** Preserve row midpoints unless clipping makes the append slot unreachable
+   * even after the list has scrolled to its end.
    */
   private slotForPointer(clientY: number): number {
-    const slot = insertionSlot(this.rowRects(), clientY);
+    const rows = this.rowRects();
+    const slot = insertionSlot(rows, clientY);
     const body = this.scrollBody();
     if (body === null || body.scrollHeight <= body.clientHeight + 1) return slot;
     const atEnd = body.scrollTop + body.clientHeight >= body.scrollHeight - 1;
     const rect = body.getBoundingClientRect();
-    return atEnd && clientY > rect.bottom - AUTOSCROLL_EDGE_PX ? this.options.items().length : slot;
+    const last = rows.at(-1);
+    const endSlotClipped = last !== undefined && (last.top + last.bottom) / 2 >= rect.bottom;
+    return atEnd && endSlotClipped && clientY > rect.bottom - AUTOSCROLL_EDGE_PX ? this.options.items().length : slot;
   }
 
   private scrollBody(): HTMLElement | null {

@@ -27,7 +27,7 @@ export default {
   pinHint: message("Pin destinations to the tab bars. Removing the last pin shows all tabs.", "Destination chooser explanation"),
   reorderHint: message("Drag a handle to reorder; on touch, hold first. Or use the arrow buttons.", "Destination ordering instructions"),
   reorderKeyboardHint: message("Use the Up and Down arrow keys to move this tab.", "Keyboard instructions for a focused reorder handle"),
-  reorderSearchHint: message("Clear search to reorder tabs.", "Explains disabled ordering controls while searching"),
+  reorderSearchHint: message("Clear search to move individual tabs.", "Explains disabled move controls while searching; resetting the whole order remains available"),
   reorder: message<{ label: string }>("Reorder {label}", "Drag handle accessible name"),
   moveUp: message<{ label: string }>("Move {label} up", "Move destination one position earlier"),
   moveDown: message<{ label: string }>("Move {label} down", "Move destination one position later"),

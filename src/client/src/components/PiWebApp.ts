@@ -4397,7 +4397,9 @@ export class PiWebApp extends LitElement {
   };
   private readonly changeNavigationPreferences = (preferences: NavigationPreferences) => {
     this.navigationPreferences = preferences;
-    saveNavigationPreferences(preferences);
+    if (!saveNavigationPreferences(preferences)) {
+      this.browserErrors.reportLocalized({ kind: "global" }, () => appFeedback.t("navigationPreferencesSaveFailed"));
+    }
   };
 
   private renderContextBar() {

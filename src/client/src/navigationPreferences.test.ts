@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { isNavigationPinned, loadNavigationPreferences, moveNavigationTab, orderedNavigationTabs, pinnedNavigationTabs, saveNavigationPreferences, toggleNavigationPin } from "./navigationPreferences";
 
 const tabs = [{ id: "navigation" }, { id: "chat" }, { id: "plugin:files" }];
+
+afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("navigation preferences", () => {
   it("shows all tabs for empty pins and explicit all pins, in destination order", () => {
@@ -63,7 +65,7 @@ describe("navigation preferences", () => {
     const values = new Map<string, string>();
     const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); } };
     const preferences = { pinnedIds: ["chat"], orderedIds: ["missing:tool", "plugin:files", "chat"], mobileCollapsed: true };
-    saveNavigationPreferences(preferences, storage);
+    expect(saveNavigationPreferences(preferences, storage)).toBe(true);
     expect(loadNavigationPreferences(storage)).toEqual(preferences);
     const changed = { ...preferences, pinnedIds: [], mobileCollapsed: false };
     saveNavigationPreferences(changed, storage);
@@ -89,12 +91,17 @@ describe("navigation preferences", () => {
     expect(loadNavigationPreferences(storage)).toEqual({ ...preferences, mobileCollapsed: false });
   });
 
+  it("reports unavailable browser storage as an unsuccessful save", () => {
+    vi.stubGlobal("localStorage", undefined);
+    expect(saveNavigationPreferences({ pinnedIds: [], mobileCollapsed: true })).toBe(false);
+  });
+
   it("defaults safely for malformed or unavailable storage and validates stored values", () => {
     const storage = (raw: string) => ({ getItem: () => raw });
     expect(loadNavigationPreferences(storage("{"))).toEqual({ pinnedIds: [], mobileCollapsed: false });
     expect(loadNavigationPreferences(storage('{"pinnedIds":["chat",5,"chat",""],"mobileCollapsed":"true"}'))).toEqual({ pinnedIds: ["chat"], mobileCollapsed: false });
     const blocked = { getItem: () => { throw new Error("Blocked"); }, setItem: () => { throw new Error("Blocked"); } };
     expect(loadNavigationPreferences(blocked)).toEqual({ pinnedIds: [], mobileCollapsed: false });
-    expect(() => { saveNavigationPreferences({ pinnedIds: [], mobileCollapsed: true }, blocked); }).not.toThrow();
+    expect(saveNavigationPreferences({ pinnedIds: [], mobileCollapsed: true }, blocked)).toBe(false);
   });
 });

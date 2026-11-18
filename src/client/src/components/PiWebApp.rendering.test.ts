@@ -560,6 +560,78 @@ describe("application rendering boundaries", () => {
     expect(Reflect.get(reloaded, "navigationPreferences")).toEqual(loadNavigationPreferences());
   });
 
+  it.each([false, true])("restores the same destination after reordering while Navigation is open (desktop=%s)", async (desktop) => {
+    saveNavigationPreferences({ pinnedIds: [], orderedIds: ["render-test:panel", "other:panel"], mobileCollapsed: false });
+    const app = await mountApp({ selectedWorkspace: workspace, mainView: "workspace", workspaceTool: "other:panel" }, () => html`<p>Test content</p>`);
+    const registry: unknown = Reflect.get(app, "plugins");
+    const shell: unknown = Reflect.get(app, "appShell");
+    if (!(registry instanceof PluginRegistry) || !(shell instanceof AppShellController)) throw new Error("Expected app controllers");
+    await registry.register({ id: "other", plugin: { apiVersion: 4, name: "Other", activate: () => ({ contributions: {
+      workspacePanels: [{ id: "panel", title: "Other", order: 100, render: () => html`<p>Other content</p>` }],
+    } }) } });
+    shell.isMobileNavigationLayout = !desktop;
+    shell.isDesktopSideBySideLayout = desktop;
+    app.requestUpdate();
+    await settle(app);
+    const strip = app.shadowRoot?.querySelector<WorkspacePanel | AppMobileMainTabs>(desktop ? "workspace-panel" : "app-mobile-main-tabs");
+    const opener = namedButton(strip?.shadowRoot, "Test");
+    opener.focus();
+    // Like the keyboard shortcut, this opens Navigation without focusing its menu button.
+    strip?.onShowNavigation?.();
+    await settle(app);
+    const dialog = app.shadowRoot?.querySelector<NavigationDialog>("navigation-dialog");
+    const move = namedButton(dialog?.shadowRoot, "Move Test down");
+    expect(move.disabled).toBe(false);
+    move.click();
+    await settle(app);
+    expect(dialog?.tabs.slice(0, 2).map((tab) => tab.id)).toEqual(["other:panel", "render-test:panel"]);
+    namedButton(dialog?.shadowRoot, "Close").click();
+    await settle(app);
+
+    expect(deepActiveElement(document)).toBe(namedButton(strip?.shadowRoot, "Test"));
+    expect(namedButton(strip?.shadowRoot, "Test")).toBe(opener);
+    opener.click();
+    await settle(app);
+    expect(Reflect.get(app, "state")).toMatchObject({ mainView: "workspace", workspaceTool: "render-test:panel" });
+    expect(app.shadowRoot?.querySelector("workspace-panel")?.shadowRoot?.querySelector(".panel-content")?.textContent).toContain("Test content");
+  });
+
+  it.each([false, true])("keeps changed navigation preferences active and reports only failed saves (blocked=%s)", async (blocked) => {
+    const initial = { pinnedIds: [], mobileCollapsed: false };
+    saveNavigationPreferences(initial);
+    const { app } = await mountMobileNavigationApp({ mainView: "chat" });
+    const strip = app.shadowRoot?.querySelector<AppMobileMainTabs>("app-mobile-main-tabs");
+    namedButton(strip?.shadowRoot, "Navigation").click();
+    await settle(app);
+    const dialog = app.shadowRoot?.querySelector<NavigationDialog>("navigation-dialog");
+    if (dialog == null) throw new Error("Expected navigation dialog");
+    if (blocked) {
+      const storage = localStorage;
+      vi.stubGlobal("localStorage", {
+        getItem: (key) => storage.getItem(key),
+        setItem: () => { throw new Error("Storage blocked"); },
+        removeItem: (key) => { storage.removeItem(key); },
+        clear: () => { storage.clear(); },
+        key: (index) => storage.key(index),
+        get length() { return storage.length; },
+      } satisfies Storage);
+    }
+    const changed = { ...initial, orderedIds: ["chat", "navigation"], pinnedIds: ["chat"] };
+    dialog.onPreferencesChange?.(changed);
+    await settle(app);
+    expect(dialog.preferences).toEqual(changed);
+    expect(strip?.tabs.map((tab) => tab.id)).toEqual(["chat"]);
+    expect(loadNavigationPreferences()).toEqual(blocked ? initial : changed);
+    namedButton(dialog.shadowRoot, "Close").click();
+    await settle(app);
+    const messages = app.shadowRoot?.querySelector("notification-area")?.shadowRoot?.querySelectorAll(".notification-message");
+    expect(messages?.length ?? 0).toBe(blocked ? 1 : 0);
+    if (blocked) {
+      expect(messages?.[0]?.textContent.trim()).toBe(appFeedbackMessages.t("navigationPreferencesSaveFailed"));
+      expect(Reflect.get(app, "state")).toMatchObject({ browserErrors: { global: { scope: { kind: "global" } } } });
+    }
+  });
+
   it("persists order changes across the dialog, mobile tabs, and desktop tools without changing selection", async () => {
     saveNavigationPreferences({ pinnedIds: [], orderedIds: ["missing:tool"], mobileCollapsed: false });
     const app = new RenderOnlyApp();
