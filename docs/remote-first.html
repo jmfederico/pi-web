@@ -6,7 +6,7 @@
     <title>Remote-first Pi web UI — PI WEB</title>
     <meta
       name="description"
-      content="Why PI WEB keeps Pi Coding Agent sessions running outside your device while any browser becomes a web UI for supervision and review."
+      content="Use Pi Coding Agent from a laptop, phone, or tablet while projects and sessions stay on a host you control. Learn how to connect privately with PI WEB."
     />
     <link rel="canonical" href="https://pi-web.dev/remote-first" />
     <meta property="og:type" content="website" />
@@ -80,11 +80,11 @@
     <main id="main">
       <section class="page-hero">
         <div class="container">
-          <p class="overline">Remote-first development</p>
+          <p class="overline">Work from any device</p>
           <h1>Remote access</h1>
           <p>
-            PI WEB is built around a simple shift: AI-driven development should live where the work can persist, not
-            where your current keyboard happens to be. You supervise the work; you do not have to host it.
+            Use your laptop, phone, or tablet to direct agents and review their work. Projects, tools, and sessions
+            stay on a host you control. Keep that host running and connect through a trusted private path.
           </p>
         </div>
       </section>
@@ -93,101 +93,66 @@
         <div class="container doc-layout">
           <aside class="toc" aria-label="Remote-first page contents">
             <strong>On this page</strong>
-            <a href="#why-local-blocks">The old assumption</a>
-            <a href="#persistence-first">Persistence first-class</a>
-            <a href="#what-remote-unlocks">What remote unlocks</a>
-            <a href="#browser-control">Browser as web UI</a>
-            <a href="#human-role">The human role</a>
-            <a href="#recommended-shape">Recommended shape</a>
+            <a href="#why-local-blocks">Keep work on one host</a>
+            <a href="#persistence-first">Return to running sessions</a>
+            <a href="#what-remote-unlocks">Run work in parallel</a>
+            <a href="#browser-control">Switch devices</a>
+            <a href="#human-role">Direct and review</a>
+            <a href="#recommended-shape">Connect privately</a>
           </aside>
 
           <div class="doc-content">
             <section id="why-local-blocks">
-              <h2>Developer tools assumed the work lived locally</h2>
+              <h2>Keep work on one host</h2>
               <p>
-                Editors and terminals were built around a simple assumption: the work lives with you, on your device,
-                inside your session. That made sense when one human drove every keystroke from one machine.
-              </p>
-              <p>
-                AI agents break that assumption. The work can outlive the laptop session, and agents need stable
-                repositories, shells, tools, secrets, build caches, and time to keep running.
-              </p>
-              <p>
-                When all of that is tied to a laptop, the laptop becomes the bottleneck: close the lid, change devices,
-                lose network, reboot, or run out of battery, and the work environment is interrupted.
+                Run PI WEB on a workstation, dev box, home server, or cloud VM. Repositories, dependencies, caches,
+                and credentials stay there, so changing devices does not mean moving your development environment.
+                A laptop works too, but its agents cannot keep working while it sleeps or shuts down.
               </p>
             </section>
 
             <section id="persistence-first">
-              <h2>Persistence should not be a workaround</h2>
+              <h2>Return to running sessions</h2>
               <p>
-                A browser disconnect should not stop an agent. PI WEB keeps the session runtime separate from the
-                browser and web/API service, so reconnecting brings you back to the running work.
+                Close a browser tab or lose your connection without stopping agents on the host. Sessions run
+                separately from the browser and web/API service; reconnect to return to their work.
               </p>
-              <p>
+              <div class="callout warning">
                 Keep the host and session daemon running. A host shutdown or session-daemon restart can interrupt
-                active work; browser reconnects and web/API restarts do not provide protection against those interruptions.
-              </p>
-              <div class="callout manifesto-callout">
-                If AI is doing the work, the work should not be tied to your laptop.
+                active work. Browser reconnects and web/API restarts do not protect against those interruptions.
               </div>
             </section>
 
             <section id="what-remote-unlocks">
-              <h2>Remote AI-driven development unlocks persistent work</h2>
+              <h2>Run work in parallel</h2>
               <p>
-                Run the environment on a machine that stays on: a dev box, home server, cloud VM, workstation, or private
-                network host. Keep agents and worktrees there. Connect from whatever screen you have.
+                Use separate sessions and worktrees for independent tasks on the same host. If your work spans
+                several hosts, <a href="machines">connect trusted machines</a> and switch between them from one PI WEB URL.
               </p>
-              <div class="cards">
-                <article class="card">
-                  <div class="card-icon">↻</div>
-                  <h3>Always available</h3>
-                  <p>Sessions keep existing after browser disconnects and can be resumed later.</p>
-                </article>
-                <article class="card">
-                  <div class="card-icon">▦</div>
-                  <h3>Parallel by default</h3>
-                  <p>Use worktrees and persistent sessions to let multiple agent streams progress independently.</p>
-                </article>
-                <article class="card">
-                  <div class="card-icon">⌁</div>
-                  <h3>One real environment</h3>
-                  <p>Dependencies, caches, credentials, and repository state stay where the agents run.</p>
-                </article>
-              </div>
             </section>
 
             <section id="browser-control">
-              <h2>The browser becomes your Pi web UI</h2>
+              <h2>Switch devices, not environments</h2>
               <p>
-                Your device should not have to be the editor, terminal, build server, and agent runtime. In PI WEB, the
-                browser is the cockpit: supervise sessions, redirect agents, inspect transcripts, and review progress
-                while repositories, tools, and credentials stay on the remote machine.
-              </p>
-              <p>
-                Laptop, phone, tablet, desktop: they are just windows into the same running work. You remain in control,
-                but you are no longer the machine carrying the work.
+                Open the same PI WEB address from another device to reach your projects and sessions. The browser
+                gives you access to conversations, files, diffs, and terminals without installing PI WEB on every device.
               </p>
             </section>
 
             <section id="human-role">
-              <h2>The human role becomes direction, judgment, and review</h2>
+              <h2>Direct agents and review changes</h2>
               <p>
-                Remote-first does not remove the human. It moves the human away from carrying the whole development
-                environment and toward higher-leverage work: choosing direction, setting constraints, reviewing changes,
-                and deciding what ships.
-              </p>
-              <p>
-                You do not carry the work. You guide it.
+                Set a task and its constraints, inspect transcripts, and send follow-up instructions. Review changes
+                before deciding what ships; remote access keeps those decisions available wherever you connect.
               </p>
             </section>
 
             <section id="recommended-shape">
-              <h2>Recommended shape</h2>
+              <h2>Connect privately</h2>
               <p>
-                PI WEB works locally, but it shines on a machine that stays on and is reachable through a private path:
-                SSH tunnel, VPN, private LAN, or an authenticated reverse proxy.
+                Choose an SSH tunnel, VPN, private LAN, or authenticated reverse proxy. The
+                <a href="install#remote-access">remote access setup guide</a> includes the SSH command and network precautions;
+                see <a href="install#reverse-proxy-prefix">reverse proxy setup</a> for root and path-prefix deployments.
               </p>
               <div class="callout warning">
                 Do not expose PI WEB directly to the public internet. It can run commands and access files with the

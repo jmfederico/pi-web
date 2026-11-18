@@ -8,11 +8,13 @@ The visual world is the existing ink/navy canvas, pale reading text, muted suppo
 
 Scope: the public website under `docs/`. The application has separate primitives and theme ownership; website classes are not an app or plugin styling API.
 
-## Tagline
+## Positioning and tagline
 
-Use **“Your agents. Any device.”** as the product tagline. On the homepage it closes the opening paragraph, once, with emphasis; do not repeat it below the device flow. Supporting copy distinguishes where agents run from the devices used to access them: no need to move the working environment or install PI WEB on every device. Keep the host-must-stay-on and private-access qualifications. Keep **“A web interface for your AI agents.”** as the category headline, with Pi Coding Agent named nearby.
+Position PI WEB as **“A remote-first workspace for AI agents.”** Use that category in the homepage headline, title, and social titles. Name **Pi Coding Agent** nearby as the foundation, without defining the audience exclusively as developers. Explain the capabilities we support; do not invent non-developer use cases or claim replacement of another product without evidence.
 
-Use both category phrases naturally: **“Web UI for Pi Coding Agent”** in the homepage title and social titles, **“web UI”** in supporting copy, and **“web interface”** in the visible headline. Do not repeat keywords throughout the page or assume search demand has been measured.
+Keep **“web interface”** explicit in the opening copy: it is the user-facing surface, not the full product category. Show it with the existing desktop and phone screenshots. Explain that agents, files, and tools stay on a computer or server the user controls, and that plugins and workflows let people extend the workspace. Do not reduce the product to a web UI or make “workspace” an unexplained abstraction.
+
+Use **“Your agents. Any device.”** as the product tagline. On the homepage it closes the opening paragraph, once, with emphasis; do not repeat it below the device flow. Supporting copy distinguishes where agents run from the devices used to access them: no need to move the working environment or install PI WEB on every device. Keep the host-must-stay-on and private-access qualifications. Use “web UI” naturally where useful, without keyword repetition or assumptions about search demand.
 
 ## Foundations and hierarchy
 
