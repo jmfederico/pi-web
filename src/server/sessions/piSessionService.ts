@@ -1173,6 +1173,8 @@ export interface PiSessionServiceDependencies {
   messageTargets?: SpawnTargetResolver;
   /** Disable session messaging even when a project-scope resolver is available. Defaults to true. */
   sessionMessagesEnabled?: boolean;
+  /** Allow messages to any session on this machine; does not broaden spawning or control. Defaults to false. */
+  crossProjectSessionMessages?: boolean;
   /**
    * When true (and `spawnTargets` is provided), the tracked-subsession
    * tools are available to sessions whose creation provenance permits
@@ -1322,6 +1324,7 @@ export class PiSessionService implements SessionRouteService {
   private readonly workspaceActivity: Pick<WorkspaceActivityService, "applySessionStatus" | "applySessionActivity" | "removeSession" | "reconcileSessionActivity" | "applySessionIntervention"> | undefined;
   private readonly spawnTargets: SpawnTargetResolver | undefined;
   private readonly messageTargets: SpawnTargetResolver | undefined;
+  private readonly crossProjectSessionMessages: boolean;
   private readonly logger: PiSessionLogger;
   private readonly queueCompatibility = new QueueCompatibilityGuard<PiAgentSession>((session, err) => {
     this.logger.info({ sessionId: session.sessionId, err }, "Disabled SDK-dependent queue controls after an incompatible queue interface");
@@ -1360,6 +1363,7 @@ export class PiSessionService implements SessionRouteService {
     this.modelRuntime = deps.modelRuntime;
     this.spawnTargets = deps.spawnTargets;
     this.messageTargets = deps.sessionMessagesEnabled === false ? undefined : deps.messageTargets ?? deps.spawnTargets;
+    this.crossProjectSessionMessages = deps.crossProjectSessionMessages ?? false;
     this.logger = deps.logger ?? noopLogger;
     this.now = deps.now ?? (() => new Date());
     this.activityMarker = new SessionActivityMarker({
@@ -1400,7 +1404,10 @@ export class PiSessionService implements SessionRouteService {
       },
       deps.askUserEnabled === true,
       deps.appendSystemPromptSections ?? [],
-      this.messageTargets === undefined ? undefined : { send: (input) => this.sendSessionMessage(input) },
+      this.messageTargets === undefined ? undefined : {
+        crossProjectSessionMessages: this.crossProjectSessionMessages,
+        send: (input) => this.sendSessionMessage(input),
+      },
       (sessionId) => this.checkSelfArchive(sessionId),
     );
     this.createRuntime = (options) => {
@@ -2352,7 +2359,7 @@ export class PiSessionService implements SessionRouteService {
     await this.archive({ id: sessionId, cwd: child.sessionManager.getCwd() });
   }
 
-  /** Send content, not control authority, to a named session in the same project. */
+  /** Send content, not control authority, within the configured machine-wide messaging scope. */
   async sendSessionMessage(input: SendSessionMessageInvocation): Promise<SendSessionMessageResult> {
     if (this.messageTargets === undefined) throw new Error("Session messaging is unavailable");
     const message = requirePromptText(input.message);
@@ -2361,11 +2368,20 @@ export class PiSessionService implements SessionRouteService {
       ? (await this.sessionManager.listAll()).find((entry) => entry.id === input.sessionId)
       : { id: input.sessionId, cwd: active.runtime.cwd };
     if (target === undefined) throw new Error("Session not found");
-    const decision = await this.messageTargets.resolveSpawnTarget(input.sendingCwd, target.cwd);
+    const decision = this.crossProjectSessionMessages
+      ? { allowed: true as const, cwd: target.cwd }
+      : await this.messageTargets.resolveSpawnTarget(input.sendingCwd, target.cwd);
     if (!decision.allowed) throw new Error("Session messaging is limited to sessions in the same registered project");
     const ref = { id: input.sessionId, cwd: decision.cwd };
     await this.assertWritable(ref);
-    const session = await this.getOrOpen(ref);
+    const session = await this.getOrOpen(ref, { writableOnly: true });
+    // Archival may finish after preflight; getOrOpen can then open the archived transcript.
+    await this.assertWritable(ref);
+    // Teardown can remove the old runtime before persisting its archive record.
+    // Do not yield between these admission checks and acquiring the mutation receipt below.
+    if (!this.isCurrentActiveSession(session)) throw new Error("Session changed before message delivery. Retry the message.");
+    this.assertSessionArchiveInactive(session.sessionId);
+    if (this.isTreeExclusiveOperationActive(session)) throw new Error("Cannot receive a session message while a session lifecycle operation is active");
     this.assertTreeNavigationInactive(session, "receive a session message");
     const delivery = this.hasActiveWork(session) ? "queued" : "started";
     let agentStarted = false;
@@ -4506,8 +4522,8 @@ export class PiSessionService implements SessionRouteService {
     this.mcpAuthFlows.assertSessionAvailable(ref.id);
   }
 
-  private async getOrOpen(ref: PiSessionRef): Promise<PiAgentSession> {
-    return (await this.getActive(ref)).runtime.session;
+  private async getOrOpen(ref: PiSessionRef, options: { writableOnly?: boolean } = {}): Promise<PiAgentSession> {
+    return (await this.getActive(ref, options)).runtime.session;
   }
 
   /**
@@ -4562,14 +4578,20 @@ export class PiSessionService implements SessionRouteService {
     return match?.path;
   }
 
-  private async getActive(ref: PiSessionRef, options: Pick<CreateSessionRuntimeOptions, "notificationGeneration"> = {}): Promise<ActiveSession<PiSessionRuntime>> {
+  private async getActive(ref: PiSessionRef, options: Pick<CreateSessionRuntimeOptions, "notificationGeneration"> & { writableOnly?: boolean } = {}): Promise<ActiveSession<PiSessionRuntime>> {
     this.assertSessionArchiveInactive(ref.id);
+    if (options.writableOnly === true && this.isTreeExclusiveSessionIdentityActive(ref.id)) {
+      throw new Error("Cannot open a session while a session lifecycle operation is active");
+    }
     const active = this.activeForRef(ref);
     const pending = this.pendingSessionOpens.get(JSON.stringify([canonicalizeStoredCwd(ref.cwd), active?.runtime.session.sessionId ?? ref.id]));
     if (pending !== undefined) return pending.promise;
     if (active !== undefined) return active;
 
     const archived = await this.getArchived(ref);
+    if (options.writableOnly === true && archived !== undefined) {
+      throw new Error("Archived sessions are read-only. Restore the session to continue.");
+    }
     if (archived?.archivePath !== undefined) {
       const { archivePath } = archived;
       return this.openExistingSession(
@@ -4593,9 +4615,14 @@ export class PiSessionService implements SessionRouteService {
     sessionId: string,
     cwd: string,
     openSessionManager: () => PiSessionManager,
-    options: Pick<CreateSessionRuntimeOptions, "notificationGeneration" | "notifications"> = {},
+    options: Pick<CreateSessionRuntimeOptions, "notificationGeneration" | "notifications"> & { writableOnly?: boolean } = {},
   ): Promise<ActiveSession<PiSessionRuntime>> {
     this.assertSessionArchiveInactive(sessionId);
+    // Messaging cannot initialize a runtime while archival/replacement owns its identity.
+    // Lifecycle owners such as reload still need to open their own replacement runtime.
+    if (options.writableOnly === true && this.isTreeExclusiveSessionIdentityActive(sessionId)) {
+      throw new Error("Cannot open a session while a session lifecycle operation is active");
+    }
     const key = JSON.stringify([canonicalizeStoredCwd(cwd), sessionId]);
     const existing = this.pendingSessionOpens.get(key);
     if (existing !== undefined) return existing.promise;

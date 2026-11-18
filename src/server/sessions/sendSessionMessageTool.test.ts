@@ -17,6 +17,13 @@ describe("createSendSessionMessageToolDefinition", () => {
     expect(Check(tool.parameters, { sessionId: "target" })).toBe(false);
   });
 
+  it.each([false, true])("advertises the configured messaging scope, cross-project=%s", (crossProjectSessionMessages) => {
+    const tool = createSendSessionMessageToolDefinition("/repos/a", { send: vi.fn(), crossProjectSessionMessages });
+    const scope = crossProjectSessionMessages ? /across all projects/ : /in the same project/;
+    expect(tool.description).toMatch(scope);
+    expect(tool.parameters).toHaveProperty(["properties", "sessionId", "description"], expect.stringMatching(scope));
+  });
+
   it("derives the internal sender from the live context and scopes delivery to the factory workspace", async () => {
     const send = vi.fn<SendSessionMessageToolDeps["send"]>(() => Promise.resolve({ sessionId: "target", delivery: "started" }));
     const tool = createSendSessionMessageToolDefinition("/repos/a", { send });

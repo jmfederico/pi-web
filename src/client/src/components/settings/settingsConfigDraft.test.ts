@@ -104,10 +104,12 @@ describe("settings config drafts", () => {
     expect(gatewayServerConfigFromDraft(draft)).not.toHaveProperty("defaultStreamingBehavior");
   });
 
-  it.each([true, false])("preserves sessionMessages %s during gateway edits", (sessionMessages) => {
+  it.each(["sessionMessages", "crossProjectSessionMessages"] as const)("preserves %s during gateway edits", (key) => {
     const draft = gatewayServerDraftFromConfig({ host: "gateway.local" });
-    expect(gatewayServerConfigFromDraft(draft, { sessionMessages }).sessionMessages).toBe(sessionMessages);
-    expect(gatewayServerConfigFromDraft(draft)).not.toHaveProperty("sessionMessages");
+    for (const value of [true, false]) {
+      expect(gatewayServerConfigFromDraft(draft, { [key]: value })[key]).toBe(value);
+    }
+    expect(gatewayServerConfigFromDraft(draft)).not.toHaveProperty(key);
   });
 
   it.each([true, false])("preserves quietMode %s during gateway edits", (quietMode) => {

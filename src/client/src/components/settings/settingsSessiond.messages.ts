@@ -13,7 +13,7 @@ export default {
   spawnRequired: message("Requires “Allow agents to start sessions”.", "Child-session permission dependency when session spawning is enabled"),
   enableSpawn: message("Enable “Allow agents to start sessions” first.", "Child-session permission dependency when session spawning is disabled"),
   sessionMessages: message("Allow agents to message other sessions", "Cross-session messaging permission toggle"),
-  sessionMessagesHelp: message<{ code: Rich; tool: string }>("Agents can send messages to sessions in the same registered project with <code>{tool}</code>. This does not grant access to their results or control over them.", "Cross-session messaging guidance; tool is an untranslated tool identifier"),
+  sessionMessagesHelp: message<{ code: Rich; tool: string }>("Agents can send messages with <code>{tool}</code>. Messaging stays within the same project unless cross-project messaging is enabled in the machine config. This does not grant access to results or session controls.", "Cross-session messaging guidance; tool is an untranslated tool identifier"),
   askUser: message("Allow agents to ask you questions", "Question form permission toggle"),
   askUserHelp: message<{ code: Rich; tool: string }>("Agents can show a question form and wait for your answers with <code>{tool}</code>.", "Question form guidance; tool is an untranslated tool identifier"),
   envOverride: message<{ variable: string; code: Rich }>("Read-only because <code>{variable}</code> overrides this setting. Change or remove it in the daemon environment to edit here.", "Permission environment override; variable is an untranslated environment variable name"),

@@ -17,6 +17,12 @@ type RuntimeFixture = ReturnType<typeof fakeRuntime>;
 type ArchiveStore = NonNullable<PiSessionServiceDependencies["archiveStore"]>;
 type ArchiveRecord = Awaited<ReturnType<ArchiveStore["archive"]>>;
 
+function deferred<T>() {
+  let resolve: (value: T) => void = () => { throw new Error("Deferred promise is not initialized"); };
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
 function journalRuntime(id: string, file = `/sessions/${id}.jsonl`, cwd = CWD) {
   const entries: unknown[] = [];
   const appendCustomEntry = vi.fn((customType: string, data?: unknown) => {
@@ -75,7 +81,7 @@ function fixture(runtimes: RuntimeFixture[], deps: Partial<PiSessionServiceDepen
     ...deps,
   });
   services.add(service);
-  return { service, events, archived, archive, restore, createAgentRuntime, listAll, open, resolveSpawnTarget };
+  return { service, events, archived, archiveStore, archive, restore, createAgentRuntime, listAll, open, resolveSpawnTarget };
 }
 
 async function trackedFixture() {
@@ -257,7 +263,7 @@ describe("PiSessionService direct-child lifecycle control", () => {
   });
 });
 
-describe("PiSessionService same-project session messaging", () => {
+describe("PiSessionService session messaging", () => {
   const message = "  Please investigate this independently.\n\nKeep this body unchanged.  \n";
   const send = (service: PiSessionService, target = CHILD, sender = PARENT) => service.sendSessionMessage({ sendingCwd: CWD, sendingSessionId: sender, sessionId: target, message });
 
@@ -266,6 +272,7 @@ describe("PiSessionService same-project session messaging", () => {
     const resolveMessageTarget = vi.fn(() => Promise.resolve({ allowed: true as const, cwd: CWD }));
     const { service, createAgentRuntime, listAll, resolveSpawnTarget } = fixture([target], {
       sessionMessagesEnabled: false,
+      crossProjectSessionMessages: true,
       ...(explicitResolver ? { messageTargets: { resolveSpawnTarget: resolveMessageTarget } } : {}),
     });
     await expect(send(service)).rejects.toThrow("Session messaging is unavailable");
@@ -435,6 +442,33 @@ describe("PiSessionService same-project session messaging", () => {
     expect(target.calls.sendCustomMessage).toHaveLength(0);
   });
 
+  it.each(["active", "persisted"])("allows a cross-project %s target when enabled without granting control or broadening spawning", async (state) => {
+    const targetCwd = "/other-project";
+    const target = journalRuntime(CHILD, "/sessions/other-project.jsonl", targetCwd);
+    const gateway = sessionGateway([{ ...sessionRecord(CHILD, targetCwd), path: target.session.sessionFile ?? "" }]);
+    const open = vi.fn(() => target.session.sessionManager);
+    const resolveSpawnTarget = vi.fn(() => Promise.resolve({ allowed: false as const, reason: "out-of-project" as const, allowedCwds: [CWD] }));
+    const { service } = fixture([target], {
+      sessionManager: { ...gateway, open },
+      messageTargets: { resolveSpawnTarget },
+      spawnTargets: { resolveSpawnTarget },
+      crossProjectSessionMessages: true,
+    });
+    if (state === "active") await service.start(targetCwd);
+    await expect(send(service)).resolves.toEqual({ sessionId: CHILD, delivery: "started" });
+    expect(resolveSpawnTarget).not.toHaveBeenCalled();
+    if (state === "persisted") expect(open).toHaveBeenCalledWith(target.session.sessionFile);
+    expect(target.calls.sendCustomMessage[0]?.message).toMatchObject({
+      content: `Message from session ${PARENT}:\n\n${message}`,
+      details: { sendingSessionId: PARENT, body: message },
+    });
+    await expect(service.listSubsessions(PARENT)).resolves.toEqual([]);
+    await expect(service.readSubsession(PARENT, CHILD, {})).rejects.toThrow(/not one of your subsessions/i);
+    await expect(service.stopSubsession(PARENT, CHILD)).rejects.toThrow(/not one of your subsessions/i);
+    await expect(service.spawnSession({ spawningCwd: CWD, spawningSessionId: PARENT, cwd: targetCwd, prompt: "task" })).rejects.toThrow();
+    expect(resolveSpawnTarget).toHaveBeenCalledWith(CWD, targetCwd);
+  });
+
   it("does not bypass project authorization for an already active target", async () => {
     const target = journalRuntime(CHILD, "/sessions/other-project.jsonl", "/other-project");
     const { service, listAll } = fixture([target], {
@@ -456,17 +490,211 @@ describe("PiSessionService same-project session messaging", () => {
     expect(target.calls.sendCustomMessage).toHaveLength(1);
   });
 
-  it("rejects archived targets before opening, without restoring or delivering", async () => {
+  it.each([false, true])("rejects archived targets before opening with cross-project messaging=%s", async (crossProjectSessionMessages) => {
     const target = journalRuntime(CHILD);
     const gateway = sessionGateway([sessionRecord(CHILD)]);
     const open = vi.fn(() => target.session.sessionManager);
-    const { service, archived, restore, createAgentRuntime } = fixture([target], { sessionManager: { ...gateway, open } });
+    const { service, archived, restore, createAgentRuntime } = fixture([target], { sessionManager: { ...gateway, open }, crossProjectSessionMessages });
     archived.set(CHILD, { sessionId: CHILD, cwd: CWD, archivedAt: "2026-01-01T00:00:00.000Z" });
     await expect(send(service)).rejects.toThrow(/archived.*read.only/i);
     expect(open).not.toHaveBeenCalled();
     expect(createAgentRuntime).not.toHaveBeenCalled();
     expect(restore).not.toHaveBeenCalled();
     expect(target.calls.sendCustomMessage).toHaveLength(0);
+  });
+
+  it.each([false, true])("rejects delivery during archive teardown before the archive record exists, cross-project=%s", async (crossProjectSessionMessages) => {
+    const target = journalRuntime(CHILD);
+    const reopened = journalRuntime(CHILD);
+    const gateway = sessionGateway([{ ...sessionRecord(CHILD), path: target.session.sessionFile ?? "" }]);
+    let releaseDispose: () => void = () => { throw new Error("Dispose gate is not initialized"); };
+    const disposing = new Promise<void>((resolve) => { releaseDispose = resolve; });
+    let notifyDispose: () => void = () => { throw new Error("Dispose signal is not initialized"); };
+    const disposeEntered = new Promise<void>((resolve) => { notifyDispose = resolve; });
+    const dispose = vi.spyOn(target.runtime, "dispose").mockImplementation(() => {
+      notifyDispose();
+      return disposing;
+    });
+    const { service, archive, archived, createAgentRuntime } = fixture([target, reopened], {
+      sessionManager: { ...gateway, open: () => reopened.session.sessionManager },
+      crossProjectSessionMessages,
+    });
+    await service.start(CWD);
+    const archiving = service.archive({ id: CHILD, cwd: CWD });
+    try {
+      await Promise.race([
+        disposeEntered,
+        archiving.then(() => { throw new Error("Archival settled before disposal started"); }),
+      ]);
+      expect(dispose).toHaveBeenCalledOnce();
+      expect(archive).not.toHaveBeenCalled();
+      expect(archived.has(CHILD)).toBe(false);
+      expect(service.activeCount()).toBe(0);
+      await expect(send(service)).rejects.toThrow(/session lifecycle.*active/i);
+      expect(target.calls.sendCustomMessage).toEqual([]);
+      expect(reopened.calls.sendCustomMessage).toEqual([]);
+      expect(createAgentRuntime).toHaveBeenCalledOnce();
+    } finally {
+      releaseDispose();
+      await archiving;
+    }
+    expect(archive).toHaveBeenCalledOnce();
+    expect(service.activeCount()).toBe(0);
+  });
+
+  it("rejects rather than joining a lifecycle-owned pending runtime open", async () => {
+    const target = journalRuntime(CHILD);
+    const replacement = journalRuntime(CHILD);
+    const gateway = sessionGateway([{ ...sessionRecord(CHILD), path: target.session.sessionFile ?? "" }]);
+    const { service, createAgentRuntime } = fixture([target, replacement], {
+      sessionManager: { ...gateway, open: () => replacement.session.sessionManager },
+      crossProjectSessionMessages: true,
+    });
+    await service.start(CWD);
+    const openingEntered = deferred<undefined>();
+    const opening = deferred<typeof replacement.runtime>();
+    createAgentRuntime.mockImplementationOnce(() => {
+      openingEntered.resolve(undefined);
+      return opening.promise;
+    });
+    const reloading = service.reload({ id: CHILD, cwd: CWD });
+    let sending: Promise<unknown> | undefined;
+    try {
+      await Promise.race([
+        openingEntered.promise,
+        reloading.then(() => { throw new Error("Reload settled before opening started"); }),
+      ]);
+      const rejected = vi.fn();
+      sending = send(service).then(
+        () => { throw new Error("Send should reject during reload"); },
+        (error: unknown) => { rejected(error); },
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(rejected).toHaveBeenCalledOnce();
+      expect(rejected.mock.calls[0]?.[0]).toHaveProperty("message", expect.stringMatching(/session lifecycle.*active/i));
+      expect(replacement.calls.sendCustomMessage).toEqual([]);
+    } finally {
+      opening.resolve(replacement.runtime);
+      await reloading;
+      await sending;
+    }
+  });
+
+  it("rejects a stale runtime if reload finishes during final admission, allowing the sender to retry", async () => {
+    const target = journalRuntime(CHILD);
+    const replacement = journalRuntime(CHILD);
+    const gateway = sessionGateway([{ ...sessionRecord(CHILD), path: target.session.sessionFile ?? "" }]);
+    const { service, archiveStore } = fixture([target, replacement], {
+      sessionManager: { ...gateway, open: () => replacement.session.sessionManager },
+      crossProjectSessionMessages: true,
+    });
+    await service.start(CWD);
+    const writabilityEntered = deferred<undefined>();
+    const writability = deferred<ArchiveRecord | undefined>();
+    vi.spyOn(archiveStore, "get")
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(() => { writabilityEntered.resolve(undefined); return writability.promise; });
+    const sending = send(service);
+    try {
+      await Promise.race([
+        writabilityEntered.promise,
+        sending.then(() => { throw new Error("Send settled before the final writability check"); }),
+      ]);
+      await service.reload({ id: CHILD, cwd: CWD });
+      writability.resolve(undefined);
+      await expect(sending).rejects.toThrow(/session changed.*retry/i);
+      expect(target.calls.sendCustomMessage).toEqual([]);
+      expect(replacement.calls.sendCustomMessage).toEqual([]);
+    } finally {
+      writability.resolve(undefined);
+      await Promise.allSettled([sending]);
+    }
+    await expect(send(service)).resolves.toMatchObject({ delivery: "started" });
+    expect(replacement.calls.sendCustomMessage).toHaveLength(1);
+  });
+
+  it("rejects admission when tree archival reserves the target during the final writability check", async () => {
+    const target = journalRuntime(CHILD);
+    const { service, archiveStore } = fixture([target], { crossProjectSessionMessages: true });
+    await service.start(CWD);
+    const writabilityEntered = deferred<undefined>();
+    const writability = deferred<ArchiveRecord | undefined>();
+    const discoveryEntered = deferred<undefined>();
+    const discovery = deferred<ArchiveRecord[]>();
+    vi.spyOn(archiveStore, "get")
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(() => { writabilityEntered.resolve(undefined); return writability.promise; });
+    vi.spyOn(archiveStore, "list").mockImplementationOnce(() => {
+      discoveryEntered.resolve(undefined);
+      return discovery.promise;
+    });
+    const sending = send(service);
+    let archiving: ReturnType<PiSessionService["archiveTree"]> | undefined;
+    try {
+      await Promise.race([
+        writabilityEntered.promise,
+        sending.then(() => { throw new Error("Send settled before the final writability check"); }),
+      ]);
+      archiving = service.archiveTree({ id: CHILD, cwd: CWD });
+      await Promise.race([
+        discoveryEntered.promise,
+        archiving.then(() => { throw new Error("Archival settled before discovery started"); }),
+      ]);
+      writability.resolve(undefined);
+      await expect(sending).rejects.toThrow(/archival is in progress/i);
+      expect(target.calls.sendCustomMessage).toEqual([]);
+    } finally {
+      writability.resolve(undefined);
+      discovery.resolve([]);
+      await Promise.allSettled([sending, ...(archiving === undefined ? [] : [archiving])]);
+    }
+    await expect(archiving).resolves.toMatchObject({ archived: true });
+  });
+
+  it.each([false, true])("blocks archival when message delivery already holds the mutation receipt, cross-project=%s", async (crossProjectSessionMessages) => {
+    const target = journalRuntime(CHILD);
+    let finishTurn: () => void = () => { throw new Error("Turn gate is not initialized"); };
+    const turn = new Promise<void>((resolve) => { finishTurn = resolve; });
+    const sendCustomMessage = vi.spyOn(target.session, "sendCustomMessage").mockReturnValue(turn);
+    const { service, archive } = fixture([target], { crossProjectSessionMessages });
+    await service.start(CWD);
+    try {
+      await expect(send(service)).resolves.toEqual({ sessionId: CHILD, delivery: "started" });
+      expect(sendCustomMessage).toHaveBeenCalledOnce();
+      await expect(service.archive({ id: CHILD, cwd: CWD })).rejects.toThrow(/stop.*activity.*archiv/i);
+      expect(archive).not.toHaveBeenCalled();
+      expect(target.calls.dispose).toBe(0);
+    } finally {
+      finishTurn();
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    await service.archive({ id: CHILD, cwd: CWD });
+    expect(archive).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])("rejects a target archived between the preflight and runtime lookup, cross-project=%s", async (crossProjectSessionMessages) => {
+    const archivePath = "/archive/child-1.jsonl";
+    const target = journalRuntime(CHILD, archivePath);
+    const record: ArchiveRecord = { sessionId: CHILD, cwd: CWD, archivePath, archivedAt: "2026-01-01T00:00:00.000Z" };
+    // The preflight sees a writable target; archival completes before getOrOpen reads it.
+    const get = vi.fn<ArchiveStore["get"]>().mockResolvedValue(record).mockResolvedValueOnce(undefined);
+    const gateway = sessionGateway([sessionRecord(CHILD)]);
+    const open = vi.fn(() => target.session.sessionManager);
+    const { service, createAgentRuntime } = fixture([target], {
+      sessionManager: { ...gateway, open },
+      archiveStore: {
+        get,
+        list: () => Promise.resolve([record]),
+        isArchived: () => Promise.resolve(true),
+        archive: () => Promise.reject(new Error("Unexpected archival")),
+        restore: () => Promise.reject(new Error("Unexpected restore")),
+      },
+      crossProjectSessionMessages,
+    });
+    await expect(send(service)).rejects.toThrow(/archived.*read.only/i);
+    expect(open).not.toHaveBeenCalled();
+    expect(createAgentRuntime).not.toHaveBeenCalled();
+    expect(target.calls.sendCustomMessage).toEqual([]);
   });
 
   it("returns acceptance without waiting for the recipient's full turn and publishes later delivery failures", async () => {
