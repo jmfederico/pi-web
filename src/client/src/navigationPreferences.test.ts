@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { isNavigationPinned, loadNavigationPreferences, pinnedNavigationTabs, saveNavigationPreferences, toggleNavigationPin } from "./navigationPreferences";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { isNavigationPinned, loadNavigationPreferences, moveNavigationTab, orderedNavigationTabs, pinnedNavigationTabs, saveNavigationPreferences, toggleNavigationPin } from "./navigationPreferences";
 
 const tabs = [{ id: "navigation" }, { id: "chat" }, { id: "plugin:files" }];
+
+afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("navigation preferences", () => {
   it("shows all tabs for empty pins and explicit all pins, in destination order", () => {
@@ -25,6 +27,81 @@ describe("navigation preferences", () => {
     expect(pins).toEqual(["missing:tool"]);
   });
 
+  it("applies remembered order before unseen defaults without mutating tabs or duplicating IDs", () => {
+    const order = ["missing:tool", "plugin:files", "plugin:files", "navigation"];
+    expect(orderedNavigationTabs(tabs)).toEqual(tabs);
+    expect(orderedNavigationTabs(tabs, order)).toEqual([tabs[2], tabs[0], tabs[1]]);
+    expect(orderedNavigationTabs([...tabs, { id: "missing:tool" }, { id: "new:tool" }], order).map((tab) => tab.id))
+      .toEqual(["missing:tool", "plugin:files", "navigation", "chat", "new:tool"]);
+    expect(tabs.map((tab) => tab.id)).toEqual(["navigation", "chat", "plugin:files"]);
+    expect(order).toEqual(["missing:tool", "plugin:files", "plugin:files", "navigation"]);
+  });
+
+  it("materializes the full universe for the first move in either direction", () => {
+    const available = tabs.map((tab) => tab.id);
+    expect(moveNavigationTab("plugin:files", "chat", "before", undefined, available)).toEqual(["navigation", "plugin:files", "chat"]);
+    expect(moveNavigationTab("navigation", "plugin:files", "after", [], available)).toEqual(["chat", "plugin:files", "navigation"]);
+    expect(available).toEqual(["navigation", "chat", "plugin:files"]);
+  });
+
+  it("preserves unavailable and hidden destinations while moving visible neighbors", () => {
+    const order = ["missing:tool", "chat", "navigation", "plugin:files"];
+    const available = [...tabs.map((tab) => tab.id), "new:tool"];
+    expect(moveNavigationTab("plugin:files", "chat", "before", order, available))
+      .toEqual(["missing:tool", "plugin:files", "chat", "navigation", "new:tool"]);
+    expect(moveNavigationTab("chat", "plugin:files", "after", order, available))
+      .toEqual(["missing:tool", "navigation", "plugin:files", "chat", "new:tool"]);
+    expect(order).toEqual(["missing:tool", "chat", "navigation", "plugin:files"]);
+  });
+
+  it.each([
+    ["chat", "chat"], ["unknown", "chat"], ["chat", "unknown"],
+  ])("ignores invalid moves (%s, %s) without losing the known universe", (id, neighborId) => {
+    expect(moveNavigationTab(id, neighborId, "before", ["chat", "chat", "missing:tool"], tabs.map((tab) => tab.id)))
+      .toEqual(["chat", "missing:tool", "navigation", "plugin:files"]);
+  });
+
+  it("round-trips order independently from pins and mobile collapse", () => {
+    const values = new Map<string, string>();
+    const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); } };
+    const preferences = { pinnedIds: ["chat"], orderedIds: ["missing:tool", "plugin:files", "chat"], mobileCollapsed: true };
+    expect(saveNavigationPreferences(preferences, storage)).toBe(true);
+    expect(loadNavigationPreferences(storage)).toEqual(preferences);
+    const changed = { ...preferences, pinnedIds: [], mobileCollapsed: false };
+    saveNavigationPreferences(changed, storage);
+    expect(loadNavigationPreferences(storage)).toEqual(changed);
+  });
+
+  it("merges edited fields with current storage and lets the latest explicit order win", () => {
+    let raw: string | null = null;
+    const storage = { getItem: () => raw, setItem: (_key: string, value: string) => { raw = value; } };
+    const stale = { pinnedIds: [], mobileCollapsed: false };
+    saveNavigationPreferences({ ...stale, orderedIds: ["plugin:files", "chat"] }, storage, ["orderedIds"]);
+    saveNavigationPreferences({ ...stale, mobileCollapsed: true }, storage, ["mobileCollapsed"]);
+    saveNavigationPreferences({ ...stale, pinnedIds: ["chat"] }, storage, ["pinnedIds"]);
+    expect(loadNavigationPreferences(storage)).toEqual({ pinnedIds: ["chat"], mobileCollapsed: true, orderedIds: ["plugin:files", "chat"] });
+    saveNavigationPreferences({ ...stale, orderedIds: ["chat", "plugin:files"] }, storage, ["orderedIds"]);
+    expect(loadNavigationPreferences(storage).orderedIds).toEqual(["chat", "plugin:files"]);
+    // Reset is intent, even when the caller never observed a customized order.
+    saveNavigationPreferences(stale, storage, ["orderedIds"]);
+    expect(loadNavigationPreferences(storage)).toEqual({ pinnedIds: ["chat"], mobileCollapsed: true });
+  });
+
+  it("does not overwrite storage when reading the latest preferences fails", () => {
+    const storage = { getItem: () => { throw new Error("Blocked"); }, setItem: vi.fn() };
+    expect(saveNavigationPreferences({ pinnedIds: [], mobileCollapsed: true }, storage, ["mobileCollapsed"])).toBe(false);
+    expect(storage.setItem).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { orderedIds: ["chat", 5, "chat", "", null, "missing:tool"], expected: ["chat", "missing:tool"] },
+    { orderedIds: "chat", expected: [] },
+    { orderedIds: null, expected: [] },
+  ])("sanitizes order only when present: $orderedIds", ({ orderedIds, expected }) => {
+    expect(loadNavigationPreferences({ getItem: () => JSON.stringify({ orderedIds }) }))
+      .toEqual({ pinnedIds: [], orderedIds: expected, mobileCollapsed: false });
+  });
+
   it("round-trips pins independently from mobile collapse", () => {
     const values = new Map<string, string>();
     const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); } };
@@ -35,12 +112,17 @@ describe("navigation preferences", () => {
     expect(loadNavigationPreferences(storage)).toEqual({ ...preferences, mobileCollapsed: false });
   });
 
+  it("reports unavailable browser storage as an unsuccessful save", () => {
+    vi.stubGlobal("localStorage", undefined);
+    expect(saveNavigationPreferences({ pinnedIds: [], mobileCollapsed: true })).toBe(false);
+  });
+
   it("defaults safely for malformed or unavailable storage and validates stored values", () => {
     const storage = (raw: string) => ({ getItem: () => raw });
     expect(loadNavigationPreferences(storage("{"))).toEqual({ pinnedIds: [], mobileCollapsed: false });
     expect(loadNavigationPreferences(storage('{"pinnedIds":["chat",5,"chat",""],"mobileCollapsed":"true"}'))).toEqual({ pinnedIds: ["chat"], mobileCollapsed: false });
     const blocked = { getItem: () => { throw new Error("Blocked"); }, setItem: () => { throw new Error("Blocked"); } };
     expect(loadNavigationPreferences(blocked)).toEqual({ pinnedIds: [], mobileCollapsed: false });
-    expect(() => { saveNavigationPreferences({ pinnedIds: [], mobileCollapsed: true }, blocked); }).not.toThrow();
+    expect(saveNavigationPreferences({ pinnedIds: [], mobileCollapsed: true }, blocked)).toBe(false);
   });
 });

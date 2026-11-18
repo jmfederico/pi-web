@@ -82,7 +82,7 @@ import { isCreatingSessionId, parseMainView, readRoute, resolveAppRoute, routeMa
 import { resolvePluginNavigation } from "../pluginNavigation";
 import { readSettingsSection, writeSettingsSection, type SettingsSection } from "../settingsRoute";
 import { applyActiveShortcutPreferences } from "../shortcutPreferences";
-import { loadNavigationPreferences, saveNavigationPreferences, pinnedNavigationTabs, type NavigationPreferences } from "../navigationPreferences";
+import { loadNavigationPreferences, saveNavigationPreferences, pinnedNavigationTabs, orderedNavigationTabs, type NavigationPreferences } from "../navigationPreferences";
 import "./appShell/NavigationDialog";
 import { canDeleteWorkspace, isWorkspaceDeletionPending, isWorkspaceDeletionRunPending, latestWorkspaceDeletionRuns, pendingWorkspaceDeletionIds, targetWorkspaceIdForRun, workspaceDeletionRunFilter, workspaceRemovalConfirmation } from "../workspaceDeletion";
 import "./MachineList";
@@ -2205,6 +2205,7 @@ export class PiWebApp extends LitElement {
         .tool=${this.effectiveWorkspaceTool(panels)}
         .panels=${panels}
         .pinnedIds=${this.navigationPreferences.pinnedIds}
+        .orderedIds=${this.navigationPreferences.orderedIds ?? []}
         .hideToolTabs=${!this.isDesktopSideBySideLayout()}
         .onShowNavigation=${this.showNavigation}
         .onTogglePanel=${this.isDesktopSideBySideLayout() ? this.workspacePanelActions.toggle : undefined}
@@ -4369,6 +4370,8 @@ export class PiWebApp extends LitElement {
   private readonly handleReloadApp = () => { this.hardReloadApp(); };
 
   @state() private navigationPreferences = loadNavigationPreferences();
+  @state() private navigationPreferencesSaveFailed = false;
+  private readonly pendingNavigationPreferenceFields = new Set<keyof NavigationPreferences>();
   @state() private navigationDialogOpen = false;
 
   private navigationOpener: HTMLElement | undefined;
@@ -4394,9 +4397,12 @@ export class PiWebApp extends LitElement {
       }
     });
   };
-  private readonly changeNavigationPreferences = (preferences: NavigationPreferences) => {
+  private readonly changeNavigationPreferences = (preferences: NavigationPreferences, changedField: keyof NavigationPreferences) => {
     this.navigationPreferences = preferences;
-    saveNavigationPreferences(preferences);
+    // Retry all unsaved edits, not untouched fields from this tab's stale snapshot.
+    this.pendingNavigationPreferenceFields.add(changedField);
+    this.navigationPreferencesSaveFailed = !saveNavigationPreferences(preferences, undefined, [...this.pendingNavigationPreferenceFields]);
+    if (!this.navigationPreferencesSaveFailed) this.pendingNavigationPreferenceFields.clear();
   };
 
   private renderContextBar() {
@@ -4453,7 +4459,7 @@ export class PiWebApp extends LitElement {
   }
 
   private availableNavigationTabs(panels = this.visibleWorkspacePanels()): AppMobileMainTab[] {
-    return this.mobileMainTabs(panels).filter((tab) => {
+    return orderedNavigationTabs(this.mobileMainTabs(panels), this.navigationPreferences.orderedIds).filter((tab) => {
       if (tab.id === "navigation") return this.appShell.isMobileNavigationLayout;
       if (tab.id === "chat") return !this.isDesktopSideBySideLayout();
       return true;
@@ -4668,6 +4674,7 @@ export class PiWebApp extends LitElement {
           .pinUniverse=${this.mobileMainTabs().map((tab) => tab.id)}
           .selectedTab=${this.selectedNavigationTab()}
           .preferences=${this.navigationPreferences}
+          .preferencesSaveFailed=${this.navigationPreferencesSaveFailed}
           .onPreferencesChange=${this.changeNavigationPreferences}
           .onSelect=${this.selectNavigationTab}
           .onClose=${this.closeNavigation}

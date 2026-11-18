@@ -11,6 +11,9 @@ interface ReorderOptions<T> {
   onDrop: (item: T, neighbor: T, position: DropPosition) => void;
   onStart: () => void;
   label: (item: T) => string;
+  /** Limit initiation to a dedicated handle; other row controls keep their gestures. */
+  handleSelector?: string;
+  listSelector?: string;
 }
 
 /** Pointer gestures are ephemeral; each list's parent owns ordering and persistence. */
@@ -44,7 +47,12 @@ export class ListReorderController<T extends { id: string }> implements Reactive
     const items = this.options.items();
     if (!this.options.enabled() || !items.some((candidate) => candidate.id === item.id) || items.length < 2 || event.button !== 0 || !event.isPrimary) return;
     const element = event.currentTarget;
-    if (!(element instanceof HTMLElement) || (event.target instanceof Element && event.target.closest(".action-menu, button, a, input, select, textarea") !== null)) return;
+    if (!(element instanceof HTMLElement) || !(event.target instanceof Element)) return;
+    const handleSelector = this.options.handleSelector;
+    if (handleSelector !== undefined) {
+      const handle = event.target.closest(handleSelector);
+      if (handle === null || !element.contains(handle) || handle.matches(":disabled")) return;
+    } else if (event.target.closest(".action-menu, button, a, input, select, textarea") !== null) return;
     this.announcement = "";
     this.options.onStart();
     const rect = element.getBoundingClientRect();
@@ -216,7 +224,8 @@ export class ListReorderController<T extends { id: string }> implements Reactive
     clone.querySelector(".action-menu")?.remove();
     clone.style.width = px(Math.max(0, candidate.element.getBoundingClientRect().width - PREVIEW_INSET_PX * 2));
     // Preserve scoped theme selectors as well as the component's styles.
-    this.host.renderRoot.querySelector("section")?.append(clone);
+    const container = this.host.renderRoot.querySelector("section") ?? candidate.element.parentElement;
+    container?.append(clone);
     this.ghost = clone;
     clone.showPopover();
     this.moveGhost(clientX, clientY);
@@ -235,21 +244,23 @@ export class ListReorderController<T extends { id: string }> implements Reactive
     this.ghost = undefined;
   }
 
-  /** Insertion slot for a pointer position inside a clipping, scrollable list.
-   * Once the list cannot scroll further, a pointer parked in the bottom edge zone
-   * means "end of list", not "first row still hidden below the fold".
+  /** Preserve row midpoints unless clipping makes the append slot unreachable
+   * even after the list has scrolled to its end.
    */
   private slotForPointer(clientY: number): number {
-    const slot = insertionSlot(this.rowRects(), clientY);
+    const rows = this.rowRects();
+    const slot = insertionSlot(rows, clientY);
     const body = this.scrollBody();
     if (body === null || body.scrollHeight <= body.clientHeight + 1) return slot;
     const atEnd = body.scrollTop + body.clientHeight >= body.scrollHeight - 1;
     const rect = body.getBoundingClientRect();
-    return atEnd && clientY > rect.bottom - AUTOSCROLL_EDGE_PX ? this.options.items().length : slot;
+    const last = rows.at(-1);
+    const endSlotClipped = last !== undefined && (last.top + last.bottom) / 2 >= rect.bottom;
+    return atEnd && endSlotClipped && clientY > rect.bottom - AUTOSCROLL_EDGE_PX ? this.options.items().length : slot;
   }
 
   private scrollBody(): HTMLElement | null {
-    return this.host.renderRoot.querySelector<HTMLElement>(".list-body");
+    return this.host.renderRoot.querySelector<HTMLElement>(this.options.listSelector ?? ".list-body");
   }
 
   private autoScrollStepPx(): number {

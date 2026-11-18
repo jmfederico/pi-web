@@ -4,6 +4,7 @@ import { appShellMessages as m } from "../../appShellMessages";
 import { stylesheetIntegrationCapability } from "../../plugins/styles";
 import { LitElement, css, html, type TemplateResult } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
+import { repeat } from "lit/directives/repeat.js";
 import type { QualifiedContributionId } from "../../plugins/types";
 import { renderNavigationMenuIcon, renderAppTabIcon, type AppTabBuiltinIcon } from "../tabIcons";
 import { uiButtonStyles, uiToolbarStyles, uiTabStyles } from "../ui/controlStyles";
@@ -68,7 +69,7 @@ export class AppMobileMainTabs extends LitElement {
       <div class=${this.frameClass()}>
         ${this.leadingControl}
         <div class="mobile-tabs ui-tabs ui-tabs--primary" @scroll=${this.onMobileTabsScroll}>
-          ${this.tabs.map((tab) => {
+          ${repeat(this.tabs, (tab) => tab.id, (tab) => {
             const selected = this.selectedTab === tab.id;
             return html`
               <button class=${this.tabClass(tab)} title=${tab.label} aria-label=${this.tabAriaLabel(tab)} aria-pressed=${String(selected)} @click=${() => { this.onSelect?.(tab.id); }}>
