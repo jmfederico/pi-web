@@ -497,6 +497,61 @@ describe("PiSessionService session messaging", () => {
     expect(target.calls.sendCustomMessage).toHaveLength(0);
   });
 
+  it.each([false, true])("rejects delivery during archive teardown before the archive record exists, cross-project=%s", async (crossProjectSessionMessages) => {
+    const target = journalRuntime(CHILD);
+    const reopened = journalRuntime(CHILD);
+    const gateway = sessionGateway([{ ...sessionRecord(CHILD), path: target.session.sessionFile ?? "" }]);
+    let releaseDispose: () => void = () => { throw new Error("Dispose gate is not initialized"); };
+    const disposing = new Promise<void>((resolve) => { releaseDispose = resolve; });
+    let notifyDispose: () => void = () => { throw new Error("Dispose signal is not initialized"); };
+    const disposeEntered = new Promise<void>((resolve) => { notifyDispose = resolve; });
+    const dispose = vi.spyOn(target.runtime, "dispose").mockImplementation(() => {
+      notifyDispose();
+      return disposing;
+    });
+    const { service, archive, archived } = fixture([target, reopened], {
+      sessionManager: { ...gateway, open: () => reopened.session.sessionManager },
+      crossProjectSessionMessages,
+    });
+    await service.start(CWD);
+    const archiving = service.archive({ id: CHILD, cwd: CWD });
+    try {
+      await disposeEntered;
+      expect(dispose).toHaveBeenCalledOnce();
+      expect(archive).not.toHaveBeenCalled();
+      expect(archived.has(CHILD)).toBe(false);
+      expect(service.activeCount()).toBe(0);
+      await expect(send(service)).rejects.toThrow(/session lifecycle.*active/i);
+      expect(target.calls.sendCustomMessage).toEqual([]);
+      expect(reopened.calls.sendCustomMessage).toEqual([]);
+    } finally {
+      releaseDispose();
+      await archiving;
+    }
+    expect(archive).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])("blocks archival when message delivery already holds the mutation receipt, cross-project=%s", async (crossProjectSessionMessages) => {
+    const target = journalRuntime(CHILD);
+    let finishTurn: () => void = () => { throw new Error("Turn gate is not initialized"); };
+    const turn = new Promise<void>((resolve) => { finishTurn = resolve; });
+    const sendCustomMessage = vi.spyOn(target.session, "sendCustomMessage").mockReturnValue(turn);
+    const { service, archive } = fixture([target], { crossProjectSessionMessages });
+    await service.start(CWD);
+    try {
+      await expect(send(service)).resolves.toEqual({ sessionId: CHILD, delivery: "started" });
+      expect(sendCustomMessage).toHaveBeenCalledOnce();
+      await expect(service.archive({ id: CHILD, cwd: CWD })).rejects.toThrow(/stop.*activity.*archiv/i);
+      expect(archive).not.toHaveBeenCalled();
+      expect(target.calls.dispose).toBe(0);
+    } finally {
+      finishTurn();
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    await service.archive({ id: CHILD, cwd: CWD });
+    expect(archive).toHaveBeenCalledOnce();
+  });
+
   it.each([false, true])("rejects a target archived between the preflight and runtime lookup, cross-project=%s", async (crossProjectSessionMessages) => {
     const archivePath = "/archive/child-1.jsonl";
     const target = journalRuntime(CHILD, archivePath);

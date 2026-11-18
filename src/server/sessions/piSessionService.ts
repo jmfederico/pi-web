@@ -2377,6 +2377,9 @@ export class PiSessionService implements SessionRouteService {
     const session = await this.getOrOpen(ref);
     // Archival may finish after preflight; getOrOpen can then open the archived transcript.
     await this.assertWritable(ref);
+    // Teardown can remove the old runtime before persisting its archive record.
+    // Do not yield between this reservation check and acquiring the mutation receipt below.
+    if (this.isTreeExclusiveOperationActive(session)) throw new Error("Cannot receive a session message while a session lifecycle operation is active");
     this.assertTreeNavigationInactive(session, "receive a session message");
     const delivery = this.hasActiveWork(session) ? "queued" : "started";
     let agentStarted = false;
