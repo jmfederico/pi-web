@@ -137,7 +137,7 @@ export class NavigationDialog extends LitElement {
         <p>${m.t("pinHint")}</p>
         <p id="reorder-hint">${m.t(this.query.trim() === "" ? "reorderHint" : "reorderSearchHint")}</p>
         <span id="reorder-keyboard-hint" class="sr-only">${m.t("reorderKeyboardHint")}</span>
-        ${this.preferencesSaveFailed ? html`<p class="ui-notice ui-notice--error" role="alert">${m.t("navigationPreferencesSaveFailed")}</p>` : nothing}
+        ${this.preferencesSaveFailed ? html`<p class="ui-notice error" role="alert">${m.t("navigationPreferencesSaveFailed")}</p>` : nothing}
         <span class="list-reorder-status" role="status" aria-live="polite" aria-atomic="true">${this.preferencesSaveFailed ? "" : this.moveAnnouncement || this.reorder.announcement}</span>
         <nav class="options ui-selection-list" aria-label=${m.t("destinations")} @click=${(event: MouseEvent) => {
           if (this.reorder.consumeClick()) { event.preventDefault(); event.stopImmediatePropagation(); }

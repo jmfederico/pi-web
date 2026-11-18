@@ -43,7 +43,10 @@ export function loadNavigationPreferences(storage: Pick<Storage, "getItem"> | un
   }
 }
 
-/** Merge only edited fields; an absent orderedIds explicitly resets saved order. */
+/** Merge only edited fields; an absent orderedIds explicitly resets saved order.
+ * Browser-local preferences are best effort: same-field edits are last-writer-wins,
+ * not a transaction or replay of operations across browser contexts.
+ */
 export function saveNavigationPreferences(
   preferences: NavigationPreferences,
   storage: Pick<Storage, "getItem" | "setItem"> | undefined = browserStorage(),
@@ -95,7 +98,7 @@ export function moveNavigationTab(
   availableIds: readonly string[],
 ): string[] {
   // Materialize all known destinations, not just the current layout/search/pins.
-  // Keep unavailable plugin IDs so their positions survive a later return.
+  // Keep known unavailable plugin IDs so their positions survive a later return.
   const order = [...new Set([...(orderedIds ?? []), ...availableIds])];
   if (id === neighborId || !order.includes(id) || !order.includes(neighborId)) return order;
   const remaining = order.filter((item) => item !== id);

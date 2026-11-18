@@ -15,7 +15,7 @@ if (new URLSearchParams(location.search).has("long")) {
 }
 const style = document.createElement("style");
 style.textContent = `
-  :root { color-scheme: dark; --pi-bg: #161616; --pi-surface: #252525; --pi-surface-hover: #303030; --pi-text: #eee; --pi-text-bright: #fff; --pi-border: #555; --pi-border-muted: #444; --pi-muted: #aaa; --pi-accent: #aaf; --pi-selection-bg: #303044; --pi-overlay: #0008; --pi-shadow-strong: #0008; }
+  :root { color-scheme: dark; --pi-bg: #161616; --pi-surface: #252525; --pi-surface-hover: #303030; --pi-text: #eee; --pi-text-bright: #fff; --pi-border: #555; --pi-border-muted: #444; --pi-muted: #aaa; --pi-danger: #f88; --pi-accent: #aaf; --pi-selection-bg: #303044; --pi-overlay: #0008; --pi-shadow-strong: #0008; }
   body { margin: 0; background: var(--pi-bg); color: var(--pi-text); font: 14px system-ui; }
 `;
 document.head.append(style);

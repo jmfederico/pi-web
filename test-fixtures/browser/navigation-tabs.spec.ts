@@ -227,12 +227,15 @@ test("a stale browser tab changes only its chosen preference and can explicitly 
     await page.getByRole("button", { name: "Open navigation", exact: true }).click();
     await expect.poll(() => order(page)).toEqual(["fixture:tasks", "chat", "fixture:workspaces", "fixture:notices", "fixture:terminal"]);
     await expect(page.getByRole("button", { name: "Collapsed", exact: true })).toHaveAttribute("aria-pressed", "true");
-    // The stale dialog still displays the default order; reset must remain explicit.
+    await row(page, "chat").locator(".pin-button").click();
+    // The stale dialog still displays the default order and old pins; reset must
+    // remain explicit without replacing the other tab's newer visibility edit.
     await expect.poll(() => order(other)).toEqual(initialOrder);
     await other.getByRole("button", { name: "Reset order", exact: true }).click();
     await page.reload();
     await page.getByRole("button", { name: "Open navigation", exact: true }).click();
     await expect.poll(() => order(page)).toEqual(initialOrder);
+    await expect(row(page, "chat").locator(".pin-button")).toHaveAttribute("aria-pressed", "false");
     await expect(page.getByRole("button", { name: "Collapsed", exact: true })).toHaveAttribute("aria-pressed", "true");
   } finally {
     await other.close();
