@@ -9,6 +9,8 @@ export async function generateShortSessionName(
   firstMessage: string,
   config: ResolvedSessionNamingConfig,
   signal: AbortSignal,
+  /** Pi session id for providers that route per conversation, such as OpenCode Go's `x-opencode-session`. */
+  sessionId?: string,
 ): Promise<string | undefined> {
   const controller = new AbortController();
   const cancel = () => { controller.abort(signal.reason); };
@@ -39,6 +41,7 @@ export async function generateShortSessionName(
       }, {
         maxTokens: config.maxTokens,
         ...(config.thinkingLevel === "off" ? {} : { reasoning: config.thinkingLevel }),
+        ...(sessionId === undefined ? {} : { sessionId }),
         signal: controller.signal,
       });
       let streamedText = "";
