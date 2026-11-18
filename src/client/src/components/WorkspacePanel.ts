@@ -8,7 +8,7 @@ import type { Workspace } from "../api";
 import type { QualifiedContributionId } from "../plugins/types";
 import { renderNavigationMenuIcon } from "./tabIcons";
 import { workspacePanelStyles } from "./shared";
-import { pinnedNavigationTabs } from "../navigationPreferences";
+import { orderedNavigationTabs, pinnedNavigationTabs } from "../navigationPreferences";
 import { renderPanelToggleButton } from "./appShell/panelToggleButton";
 
 export interface WorkspacePanelEmptyState {
@@ -43,6 +43,7 @@ export class WorkspacePanel extends LitElement {
   @property({ attribute: false }) panels: WorkspaceToolPanel[] = [];
   @property({ type: Boolean }) hideToolTabs = false;
   @property({ attribute: false }) pinnedIds: string[] = [];
+  @property({ attribute: false }) orderedIds: string[] = [];
   @property({ attribute: false }) onShowNavigation?: () => void;
   @property({ attribute: false }) onTogglePanel?: () => void;
   @property({ attribute: false }) onSelectTool: (tool: QualifiedContributionId) => void = () => undefined;
@@ -83,7 +84,7 @@ export class WorkspacePanel extends LitElement {
     // An unresolved route may leave a valid remembered tool, but its content is not displayed.
     const selectedPanel = this.error !== "" ? undefined
       : this.tool === undefined ? visiblePanels[0] : visiblePanels.find((panel) => panel.id === this.tool);
-    const pinnedPanels = pinnedNavigationTabs(visiblePanels, this.pinnedIds);
+    const pinnedPanels = pinnedNavigationTabs(orderedNavigationTabs(visiblePanels, this.orderedIds), this.pinnedIds);
     return html`
       ${this.hideToolTabs ? null : html`
         <header>

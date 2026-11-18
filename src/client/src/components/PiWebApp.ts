@@ -82,7 +82,7 @@ import { isCreatingSessionId, parseMainView, readRoute, resolveAppRoute, routeMa
 import { resolvePluginNavigation } from "../pluginNavigation";
 import { readSettingsSection, writeSettingsSection, type SettingsSection } from "../settingsRoute";
 import { applyActiveShortcutPreferences } from "../shortcutPreferences";
-import { loadNavigationPreferences, saveNavigationPreferences, pinnedNavigationTabs, type NavigationPreferences } from "../navigationPreferences";
+import { loadNavigationPreferences, saveNavigationPreferences, pinnedNavigationTabs, orderedNavigationTabs, type NavigationPreferences } from "../navigationPreferences";
 import "./appShell/NavigationDialog";
 import { canDeleteWorkspace, isWorkspaceDeletionPending, isWorkspaceDeletionRunPending, latestWorkspaceDeletionRuns, pendingWorkspaceDeletionIds, targetWorkspaceIdForRun, workspaceDeletionRunFilter, workspaceRemovalConfirmation } from "../workspaceDeletion";
 import "./MachineList";
@@ -2205,6 +2205,7 @@ export class PiWebApp extends LitElement {
         .tool=${this.effectiveWorkspaceTool(panels)}
         .panels=${panels}
         .pinnedIds=${this.navigationPreferences.pinnedIds}
+        .orderedIds=${this.navigationPreferences.orderedIds ?? []}
         .hideToolTabs=${!this.isDesktopSideBySideLayout()}
         .onShowNavigation=${this.showNavigation}
         .onTogglePanel=${this.isDesktopSideBySideLayout() ? this.workspacePanelActions.toggle : undefined}
@@ -4453,7 +4454,7 @@ export class PiWebApp extends LitElement {
   }
 
   private availableNavigationTabs(panels = this.visibleWorkspacePanels()): AppMobileMainTab[] {
-    return this.mobileMainTabs(panels).filter((tab) => {
+    return orderedNavigationTabs(this.mobileMainTabs(panels), this.navigationPreferences.orderedIds).filter((tab) => {
       if (tab.id === "navigation") return this.appShell.isMobileNavigationLayout;
       if (tab.id === "chat") return !this.isDesktopSideBySideLayout();
       return true;

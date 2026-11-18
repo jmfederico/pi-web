@@ -32,7 +32,7 @@ import { WorkspacePanel } from "./WorkspacePanel";
 import { WorkspaceList } from "./WorkspaceList";
 import { ProjectList } from "./ProjectList";
 import { SessionList } from "./SessionList";
-import { loadNavigationPreferences, saveNavigationPreferences } from "../navigationPreferences";
+import { loadNavigationPreferences, moveNavigationTab, saveNavigationPreferences } from "../navigationPreferences";
 import { NavigationDialog } from "./appShell/NavigationDialog";
 import type { AppMobileMainTabs } from "./appShell/AppMobileMainTabs";
 import { deepActiveElement } from "./modalLayerRegistry";
@@ -558,6 +558,95 @@ describe("application rendering boundaries", () => {
     const reloaded = await mountApp({});
     await settle(reloaded);
     expect(Reflect.get(reloaded, "navigationPreferences")).toEqual(loadNavigationPreferences());
+  });
+
+  it("persists order changes across the dialog, mobile tabs, and desktop tools without changing selection", async () => {
+    saveNavigationPreferences({ pinnedIds: [], orderedIds: ["missing:tool"], mobileCollapsed: false });
+    const app = new RenderOnlyApp();
+    const registry: unknown = Reflect.get(app, "plugins");
+    const shell: unknown = Reflect.get(app, "appShell");
+    if (!(registry instanceof PluginRegistry) || !(shell instanceof AppShellController)) throw new Error("Expected app controllers");
+    Reflect.set(app, "verifiedPluginModeByMachine", new Map([["local", "recovery-disabled"]]));
+    await registry.register({
+      id: "render-test",
+      plugin: { apiVersion: 4, name: "Render test", activate: () => ({ contributions: {
+        workspacePanels: [
+          { id: "panel", title: "First", order: 1, render: () => html`<p>Selected content</p>` },
+          { id: "second", title: "Second", order: 2, render: () => html`<p>Other content</p>` },
+        ],
+      } }) },
+    });
+    patchState(app, { selectedWorkspace: workspace, workspaces: [workspace], mainView: "workspace", workspaceTool: "render-test:panel" });
+    shell.isMobileNavigationLayout = true;
+    shell.isDesktopSideBySideLayout = false;
+    document.body.append(app);
+    await settle(app);
+    namedButton(app.shadowRoot?.querySelector("app-mobile-main-tabs")?.shadowRoot, "Navigation").click();
+    await settle(app);
+    const dialog = app.shadowRoot?.querySelector<NavigationDialog>("navigation-dialog");
+    if (dialog == null) throw new Error("Expected navigation dialog");
+    const sharedTitles = () => [...app.shadowRoot?.querySelector("app-mobile-main-tabs")?.shadowRoot?.querySelectorAll<HTMLButtonElement>(".mobile-tabs button") ?? []].map((button) => button.title);
+    const toolTitles = () => [...app.shadowRoot?.querySelector("workspace-panel")?.shadowRoot?.querySelectorAll<HTMLButtonElement>(".tabs button") ?? []].map((button) => button.title);
+    const destinations = () => dialog.tabs.map((tab) => tab.id);
+    const universe = ["navigation", "chat", "render-test:panel", "render-test:second"];
+    expect(dialog.pinUniverse).toEqual(universe);
+    expect(destinations()).toEqual(universe);
+
+    // Drive the dialog's public preference boundary; reorder gestures have their own UI tests.
+    const move = async (id: string, neighbor: string, position: "before" | "after") => {
+      dialog.onPreferencesChange?.({ ...dialog.preferences, orderedIds: moveNavigationTab(id, neighbor, position, dialog.preferences.orderedIds, dialog.pinUniverse ?? []) });
+      await settle(app);
+      expect(app.shadowRoot?.querySelector("workspace-panel")?.shadowRoot?.querySelector(".panel-content")?.textContent).toContain("Selected content");
+      expect(dialog.selectedTab).toBe("render-test:panel");
+    };
+    await move("render-test:second", "navigation", "before");
+    expect(destinations()).toEqual(["render-test:second", "navigation", "chat", "render-test:panel"]);
+    expect(sharedTitles()).toEqual(["Second", "Sessions", "Chat", "First", "Navigation"]);
+
+    shell.isMobileNavigationLayout = false;
+    shell.isDesktopSideBySideLayout = true;
+    app.requestUpdate();
+    await settle(app);
+    expect(destinations()).toEqual(["render-test:second", "render-test:panel"]);
+    expect(toolTitles()).toEqual(["Second", "First"]);
+    expect(dialog.pinUniverse).toEqual(universe);
+    await move("render-test:panel", "render-test:second", "before");
+    expect(destinations()).toEqual(["render-test:panel", "render-test:second"]);
+    expect(toolTitles()).toEqual(["First", "Second"]);
+    expect(loadNavigationPreferences().orderedIds).toEqual(["missing:tool", "render-test:panel", "render-test:second", "navigation", "chat"]);
+
+    // Pin filtering must not undo ordering, including when the shared strip returns.
+    dialog.onPreferencesChange?.({ ...dialog.preferences, pinnedIds: ["chat", "render-test:second"] });
+    await settle(app);
+    expect(toolTitles()).toEqual(["Second"]);
+    for (const mobile of [false, true]) {
+      shell.isDesktopSideBySideLayout = false;
+      shell.isMobileNavigationLayout = mobile;
+      app.requestUpdate();
+      await settle(app);
+      expect(sharedTitles()).toEqual(["Second", "Chat", "Navigation"]);
+      expect(destinations()).toEqual(["render-test:panel", "render-test:second", ...(mobile ? ["navigation"] : []), "chat"]);
+    }
+    dialog.onPreferencesChange?.({ ...dialog.preferences, pinnedIds: [] });
+    await settle(app);
+    document.body.replaceChildren();
+    const reloaded = await mountApp({ selectedWorkspace: workspace }, () => html`<p>Restored tool</p>`);
+    const restoredShell: unknown = Reflect.get(reloaded, "appShell");
+    if (!(restoredShell instanceof AppShellController)) throw new Error("Expected shell controller");
+    restoredShell.isMobileNavigationLayout = true;
+    restoredShell.isDesktopSideBySideLayout = false;
+    reloaded.requestUpdate();
+    await settle(reloaded);
+    expect([...reloaded.shadowRoot?.querySelector("app-mobile-main-tabs")?.shadowRoot?.querySelectorAll<HTMLButtonElement>(".mobile-tabs button") ?? []].map((button) => button.title)).toEqual(["Test", "Sessions", "Chat", "Navigation"]);
+    namedButton(reloaded.shadowRoot?.querySelector("app-mobile-main-tabs")?.shadowRoot, "Navigation").click();
+    await settle(reloaded);
+    const restoredDialog = reloaded.shadowRoot?.querySelector<NavigationDialog>("navigation-dialog");
+    expect(restoredDialog?.preferences).toEqual(loadNavigationPreferences());
+    namedButton(restoredDialog?.shadowRoot, "Reset order").click();
+    await settle(reloaded);
+    expect(loadNavigationPreferences()).not.toHaveProperty("orderedIds");
+    expect([...reloaded.shadowRoot?.querySelector("app-mobile-main-tabs")?.shadowRoot?.querySelectorAll<HTMLButtonElement>(".mobile-tabs button") ?? []].map((button) => button.title)).toEqual(["Sessions", "Chat", "Test", "Navigation"]);
+    expect(restoredDialog?.tabs.map((tab) => tab.id)).toEqual(["navigation", "chat", "render-test:panel"]);
   });
 
   it("collapses only the mobile tab bar, keeping breadcrumbs and separate Navigation and Actions controls", async () => {
