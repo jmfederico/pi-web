@@ -45,15 +45,18 @@ describe("config routes", () => {
     expect(selected.json<PiWebConfigResponse>().effectiveConfig).not.toHaveProperty("hostAccess");
   });
 
-  it.each(["/api/config", "/api/machines/local/config"])("exposes and validates sessionMessages through %s", async (url) => {
-    const saved = await app.inject({ method: "PUT", url, payload: { config: { sessionMessages: false } } });
+  it.each(["/api/config", "/api/machines/local/config"])("exposes and validates messaging settings through %s", async (url) => {
+    const config = { sessionMessages: false, crossProjectSessionMessages: true };
+    const saved = await app.inject({ method: "PUT", url, payload: { config } });
     expect(saved.statusCode).toBe(200);
-    expect(parsePiWebConfigResponseBody(saved.json())).toMatchObject({ config: { sessionMessages: false }, effectiveConfig: { sessionMessages: false } });
+    expect(parsePiWebConfigResponseBody(saved.json())).toMatchObject({ config, effectiveConfig: config });
     const read = await app.inject({ method: "GET", url });
-    expect(read.json<PiWebConfigResponse>().config.sessionMessages).toBe(false);
+    expect(read.json<PiWebConfigResponse>().config).toMatchObject(config);
     vi.mocked(service.write).mockClear();
-    const rejected = await app.inject({ method: "PATCH", url, payload: { set: { sessionMessages: "false" } } });
-    expect(rejected.statusCode).toBe(400);
+    for (const key of ["sessionMessages", "crossProjectSessionMessages"]) {
+      const rejected = await app.inject({ method: "PATCH", url, payload: { set: { [key]: "false" } } });
+      expect(rejected.statusCode).toBe(400);
+    }
     expect(service.write).not.toHaveBeenCalled();
   });
 

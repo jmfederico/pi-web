@@ -363,6 +363,7 @@ async function createSessionDaemonRuntime() {
       ...(spawnTargets === undefined ? {} : { spawnTargets }),
       messageTargets,
       sessionMessagesEnabled: config.sessionMessages,
+      crossProjectSessionMessages: config.crossProjectSessionMessages,
       subsessionsEnabled: config.subsessions,
       askUserEnabled: config.askUser,
       config: configService,

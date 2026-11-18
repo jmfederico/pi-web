@@ -54,6 +54,23 @@ describe("session daemon settings config helpers", () => {
     });
   });
 
+  it("keeps cross-project messaging scoped to the selected machine, including older peers", () => {
+    const gateway = configResponse({ crossProjectSessionMessages: true });
+    gateway.defaultsConfig = { crossProjectSessionMessages: true };
+    gateway.enforcedSettings = { "/crossProjectSessionMessages": "PI_WEB_CROSS_PROJECT_SESSION_MESSAGES" };
+    gateway.configSources = { "/crossProjectSessionMessages": "PI_WEB_CROSS_PROJECT_SESSION_MESSAGES" };
+    const selected = configResponse({ crossProjectSessionMessages: false });
+    const merged = mergeSelectedMachineSessiondConfig(gateway, selected);
+    expect(merged.config.crossProjectSessionMessages).toBe(false);
+    expect(merged.effectiveConfig.crossProjectSessionMessages).toBe(false);
+    const cleared = mergeSelectedMachineSessiondConfig(gateway, configResponse({}));
+    expect(cleared.config).not.toHaveProperty("crossProjectSessionMessages");
+    expect(cleared.effectiveConfig).not.toHaveProperty("crossProjectSessionMessages");
+    expect(cleared.defaultsConfig).not.toHaveProperty("crossProjectSessionMessages");
+    expect(cleared.enforcedSettings).not.toHaveProperty("/crossProjectSessionMessages");
+    expect(cleared.configSources).not.toHaveProperty("/crossProjectSessionMessages");
+  });
+
   it("replaces selected-machine messaging values and metadata without leaking gateway overrides", () => {
     const gateway = configResponse({ host: "gateway", sessionMessages: false });
     gateway.defaultsConfig = { sessionMessages: false };

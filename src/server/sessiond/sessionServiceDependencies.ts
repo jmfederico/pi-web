@@ -34,6 +34,8 @@ export interface SessionServiceDependencyInput {
   messageTargets: NonNullable<PiSessionServiceDependencies["messageTargets"]>;
   /** Whether agents may send messages, independently of spawning and subsessions. */
   sessionMessagesEnabled: boolean;
+  /** Whether messaging may cross project boundaries on this machine. */
+  crossProjectSessionMessages: boolean;
   /** The operator's subsessions preference, which also requires spawning. */
   subsessionsEnabled: boolean;
   /** Whether agents may post structured question sets to the browser. */
@@ -66,6 +68,7 @@ export function sessionServiceDependencies(input: SessionServiceDependencyInput)
     ...(input.spawnTargets === undefined ? {} : { spawnTargets: input.spawnTargets }),
     messageTargets: input.messageTargets,
     sessionMessagesEnabled: input.sessionMessagesEnabled,
+    crossProjectSessionMessages: input.crossProjectSessionMessages,
     // Tracked subsessions share the spawn capability's project-scope resolver,
     // so they stay off unless spawning is configured too.
     subsessionsEnabled: input.spawnTargets !== undefined && input.subsessionsEnabled,

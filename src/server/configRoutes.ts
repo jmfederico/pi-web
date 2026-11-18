@@ -21,6 +21,7 @@ export const SELECTED_MACHINE_CONFIG_KEYS = [
   "maxUploadBytes",
   "spawnSessions",
   "sessionMessages",
+  "crossProjectSessionMessages",
   "subsessions",
   "askUser",
   "environmentFacts",

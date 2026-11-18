@@ -257,7 +257,7 @@ describe("PiSessionService direct-child lifecycle control", () => {
   });
 });
 
-describe("PiSessionService same-project session messaging", () => {
+describe("PiSessionService session messaging", () => {
   const message = "  Please investigate this independently.\n\nKeep this body unchanged.  \n";
   const send = (service: PiSessionService, target = CHILD, sender = PARENT) => service.sendSessionMessage({ sendingCwd: CWD, sendingSessionId: sender, sessionId: target, message });
 
@@ -266,6 +266,7 @@ describe("PiSessionService same-project session messaging", () => {
     const resolveMessageTarget = vi.fn(() => Promise.resolve({ allowed: true as const, cwd: CWD }));
     const { service, createAgentRuntime, listAll, resolveSpawnTarget } = fixture([target], {
       sessionMessagesEnabled: false,
+      crossProjectSessionMessages: true,
       ...(explicitResolver ? { messageTargets: { resolveSpawnTarget: resolveMessageTarget } } : {}),
     });
     await expect(send(service)).rejects.toThrow("Session messaging is unavailable");
@@ -435,6 +436,33 @@ describe("PiSessionService same-project session messaging", () => {
     expect(target.calls.sendCustomMessage).toHaveLength(0);
   });
 
+  it.each(["active", "persisted"])("allows a cross-project %s target when enabled without granting control or broadening spawning", async (state) => {
+    const targetCwd = "/other-project";
+    const target = journalRuntime(CHILD, "/sessions/other-project.jsonl", targetCwd);
+    const gateway = sessionGateway([{ ...sessionRecord(CHILD, targetCwd), path: target.session.sessionFile ?? "" }]);
+    const open = vi.fn(() => target.session.sessionManager);
+    const resolveSpawnTarget = vi.fn(() => Promise.resolve({ allowed: false as const, reason: "out-of-project" as const, allowedCwds: [CWD] }));
+    const { service } = fixture([target], {
+      sessionManager: { ...gateway, open },
+      messageTargets: { resolveSpawnTarget },
+      spawnTargets: { resolveSpawnTarget },
+      crossProjectSessionMessages: true,
+    });
+    if (state === "active") await service.start(targetCwd);
+    await expect(send(service)).resolves.toEqual({ sessionId: CHILD, delivery: "started" });
+    expect(resolveSpawnTarget).not.toHaveBeenCalled();
+    if (state === "persisted") expect(open).toHaveBeenCalledWith(target.session.sessionFile);
+    expect(target.calls.sendCustomMessage[0]?.message).toMatchObject({
+      content: `Message from session ${PARENT}:\n\n${message}`,
+      details: { sendingSessionId: PARENT, body: message },
+    });
+    await expect(service.listSubsessions(PARENT)).resolves.toEqual([]);
+    await expect(service.readSubsession(PARENT, CHILD, {})).rejects.toThrow(/not one of your subsessions/i);
+    await expect(service.stopSubsession(PARENT, CHILD)).rejects.toThrow(/not one of your subsessions/i);
+    await expect(service.spawnSession({ spawningCwd: CWD, spawningSessionId: PARENT, cwd: targetCwd, prompt: "task" })).rejects.toThrow();
+    expect(resolveSpawnTarget).toHaveBeenCalledWith(CWD, targetCwd);
+  });
+
   it("does not bypass project authorization for an already active target", async () => {
     const target = journalRuntime(CHILD, "/sessions/other-project.jsonl", "/other-project");
     const { service, listAll } = fixture([target], {
@@ -456,11 +484,11 @@ describe("PiSessionService same-project session messaging", () => {
     expect(target.calls.sendCustomMessage).toHaveLength(1);
   });
 
-  it("rejects archived targets before opening, without restoring or delivering", async () => {
+  it.each([false, true])("rejects archived targets before opening with cross-project messaging=%s", async (crossProjectSessionMessages) => {
     const target = journalRuntime(CHILD);
     const gateway = sessionGateway([sessionRecord(CHILD)]);
     const open = vi.fn(() => target.session.sessionManager);
-    const { service, archived, restore, createAgentRuntime } = fixture([target], { sessionManager: { ...gateway, open } });
+    const { service, archived, restore, createAgentRuntime } = fixture([target], { sessionManager: { ...gateway, open }, crossProjectSessionMessages });
     archived.set(CHILD, { sessionId: CHILD, cwd: CWD, archivedAt: "2026-01-01T00:00:00.000Z" });
     await expect(send(service)).rejects.toThrow(/archived.*read.only/i);
     expect(open).not.toHaveBeenCalled();

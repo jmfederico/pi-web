@@ -48,38 +48,41 @@ describe("layered config updates", () => {
     }
   });
 
-  it("resets sessionMessages to deployment defaults without persisting effective values", async () => {
-    writeFileSync(defaults, JSON.stringify({ sessionMessages: false }));
+  it.each(["sessionMessages", "crossProjectSessionMessages"] as const)("resets %s to deployment defaults without persisting effective values", async (key) => {
+    writeFileSync(defaults, JSON.stringify({ [key]: false }));
     writeFileSync(writable, JSON.stringify({ spawnSessions: false, subsessions: false }));
     start();
     const url = "/api/machines/local/config";
-    const saved = await app.inject({ method: "PATCH", url, payload: { set: { sessionMessages: true } } });
+    const saved = await app.inject({ method: "PATCH", url, payload: { set: { [key]: true } } });
     expect(saved.statusCode).toBe(200);
-    expect(saved.json<PiWebConfigResponse>().effectiveConfig.sessionMessages).toBe(true);
-    const reset = await app.inject({ method: "PATCH", url, payload: { unset: ["/sessionMessages"] } });
+    expect(saved.json<PiWebConfigResponse>().effectiveConfig[key]).toBe(true);
+    const reset = await app.inject({ method: "PATCH", url, payload: { unset: [`/${key}`] } });
     expect(reset.statusCode).toBe(200);
-    expect(reset.json<PiWebConfigResponse>()).toMatchObject({ effectiveConfig: { sessionMessages: false }, configSources: { "/sessionMessages": "defaults" } });
+    expect(reset.json<PiWebConfigResponse>()).toMatchObject({ effectiveConfig: { [key]: false }, configSources: { [`/${key}`]: "defaults" } });
     expect(JSON.parse(readFileSync(writable, "utf8"))).toEqual({ spawnSessions: false, subsessions: false });
   });
 
-  it("enforces sessionMessages while preserving the hidden saved choice", async () => {
+  it.each([
+    ["sessionMessages", "PI_WEB_SESSION_MESSAGES"],
+    ["crossProjectSessionMessages", "PI_WEB_CROSS_PROJECT_SESSION_MESSAGES"],
+  ])("enforces %s while preserving the hidden saved choice", async (key, envName) => {
     writeFileSync(defaults, "{}");
-    writeFileSync(writable, JSON.stringify({ sessionMessages: true }));
-    start({ PI_WEB_SESSION_MESSAGES: "false" });
+    writeFileSync(writable, JSON.stringify({ [key]: true }));
+    start({ [envName]: "false" });
     const url = "/api/machines/local/config";
     const read = await app.inject({ method: "GET", url });
     expect(parsePiWebConfigResponseBody(read.json())).toMatchObject({
-      config: { sessionMessages: true }, effectiveConfig: { sessionMessages: false },
-      envOverrides: { sessionMessages: true }, enforcedSettings: { "/sessionMessages": "PI_WEB_SESSION_MESSAGES" },
-      configSources: { "/sessionMessages": "PI_WEB_SESSION_MESSAGES" },
+      config: { [key]: true }, effectiveConfig: { [key]: false },
+      enforcedSettings: { [`/${key}`]: envName },
+      configSources: { [`/${key}`]: envName },
     });
-    for (const payload of [{ set: { sessionMessages: false } }, { unset: ["/sessionMessages"] }]) {
+    for (const payload of [{ set: { [key]: false } }, { unset: [`/${key}`] }]) {
       const rejected = await app.inject({ method: "PATCH", url, payload });
       expect(rejected.statusCode).toBe(400);
     }
     const replaced = await app.inject({ method: "PUT", url, payload: { config: { spawnSessions: false } } });
     expect(replaced.statusCode).toBe(200);
-    expect(JSON.parse(readFileSync(writable, "utf8"))).toEqual({ sessionMessages: true, spawnSessions: false });
+    expect(JSON.parse(readFileSync(writable, "utf8"))).toEqual({ [key]: true, spawnSessions: false });
   });
 
   it.each(["/api/config", "/api/machines/local/config"])("protects hidden overrides during legacy PUT through %s", async (url) => {

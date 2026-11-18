@@ -32,6 +32,7 @@ function daemonCollaborators(patch: Partial<SessionServiceDependencyInput> = {})
     config: { read: () => Promise.reject(new Error("config read not expected in this test")) },
     subsessionsEnabled: false,
     sessionMessagesEnabled: true,
+    crossProjectSessionMessages: false,
     messageTargets: { resolveSpawnTarget: () => Promise.reject(new Error("messaging not expected in this test")) },
     askUserEnabled: true,
     appendSystemPromptSections: [],
@@ -118,6 +119,13 @@ describe("sessiond session service dependency assembly", () => {
     expect(deps.sessionMessagesEnabled).toBe(false);
     expect(deps.spawnTargets).toBe(spawnTargets);
     expect(sessionServiceDependencies(daemonCollaborators()).sessionMessagesEnabled).toBe(true);
+  });
+
+  it.each([false, true])("passes cross-project messaging policy %s independently of spawning", (crossProjectSessionMessages) => {
+    const deps = sessionServiceDependencies(daemonCollaborators({ crossProjectSessionMessages }));
+    expect(deps.crossProjectSessionMessages).toBe(crossProjectSessionMessages);
+    expect(deps.spawnTargets).toBeUndefined();
+    expect(deps.subsessionsEnabled).toBe(false);
   });
 
   it("passes the ask-user preference through to the session service", () => {

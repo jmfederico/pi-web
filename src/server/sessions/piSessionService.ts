@@ -1173,6 +1173,8 @@ export interface PiSessionServiceDependencies {
   messageTargets?: SpawnTargetResolver;
   /** Disable session messaging even when a project-scope resolver is available. Defaults to true. */
   sessionMessagesEnabled?: boolean;
+  /** Allow messages to any session on this machine; does not broaden spawning or control. Defaults to false. */
+  crossProjectSessionMessages?: boolean;
   /**
    * When true (and `spawnTargets` is provided), the tracked-subsession
    * tools are available to sessions whose creation provenance permits
@@ -1322,6 +1324,7 @@ export class PiSessionService implements SessionRouteService {
   private readonly workspaceActivity: Pick<WorkspaceActivityService, "applySessionStatus" | "applySessionActivity" | "removeSession" | "reconcileSessionActivity" | "applySessionIntervention"> | undefined;
   private readonly spawnTargets: SpawnTargetResolver | undefined;
   private readonly messageTargets: SpawnTargetResolver | undefined;
+  private readonly crossProjectSessionMessages: boolean;
   private readonly logger: PiSessionLogger;
   private readonly queueCompatibility = new QueueCompatibilityGuard<PiAgentSession>((session, err) => {
     this.logger.info({ sessionId: session.sessionId, err }, "Disabled SDK-dependent queue controls after an incompatible queue interface");
@@ -1360,6 +1363,7 @@ export class PiSessionService implements SessionRouteService {
     this.modelRuntime = deps.modelRuntime;
     this.spawnTargets = deps.spawnTargets;
     this.messageTargets = deps.sessionMessagesEnabled === false ? undefined : deps.messageTargets ?? deps.spawnTargets;
+    this.crossProjectSessionMessages = deps.crossProjectSessionMessages ?? false;
     this.logger = deps.logger ?? noopLogger;
     this.now = deps.now ?? (() => new Date());
     this.activityMarker = new SessionActivityMarker({
@@ -1400,7 +1404,10 @@ export class PiSessionService implements SessionRouteService {
       },
       deps.askUserEnabled === true,
       deps.appendSystemPromptSections ?? [],
-      this.messageTargets === undefined ? undefined : { send: (input) => this.sendSessionMessage(input) },
+      this.messageTargets === undefined ? undefined : {
+        crossProjectSessionMessages: this.crossProjectSessionMessages,
+        send: (input) => this.sendSessionMessage(input),
+      },
       (sessionId) => this.checkSelfArchive(sessionId),
     );
     this.createRuntime = (options) => {
@@ -2352,7 +2359,7 @@ export class PiSessionService implements SessionRouteService {
     await this.archive({ id: sessionId, cwd: child.sessionManager.getCwd() });
   }
 
-  /** Send content, not control authority, to a named session in the same project. */
+  /** Send content, not control authority, within the configured machine-wide messaging scope. */
   async sendSessionMessage(input: SendSessionMessageInvocation): Promise<SendSessionMessageResult> {
     if (this.messageTargets === undefined) throw new Error("Session messaging is unavailable");
     const message = requirePromptText(input.message);
@@ -2361,7 +2368,9 @@ export class PiSessionService implements SessionRouteService {
       ? (await this.sessionManager.listAll()).find((entry) => entry.id === input.sessionId)
       : { id: input.sessionId, cwd: active.runtime.cwd };
     if (target === undefined) throw new Error("Session not found");
-    const decision = await this.messageTargets.resolveSpawnTarget(input.sendingCwd, target.cwd);
+    const decision = this.crossProjectSessionMessages
+      ? { allowed: true as const, cwd: target.cwd }
+      : await this.messageTargets.resolveSpawnTarget(input.sendingCwd, target.cwd);
     if (!decision.allowed) throw new Error("Session messaging is limited to sessions in the same registered project");
     const ref = { id: input.sessionId, cwd: decision.cwd };
     await this.assertWritable(ref);
