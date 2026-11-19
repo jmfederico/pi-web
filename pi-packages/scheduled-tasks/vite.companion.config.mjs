@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 
-// Carry the public companion helper, but use Pi\'s host-provided SDK modules.
+// The Pi extension loader provides the SDK modules and their matching TypeBox.
 export default defineConfig({
   build: {
     emptyOutDir: false,
@@ -10,7 +10,7 @@ export default defineConfig({
       formats: ["es"],
       fileName: () => "extensions/index.js",
     },
-    rollupOptions: { external: ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"] },
+    rollupOptions: { external: ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "typebox"] },
     target: "es2022",
     minify: false,
   },
