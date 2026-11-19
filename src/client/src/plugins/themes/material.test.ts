@@ -1,5 +1,4 @@
 // @vitest-environment happy-dom
-import { readFile, readdir } from "node:fs/promises";
 import { basename } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { resolveFileIcon } from "../fileIcons";
@@ -13,7 +12,7 @@ afterEach(async () => {
   for (const registry of registries.splice(0)) await registry.dispose();
 });
 
-const material: FileIconThemeContribution = { id: "material", name: "Material", ...materialFileIcons };
+const material: FileIconThemeContribution = { id: "material", name: "Material", ...materialFileIcons() };
 const assetName = (url: string) => basename(new URL(url).pathname);
 
 describe("bundled Material file icons", () => {
@@ -34,6 +33,7 @@ describe("bundled Material file icons", () => {
     ["src/app.ts", "typescript.svg"],
     ["src/app.test.ts", "test-ts.svg"],
     ["src/view.tsx", "react_ts.svg"],
+    ["src/app.component.ts", "angular-component.clone.svg"],
     ["src/main.py", "python.svg"],
     ["src/lib.rs", "rust.svg"],
     ["image.svg", "svg.svg"],
@@ -52,32 +52,19 @@ describe("bundled Material file icons", () => {
     expect(resolveFileIcon(material, "unknown", "light")).toBe(material.file.url);
   });
 
-  it("generates a broad, entirely local static SVG set with packaged license notices", async () => {
+  it("resolves the Material matcher set to local dependency URLs", () => {
     const rules = material.files ?? [];
     expect(rules.flatMap((rule) => rule.filenames ?? []).length).toBeGreaterThan(1900);
     expect(rules.flatMap((rule) => rule.extensions ?? []).length).toBeGreaterThan(1300);
     const assets = [material.file, ...rules.map((rule) => rule.icon)];
     expect(assets.every((asset) => asset.lightUrl === undefined)).toBe(true);
     const urls = new Set(assets.flatMap(({ url, lightUrl }) => lightUrl === undefined ? [url] : [url, lightUrl]));
-    const filenames = new Set<string>();
+    expect(urls.size).toBeGreaterThan(500);
     for (const value of urls) {
       const url = new URL(value);
       expect(url.origin).toBe(window.location.origin);
-      expect(url.pathname).toContain("/themes/material/icons/");
-      expect(url.search).toBe("?no-inline");
-      const filename = assetName(value);
-      filenames.add(filename);
-      const svg = await readFile(`src/client/src/plugins/themes/material/icons/${filename}`, "utf8");
-      expect(svg).toContain("<svg");
-      expect(svg).toContain("Material Icon Theme");
-      expect(svg).not.toMatch(/<script\b|<foreignObject\b|\bon\w+\s*=|(?:href|src)\s*=\s*["'](?!#)/iu);
+      expect(url.pathname).toMatch(/\/pi-web-dependencies\/material-icon-theme\/[\w-]+(?:\.clone)?\.svg$/u);
+      expect(url.pathname).not.toMatch(/_light\.svg$/u);
     }
-    expect(filenames.size).toBeGreaterThan(500);
-    expect([...filenames].every((filename) => !filename.endsWith("_light.svg"))).toBe(true);
-    expect([...filenames].sort()).toEqual((await readdir("src/client/src/plugins/themes/material/icons")).sort());
-    const fallback = await readFile("src/client/src/plugins/themes/material/icons/file.svg", "utf8");
-    expect(fallback).toContain("Permission is hereby granted, free of charge");
-    expect(fallback).toContain("Apache License");
-    expect(fallback).toContain("Version 2.0, January 2004");
   });
 });

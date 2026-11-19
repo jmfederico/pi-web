@@ -27,6 +27,23 @@ describe("production client build contents", () => {
     expect(assets.filter((file) => /^(classic|pi-web-dark|pi-web-light|paper|graphite|playground(?:-dark|-light)?)-.*\.css$/.test(file))).toEqual([]);
   });
 
+  it("serves installed Material SVGs instead of packing Vite copies", async () => {
+    const client = join(repoRoot, "dist/client");
+    const icons = new URL(".", import.meta.resolve("material-icon-theme/icons/file.svg"));
+    const svgFiles = (await readdir(icons)).filter((file) => /^[\w-]+(?:\.clone)?\.svg$/u.test(file));
+    // This entire installed SVG directory, not only files selected by the default
+    // matcher set, is now the release's allowlisted image source.
+    for (const file of svgFiles) {
+      const svg = await readFile(new URL(file, icons), "utf8");
+      expect(svg, file).not.toMatch(/<script\b|<foreignObject\b|\bon\w+\s*=|(?:href|src)\s*=\s*["'](?!#)/iu);
+    }
+    const names = new Set(svgFiles.map((file) => file.replace(/(?:\.clone)?\.svg$/, "")));
+    const assets = await readdir(join(client, "assets"));
+    expect(assets.filter((file) => file.endsWith(".svg") && names.has(file.replace(/-[^/]{8}\.svg$/, "")))).toEqual([]);
+    const licenses = await readdir(join(client, "licenses/material-icon-theme"));
+    expect(licenses).toEqual(expect.arrayContaining(["NOTICE.txt", "LICENSE-APACHE-2.0.txt", "LICENSE-MIT.txt"]));
+  });
+
   it("excludes the checkout-only Playground plugin and assets from release output", async () => {
     const files = await readdir(join(repoRoot, "dist"), { recursive: true });
     expect(files.filter((file) => /playground/i.test(file))).toEqual([]);

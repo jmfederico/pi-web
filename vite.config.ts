@@ -259,6 +259,7 @@ export default defineConfig({
     proxy: {
       "/api": { target: `http://localhost:${String(apiPort)}`, ws: true },
       "/pi-web-plugins": { target: `http://localhost:${String(apiPort)}` },
+      "/pi-web-dependencies": { target: `http://localhost:${String(apiPort)}` },
       "/pi-web-theme-assets": { target: `http://localhost:${String(apiPort)}` },
     },
   },
