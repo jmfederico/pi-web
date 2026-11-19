@@ -110,6 +110,9 @@ describe("plugin delivery artifacts", () => {
     const builtPackageFiles = (await recursiveFiles(builtPackagesRoot)).map((path) => `dist/pi-packages/${path}`).sort();
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/package.json");
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/pi-web-plugin.js");
+    // A remote Relays viewer cannot resolve the host's node_modules or private URLs.
+    expect(moduleSpecifiers(await readFile(join(builtPackagesRoot, "relays/markdownDocument.js"), "utf8"))).toEqual([]);
+    expect(await readFile(join(builtPackagesRoot, "relays/markdownDocument.licenses.md"), "utf8")).toContain("MarkedJS");
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/prompts/relay.md");
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/prompts/relay-worktree.md");
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/skills/relay/SKILL.md");

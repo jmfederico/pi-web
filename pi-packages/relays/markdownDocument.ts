@@ -1,4 +1,4 @@
-import { marked } from "./vendor/marked.esm.js";
+import { marked } from "marked";
 
 // Raw HTML inside relay documents is escaped before sanitizing, so the
 // sanitizer only ever sees marked-generated markup. This mirrors the safety
