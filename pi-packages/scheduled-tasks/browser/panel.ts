@@ -12,7 +12,7 @@ export interface PanelContent {
   messages: LocalizedMessages<typeof definitions>;
   styles: StylesheetIntegrationCapabilityV1;
   lifetimeSignal: AbortSignal;
-  badge: Pick<AttentionBadge, "fromOverview">;
+  badge: Pick<AttentionBadge, "beginOverview">;
 }
 
 export class ScheduledTasksPanel extends LitElement {
@@ -89,6 +89,7 @@ export class ScheduledTasksPanel extends LitElement {
       const peer = context.backend.forScope({ kind: "machine" });
       if (!peer.request) throw new Error("Scheduled tasks backend does not support requests");
       const options = { signal: controller.signal };
+      const updateBadge = this.contentValue.badge.beginOverview(context);
       const [overview, history] = await Promise.all([
         peer.request("overview", {}, options),
         this.view === "overview" ? Promise.resolve(null) : peer.request("history", { ...(this.taskId === undefined ? {} : { taskId: this.taskId }), limit: 20, offset: this.offset }, options),
@@ -98,7 +99,7 @@ export class ScheduledTasksPanel extends LitElement {
         const tasks = readOverview(overview);
         const page = history === null ? { executions: [], nextOffset: null } : readHistory(history);
         this.tasks = tasks; this.history = page; this.loaded = true;
-        this.contentValue.badge.fromOverview(context, tasks.filter(needsAttention).length);
+        updateBadge(tasks.filter(needsAttention).length);
       } catch { this.issue = "invalidResponse"; }
     } catch (error) {
       if (controller.signal.aborted) return;

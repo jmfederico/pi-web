@@ -82,6 +82,26 @@ describe("Scheduled tasks dashboard", () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it("does not restore a cleared badge when an older overview finishes waiting for history", async () => {
+    const history = deferred();
+    const target = setup(vi.fn((operation) => {
+      if (operation === "history") return history.promise;
+      if (operation === "attentionCount") return Promise.resolve(0);
+      return Promise.resolve({ tasks: [{ ...task, latestExecution: { ...execution, status: "errored" } }] });
+    }));
+    await ready(target);
+    button(target.root, `View task: ${task.name}`).click();
+    const read = () => target.panel.badge(target.context);
+    read(); await Promise.resolve();
+    history.resolve({ executions: [execution], nextOffset: null });
+    await vi.waitFor(() => { expect(target.root.querySelector(".history-entry")).not.toBeNull(); });
+    expect(read()).toBeUndefined();
+
+    // A subsequent user refresh can still publish its newer overview.
+    button(target.root, "Refresh").click();
+    await vi.waitFor(() => { expect(read()).toBe(1); });
+  });
+
   it("ignores obsolete badge responses after switching machines or losing the backend", async () => {
     const first = deferred();
     const target = activate(vi.fn().mockReturnValueOnce(first.promise).mockResolvedValueOnce(1));

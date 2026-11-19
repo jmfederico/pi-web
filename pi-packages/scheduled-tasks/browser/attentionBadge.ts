@@ -8,6 +8,7 @@ export class AttentionBadge {
   private machineId: string | undefined;
   private count: number | undefined;
   private pending: AbortController | undefined;
+  private pollGeneration = 0;
   private wake: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly lifetime: AbortSignal) {
@@ -25,16 +26,20 @@ export class AttentionBadge {
     return this.count;
   }
 
-  /** A user refresh in the dashboard shouldn't leave an older count on the tab. */
-  fromOverview(context: BadgeContext, count: number): void {
-    if (this.lifetime.aborted || this.machineId !== context.machine.id) return;
-    this.pending?.abort();
-    this.pending = undefined;
-    this.schedule(context);
-    this.publish(context, count);
+  /** A slow overview may supersede an older poll, but never one started after it. */
+  beginOverview(context: BadgeContext): (count: number) => void {
+    const generation = this.pollGeneration;
+    return (count) => {
+      if (this.lifetime.aborted || this.machineId !== context.machine.id || generation !== this.pollGeneration) return;
+      this.pending?.abort();
+      this.pending = undefined;
+      this.schedule(context);
+      this.publish(context, count);
+    };
   }
 
   private async refresh(context: BadgeContext): Promise<void> {
+    this.pollGeneration++;
     const controller = new AbortController();
     this.pending = controller;
     let count: number | undefined;
