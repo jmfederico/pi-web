@@ -2,6 +2,7 @@ import { css, html, LitElement, nothing } from "lit";
 import { keyed } from "lit/directives/keyed.js";
 import type { ApplicationPanelContextV5, LocalizedMessages, PluginLocalization, StylesheetIntegrationCapabilityV1 } from "@jmfederico/pi-web/plugin-api";
 import definitions from "./messages.js";
+import type { AttentionBadge } from "./attentionBadge.js";
 import { needsAttention, overviewGroups } from "./overview.js";
 import { readTaskPrompt, readExecutionPrompt, readHistory, readOverview, type ExecutionView, type HistoryPage, type TaskOverview, type TaskView } from "./responses.js";
 
@@ -11,6 +12,7 @@ export interface PanelContent {
   messages: LocalizedMessages<typeof definitions>;
   styles: StylesheetIntegrationCapabilityV1;
   lifetimeSignal: AbortSignal;
+  badge: Pick<AttentionBadge, "fromOverview">;
 }
 
 export class ScheduledTasksPanel extends LitElement {
@@ -96,6 +98,7 @@ export class ScheduledTasksPanel extends LitElement {
         const tasks = readOverview(overview);
         const page = history === null ? { executions: [], nextOffset: null } : readHistory(history);
         this.tasks = tasks; this.history = page; this.loaded = true;
+        this.contentValue.badge.fromOverview(context, tasks.filter(needsAttention).length);
       } catch { this.issue = "invalidResponse"; }
     } catch (error) {
       if (controller.signal.aborted) return;

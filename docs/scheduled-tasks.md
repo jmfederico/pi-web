@@ -115,7 +115,7 @@ This is an instruction for the agent, not a scheduler rule. Reporting `completed
 
 The **Scheduled tasks** tab opens a read-only overview grouped by what needs review:
 
-- **Needs attention:** non-archived tasks whose latest execution is `failed`, `errored`, or `uncertain`.
+- **Needs attention:** non-archived tasks whose latest execution is `failed`, `errored`, or `uncertain`. The tab badge counts these tasks on the selected machine and refreshes even when the dashboard is closed. It disappears when none need attention.
 - **Recent results:** up to five non-archived tasks whose latest run reported completion, ordered by run creation time, not completion time.
 - **Up next:** up to five active, unpaused, non-archived tasks with a next due time, soonest first.
 - **Awaiting an outcome:** executions marked `dispatching` or `dispatched`. This does not mean their conversations are still running; status is never inferred from session activity.
