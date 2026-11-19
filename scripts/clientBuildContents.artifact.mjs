@@ -27,6 +27,19 @@ describe("production client build contents", () => {
     expect(assets.filter((file) => /^(classic|pi-web-dark|pi-web-light|paper|graphite|playground(?:-dark|-light)?)-.*\.css$/.test(file))).toEqual([]);
   });
 
+  it("links the host parser imports to installed browser modules under the deployment prefix", async () => {
+    const assets = join(repoRoot, "dist/client/assets");
+    const prefix = "https://example.test/nested/pi/";
+    const parserImports = new Set();
+    for (const chunk of (await readdir(assets)).filter((file) => file.endsWith(".js"))) {
+      const source = await readFile(join(assets, chunk), "utf8");
+      for (const [, path] of source.matchAll(/\bfrom\s*["']([^"']*pi-web-dependencies\/[^"']+)["']/g)) {
+        parserImports.add(new URL(path, `${prefix}assets/${chunk}`).href);
+      }
+    }
+    expect(parserImports).toEqual(new Set([`${prefix}pi-web-dependencies/marked.esm.js`, `${prefix}pi-web-dependencies/csstree.esm.js`]));
+  });
+
   it("serves installed Material SVGs instead of packing Vite copies", async () => {
     const client = join(repoRoot, "dist/client");
     const icons = new URL(".", import.meta.resolve("material-icon-theme/icons/file.svg"));

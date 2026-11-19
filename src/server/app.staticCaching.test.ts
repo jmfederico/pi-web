@@ -38,6 +38,19 @@ describe("client static caching", () => {
     }
   });
 
+  it("serves the installed browser parser distributions as revalidating JavaScript", async () => {
+    const app = await buildApp({ clientDist, logger: false });
+    try {
+      for (const [file, entry] of [["marked.esm.js", "marked"], ["csstree.esm.js", "css-tree/dist/csstree.esm"]] as const) {
+        const asset = await app.inject(`/pi-web-dependencies/${file}`);
+        expect(asset.statusCode).toBe(200);
+        expect(asset.headers["content-type"]).toContain("javascript");
+        expect(asset.headers["cache-control"]).toBe("public, max-age=0");
+        expect(asset.body).toBe(await readFile(new URL(import.meta.resolve(entry)), "utf8"));
+      }
+    } finally { await app.close(); }
+  });
+
   it("serves installed Material SVGs, not arbitrary dependency files or an HTML fallback", async () => {
     const app = await buildApp({ clientDist, logger: false });
     const prefix = "/pi-web-dependencies/material-icon-theme/";
