@@ -27,7 +27,7 @@ describe("production client build contents", () => {
     expect(assets.filter((file) => /^(classic|pi-web-dark|pi-web-light|paper|graphite|playground(?:-dark|-light)?)-.*\.css$/.test(file))).toEqual([]);
   });
 
-  it("links the host parser imports to installed browser modules under the deployment prefix", async () => {
+  it("links host imports to installed browser modules under the deployment prefix", async () => {
     const assets = join(repoRoot, "dist/client/assets");
     const prefix = "https://example.test/nested/pi/";
     const parserImports = new Set();
@@ -37,7 +37,21 @@ describe("production client build contents", () => {
         parserImports.add(new URL(path, `${prefix}assets/${chunk}`).href);
       }
     }
-    expect(parserImports).toEqual(new Set([`${prefix}pi-web-dependencies/marked.esm.js`, `${prefix}pi-web-dependencies/csstree.esm.js`]));
+    const dependencies = `${prefix}pi-web-dependencies/`;
+    const icu = `${dependencies}icu/`;
+    expect(parserImports).toEqual(new Set([`${dependencies}marked.esm.js`, `${dependencies}csstree.esm.js`,
+      `${icu}intl-messageformat.js`, `${icu}@formatjs/icu-messageformat-parser.js`]));
+
+    // Native ESM resolution in installed ICU files can't use npm's resolver. Keep
+    // their bare imports scoped so portable plugin modules don't inherit aliases.
+    const html = await readFile(join(assets, "../index.html"), "utf8");
+    const map = JSON.parse(/<script type="importmap">(.*?)<\/script>/s.exec(html)[1]);
+    expect(map.imports).toBeUndefined();
+    const [[scope, mappings]] = Object.entries(map.scopes);
+    expect(new URL(scope, prefix).href).toBe(icu);
+    for (const id of ["@formatjs/fast-memoize", "@formatjs/icu-messageformat-parser", "@formatjs/icu-skeleton-parser"]) {
+      expect(new URL(mappings[id], prefix).href).toBe(`${icu}${id}.js`);
+    }
   });
 
   it("serves installed Material SVGs instead of packing Vite copies", async () => {

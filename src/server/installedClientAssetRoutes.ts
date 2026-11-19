@@ -1,5 +1,6 @@
 import fastifyStatic from "@fastify/static";
 import type { FastifyInstance } from "fastify";
+import { resolve as resolveImport } from "import-meta-resolve";
 import { basename, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { installedBrowserModules } from "./installedBrowserModules.js";
@@ -8,8 +9,8 @@ import { installedBrowserModules } from "./installedBrowserModules.js";
 export async function registerInstalledClientAssetRoutes(app: FastifyInstance): Promise<void> {
   await app.register(async (modules) => {
     await modules.register(fastifyStatic, { serve: false });
-    for (const { path, entry } of installedBrowserModules) {
-      const file = fileURLToPath(import.meta.resolve(entry));
+    for (const { path, entry, parent } of installedBrowserModules) {
+      const file = fileURLToPath(resolveImport(entry, parent === undefined ? import.meta.url : import.meta.resolve(parent)));
       modules.get(`/${path}`, (_request, reply) => reply.sendFile(basename(file), dirname(file)));
     }
   });

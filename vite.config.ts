@@ -7,7 +7,7 @@ import { defineConfig, normalizePath } from "vite";
 import { effectivePiWebConfig } from "./src/config";
 import { developmentAllowedHosts } from "./src/shared/hostAccess";
 import { DEPLOYMENT_MANIFEST_CONTENT_TYPE, DEPLOYMENT_MANIFEST_PATH, createDeploymentFlavorResolver, deploymentHtmlForFlavor, deploymentIdentityAssetForPath, deploymentManifestForFlavor, isDeploymentIdentityAssetPath } from "./src/server/deploymentIdentity";
-import { installedBrowserModules } from "./src/server/installedBrowserModules";
+import { icuBrowserModules, icuModuleDirectory, installedBrowserModules } from "./src/server/installedBrowserModules";
 import { detectPiWebInstallation } from "./src/server/piWebStatus";
 import { fetchThemeBootstrap, injectThemeBootstrap } from "./src/server/themeBootstrap";
 
@@ -225,7 +225,15 @@ export function devThemeBootstrapPlugin(load = () => fetchThemeBootstrap(`http:/
 }
 
 export default defineConfig({
-  plugins: [devDocsPlugin(), devDeploymentIdentityPlugin(), manualRefreshPlugin(), devThemeBootstrapPlugin()],
+  plugins: [devDocsPlugin(), devDeploymentIdentityPlugin(), manualRefreshPlugin(), devThemeBootstrapPlugin(), {
+    name: "pi-web-installed-icu-imports",
+    apply: "build",
+    transformIndexHtml() {
+      const imports = Object.fromEntries(icuBrowserModules.map(({ id, path }) => [id, `./${path}`]));
+      return [{ tag: "script", attrs: { type: "importmap" }, injectTo: "head-prepend",
+        children: JSON.stringify({ scopes: { [`./${icuModuleDirectory}`]: imports } }) }];
+    },
+  }],
   root: "src/client",
   base: "./",
   build: {
