@@ -90,7 +90,7 @@ describe("API parsers", () => {
   });
 
   it("retains deployment defaults and setting source metadata, rejecting malformed metadata", () => {
-    const response = { path: "config.json", exists: true, config: {}, effectiveConfig: {}, envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false }, defaultsConfig: { basePaths: [], environmentFacts: false, extensionDialogsTimeoutMs: 0 }, defaultsPath: "defaults.json", enforcedSettings: { "/quietMode": "PI_WEB_QUIET_MODE" }, configSources: { "/basePaths": "defaults" } };
+    const response = { path: "config.json", exists: true, config: {}, effectiveConfig: {}, envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false }, defaultsConfig: { basePaths: [], environmentFacts: false, extensionDialogsTimeoutMs: 0, logLevel: "debug", httpAccessLog: false }, defaultsPath: "defaults.json", enforcedSettings: { "/quietMode": "PI_WEB_QUIET_MODE" }, configSources: { "/basePaths": "defaults" } };
     expect(parsePiWebConfigResponse(response)).toEqual(response);
     expect(() => parsePiWebConfigResponse({ ...response, enforcedSettings: { "/quietMode": true } })).toThrow("configuration source");
     expect(() => parsePiWebConfigResponse({ ...response, defaultsConfig: { basePaths: [42] } })).toThrow();

@@ -13,6 +13,8 @@ export interface PiWebConfigService {
 
 export const SELECTED_MACHINE_CONFIG_KEYS = [
   "installationName",
+  "logLevel",
+  "httpAccessLog",
   "plugins",
   "pathAccess",
   "basePaths",

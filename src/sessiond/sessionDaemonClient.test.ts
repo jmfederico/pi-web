@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { WebSocketServer } from "ws";
+import { withGatewayRequestId } from "./gatewayRequestContext.js";
 import { SessionDaemonClient } from "./sessionDaemonClient.js";
 
 const activeAgentProfile = {
@@ -43,6 +46,38 @@ describe("SessionDaemonClient transport configuration", () => {
     expect(process.env["PI_WEB_SESSIOND_URL"]).toBe("https://gateway.invalid/pi-web/");
   });
 
+  it("keeps correlated HTTP and WebSocket connections on the configured daemon hop", async () => {
+    const id = randomUUID();
+    const seen: [path: string | undefined, requestId: string | string[] | undefined][] = [];
+    const server = createServer((req, res) => {
+      seen.push([req.url, req.headers["x-request-id"]]);
+      if (req.url === "/redirect") res.writeHead(307, { location: "/elsewhere" });
+      res.end();
+    });
+    const ws = new WebSocketServer({ server });
+    ws.on("connection", (socket, req) => {
+      seen.push([req.url, req.headers["x-request-id"]]);
+      socket.close();
+    });
+    try {
+      await new Promise<void>((resolve) => { server.listen(0, "127.0.0.1", resolve); });
+      const address = server.address();
+      if (address === null || typeof address === "string") throw new Error("Expected TCP listener");
+      const client = new SessionDaemonClient({ baseUrl: `http://127.0.0.1:${String(address.port)}/` });
+      await withGatewayRequestId(id, async () => {
+        expect((await client.request("GET", "/redirect")).statusCode).toBe(307);
+        await expect(client.request("GET", "https://other.example/lookup")).rejects.toThrow("daemon origin");
+        await once(client.connectWebSocket("/events"), "close");
+      });
+      expect(seen).toEqual([["/redirect", id], ["/events", id]]);
+    } finally {
+      for (const socket of ws.clients) socket.terminate();
+      ws.close();
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => { server.close((error) => { if (error === undefined) resolve(); else reject(error); }); });
+    }
+  });
+
   it("uses an explicit socket instead of an inherited gateway URL on the native platform", async () => {
     const socketPath = process.platform === "win32"
       ? `\\\\.\\pipe\\pi-client-${randomUUID()}`
@@ -50,9 +85,10 @@ describe("SessionDaemonClient transport configuration", () => {
     vi.stubEnv("PI_WEB_SESSIOND_URL", "http://gateway.invalid:8999/");
     vi.stubEnv("PI_WEB_SESSIOND_SOCKET", join(tmpdir(), "wrong.sock"));
     const fetch = vi.spyOn(globalThis, "fetch");
-    const received: string[] = [];
+    const gatewayId = randomUUID();
+    const received: { method: string | undefined; path: string | undefined; id: string | string[] | undefined }[] = [];
     const server = createServer((request, reply) => {
-      received.push(`${request.method ?? ""} ${request.url ?? ""}`);
+      received.push({ method: request.method, path: request.url, id: request.headers["x-request-id"] });
       reply.writeHead(202, { "content-type": "application/json" });
       reply.end("{}");
     });
@@ -61,11 +97,13 @@ describe("SessionDaemonClient transport configuration", () => {
         server.once("error", reject);
         server.listen(socketPath, resolve);
       });
-      const response = await new SessionDaemonClient({ socketPath }).request("POST", "/notify", { pluginId: "provider" });
+      const client = new SessionDaemonClient({ socketPath });
+      const response = await withGatewayRequestId(gatewayId, () => client.request("POST", "/notify", { pluginId: "provider" }));
 
       expect(response.statusCode).toBe(202);
       expect(response.body).toBe("{}");
-      expect(received).toEqual(["POST /notify"]);
+      await client.request("GET", "/runtime");
+      expect(received).toEqual([{ method: "POST", path: "/notify", id: gatewayId }, { method: "GET", path: "/runtime", id: undefined }]);
       expect(fetch).not.toHaveBeenCalled();
       expect(process.env["PI_WEB_SESSIOND_URL"]).toBe("http://gateway.invalid:8999/");
     } finally {

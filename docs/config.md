@@ -58,6 +58,16 @@ The deployment path is not a PI WEB config-file key or environment setting. The 
 
 For a nested deployment, redirect the slashless prefix to the trailing-slash URL, strip the prefix before forwarding to PI WEB, and proxy authenticated HTTP and WebSocket traffic through the same location. Relative browser and PWA URLs then stay within that prefix. See the [reverse proxy installation guide](https://pi-web.dev/install#reverse-proxy-prefix) for a complete Nginx example.
 
+## Service logging
+
+To see completed HTTP requests, set `httpAccessLog` to `true` in the machine config. It defaults to `false`. The web/API and session daemon log these records at `info`, so use `logLevel: "info"` (the default), `"debug"`, or `"trace"` to see them. Higher thresholds (`"warn"`, `"error"`, `"fatal"`) hide them. `"silent"` disables the service logger. This threshold applies to Fastify/Pino, not independent console, plugin, or child-process output.
+
+Restart the web/API and session daemon on that machine to apply changes. For deployment policy, set `PI_WEB_HTTP_ACCESS_LOG` and `PI_WEB_LOG_LEVEL` in the service environments. Neither setting takes project overrides.
+
+Each access record has `event: "http.access"` and includes `service` (`web` or `sessiond`), `reqId`, `method`, `route` (the registered route template or `<unmatched>`), `statusCode`, and `durationMs`. Access records omit concrete path parameters, raw URLs, queries, hosts, headers, and bodies. Other logs, including errors, may still contain diagnostic details. Access logging covers completed Fastify HTTP responses, not aborted connections, failures before routing, or WebSocket upgrades and frames.
+
+Match the `x-request-id` response header to `reqId` in access records. Even with access logging off, the gateway generates its own UUID rather than trusting the caller’s header. It forwards the ID to its configured local session daemon, including during WebSocket handshakes; remote gateways generate their own IDs. The daemon accepts a UUIDv4 on its private endpoint and generates a fresh one for missing or invalid IDs. These IDs correlate requests, not identities: keep the daemon private.
+
 ## Browser request security
 
 Choose one gateway `hostAccess` policy for both production and development in **Settings → General → Allowed hostnames**:
@@ -178,7 +188,7 @@ Process restarts depend on the key:
 
 - `host` / `port`: restart the gateway web/API service or process.
 - `hostAccess`: restart web/API and, if running, the development UI server. The UI compares the effective policy, including the host list, with the running web/API snapshot; it cannot confirm the development server's running policy. Legacy `allowedHosts` changes require only a development UI restart and have no effect while `hostAccess` is supplied. No session-daemon restart is needed.
-- `maxUploadBytes`: restart both the web/API process and the session daemon on that machine.
+- `logLevel` / `httpAccessLog` / `maxUploadBytes`: restart both the web/API process and the session daemon on that machine.
 - `spawnSessions` / `subsessions` / `sessionMessages` / `crossProjectSessionMessages` / `askUser` / `extensionDialogsTimeoutMs` / `environmentFacts`: restart the session daemon on that machine.
 - `sessionArchive.directory`: restart the session daemon on that machine; changes only the destination for new archives.
 - Session naming is owned by a removable Pi package. Its config file is read for each new title. Old core file values are migrated and removed when configuration is loaded; they are no longer core settings. See [Session naming](#session-naming).
@@ -312,6 +322,8 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 | Web/API bind host | `host` | `PI_WEB_HOST` | Global | Not supported locally | Restart web/API |
 | Web/API port | `port` | `PI_WEB_PORT`, `PORT` | Global | Not supported locally | Restart web/API |
 | Shared hostname policy | `hostAccess` | `PI_WEB_HOST_ACCESS` | Gateway only | Not supported locally; absent until an explicit decision | Restart web/API and development UI if running |
+| [Service log level](#service-logging) | `logLevel` | `PI_WEB_LOG_LEVEL` | Global | Not supported locally; default `info` | Restart web/API and session daemon |
+| [HTTP access log](#service-logging) | `httpAccessLog` | `PI_WEB_HTTP_ACCESS_LOG` | Global | Not supported locally; default `false` | Restart web/API and session daemon |
 | Legacy dev UI allowed hosts | `allowedHosts` | `PI_WEB_ALLOWED_HOSTS` | Gateway only | Not supported locally; ignored when `hostAccess` is supplied | Restart development UI |
 | Base filesystem roots | `basePaths` | `PI_WEB_BASE_PATHS` (JSON array) | Global | Not supported locally; default `[]` | Next file request |
 | Additional filesystem roots | `pathAccess.allowedPaths` | `PI_WEB_PATH_ACCESS` (JSON object) | Global + project | **Adds** after base roots; global then project, deduplicated; env replaces effective additions | Next file request; refresh existing views if needed |

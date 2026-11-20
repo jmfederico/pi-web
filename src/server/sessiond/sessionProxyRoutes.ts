@@ -1,4 +1,6 @@
-import type { FastifyInstance, FastifyReply } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { logDaemonProxyFailure, logDaemonRequestFailure, logInvalidDaemonResponse } from "./daemonProxyDiagnostics.js";
+import type { ReportWebSocketProxyFailure, WebSocketProxyFailure } from "../webSocketBridge.js";
 import { WebSocket, type RawData } from "ws";
 import {
   SessionDaemonClient,
@@ -25,16 +27,32 @@ export function registerSessionProxyRoutes(
   daemon: SessionProxyDaemon = new SessionDaemonClient(),
   prefix = "/api",
 ): void {
-  const proxy = async (request: { method: string; url: string; body?: unknown }, reply: FastifyReply) => {
+  const proxy = async (request: { method: string; url: string; body?: unknown }, reply: FastifyReply, cancellation?: ReturnType<typeof requestCancellation>) => {
     try {
-      const upstream = await daemon.request(request.method, stripPrefix(request.url, prefix), request.body);
+      let upstream;
+      const path = stripPrefix(request.url, prefix);
+      try {
+        upstream = cancellation === undefined
+          ? await daemon.request(request.method, path, request.body)
+          : await daemon.request(request.method, path, request.body, { signal: cancellation.signal });
+      } catch (error) {
+        logDaemonRequestFailure(reply.request, error, cancellation?.signal);
+        requestFailed(reply, error);
+        return undefined;
+      }
       reply.code(upstream.statusCode);
-      const contentType = upstream.headers["content-type"];
-      if (contentType !== undefined && contentType !== "") reply.header("content-type", contentType);
+      if (cancellation !== undefined) reply.header("cache-control", "no-store");
+      else {
+        const contentType = upstream.headers["content-type"];
+        if (contentType !== undefined && contentType !== "") reply.header("content-type", contentType);
+      }
       return upstream.body !== "" ? parseJson(upstream.body) : undefined;
     } catch (error) {
+      logInvalidDaemonResponse(reply.request);
       requestFailed(reply, error);
       return undefined;
+    } finally {
+      cancellation?.dispose();
     }
   };
 
@@ -43,7 +61,9 @@ export function registerSessionProxyRoutes(
       const response = await daemon.request("GET", "/runtime");
       const runtime = response.statusCode === 200 ? parsePiWebRuntimeComponent(parseJson(response.body)) : undefined;
       if (runtime?.component === "sessiond" && runtime.available && supportsPiWebCapability(runtime, PI_WEB_CAPABILITIES.sessionPinsDaemonOwned)) return true;
-    } catch {
+    } catch (error) {
+      if (error instanceof SyntaxError) logInvalidDaemonResponse(reply.request);
+      else logDaemonRequestFailure(reply.request, error);
       // Fail closed: never fall back to legacy web-owned pin state.
     }
     await reply.code(503).send({ error: "Daemon-owned session pins are unavailable. Update the web/API before restarting the updated session daemon." });
@@ -88,6 +108,7 @@ export function registerSessionProxyRoutes(
       }
       return await reply.send(upstream.body);
     } catch (error) {
+      logDaemonRequestFailure(request, error, cancellation.signal);
       requestFailed(reply, error);
       return await reply;
     } finally {
@@ -98,36 +119,33 @@ export function registerSessionProxyRoutes(
   app.get(`${prefix}/sessiond/health`, (_request, reply) => proxy({ method: "GET", url: `${prefix}/health` }, reply));
   app.get(`${prefix}/sessiond/runtime`, (_request, reply) => proxy({ method: "GET", url: `${prefix}/runtime` }, reply));
 
-  app.get<{ Params: { sessionId: string } }>(`${prefix}/sessions/:sessionId/events`, { websocket: true }, (socket, request) => {
-    bridgeSockets(socket, daemon.connectWebSocket(stripPrefix(request.url, prefix)));
+  const connectEvents = (socket: WebSocket, request: FastifyRequest, path: string): void => {
+    const report: ReportWebSocketProxyFailure = (failure, error) => {
+      logDaemonProxyFailure(request, { transport: "websocket", ...failure }, error);
+    };
+    let upstream: WebSocket;
+    try {
+      upstream = daemon.connectWebSocket(path);
+    } catch (error) {
+      report({ phase: "connect", reason: "socket-error" }, error);
+      socket.close(1011);
+      return;
+    }
+    bridgeSockets(socket, upstream, report);
+  };
+  app.get(`${prefix}/sessions/:sessionId/events`, { websocket: true }, (socket, request) => {
+    connectEvents(socket, request, stripPrefix(request.url, prefix));
   });
-
-  app.get(`${prefix}/sessions/events`, { websocket: true }, (socket) => {
-    bridgeSockets(socket, daemon.connectWebSocket("/sessions/events"));
-  });
-
-  app.get(`${prefix}/events`, { websocket: true }, (socket) => {
-    bridgeSockets(socket, daemon.connectWebSocket("/events"));
-  });
+  app.get(`${prefix}/sessions/events`, { websocket: true }, (socket, request) => { connectEvents(socket, request, "/sessions/events"); });
+  app.get(`${prefix}/events`, { websocket: true }, (socket, request) => { connectEvents(socket, request, "/events"); });
 
   app.post(`${prefix}/projects`, (request, reply) => proxy(request, reply));
   app.delete(`${prefix}/projects/:projectId`, (request, reply) => proxy(request, reply));
 
   // Authority resolution can include provider I/O; forward browser cancellation.
-  const cancellableProxy = async (request: { method: string; url: string; body?: unknown }, reply: FastifyReply, cancellation: ReturnType<typeof requestCancellation>) => {
-    try {
-      const upstream = await daemon.request(request.method, stripPrefix(request.url, prefix), request.body, { signal: cancellation.signal });
-      reply.code(upstream.statusCode).header("cache-control", "no-store");
-      return upstream.body === "" ? undefined : parseJson(upstream.body);
-    } catch (error) {
-      requestFailed(reply, error);
-      return undefined;
-    } finally {
-      cancellation.dispose();
-    }
-  };
-  app.get(`${prefix}/plugin-catalog/*`, (request, reply) => cancellableProxy(request, reply, requestCancellation(request, reply)));
-  app.all(`${prefix}/plugin-sessions/*`, (request, reply) => cancellableProxy(request, reply, requestCancellation(request, reply)));
+  const cancellableProxy = (request: FastifyRequest, reply: FastifyReply) => proxy(request, reply, requestCancellation(request, reply));
+  app.get(`${prefix}/plugin-catalog/*`, cancellableProxy);
+  app.all(`${prefix}/plugin-sessions/*`, cancellableProxy);
 
   app.all(`${prefix}/status`, (request, reply) => proxy(request, reply));
   app.all(`${prefix}/notices`, (request, reply) => proxy(request, reply));
@@ -159,13 +177,25 @@ function requestFailed(reply: FastifyReply, error: unknown): void {
   reply.code(502).send({ error: `Session daemon unavailable: ${error instanceof Error ? error.message : String(error)}` });
 }
 
-function bridgeSockets(client: WebSocket, upstream: WebSocket): void {
+function bridgeSockets(client: WebSocket, upstream: WebSocket, report: ReportWebSocketProxyFailure): void {
+  let phase: WebSocketProxyFailure["phase"] = upstream.readyState === WebSocket.OPEN ? "bridge" : "connect";
+  let closing = false;
+  upstream.once("open", () => { phase = "bridge"; });
+  const closeUpstream = (): void => { closing = true; upstream.close(); };
   client.on("message", (data) => { sendIfOpen(upstream, data); });
   upstream.on("message", (data) => { sendIfOpen(client, data); });
-  client.on("close", () => { upstream.close(); });
-  upstream.on("close", () => { client.close(); });
-  upstream.on("error", () => { client.close(); });
-  client.on("error", () => { upstream.close(); });
+  client.on("close", closeUpstream);
+  client.on("error", closeUpstream);
+  upstream.on("close", (code) => {
+    if (!closing && (phase === "connect" || code === 1006 || code === 1011)) report({ phase, reason: "unexpected-close", closeCode: code });
+    closing = true;
+    client.close();
+  });
+  upstream.on("error", (error) => {
+    if (!closing) report({ phase, reason: "socket-error" }, error);
+    closing = true;
+    client.close();
+  });
 }
 
 function sendIfOpen(socket: WebSocket, data: RawData): void {

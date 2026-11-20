@@ -3,6 +3,7 @@ import { PAIRED_PLUGIN_BACKEND_RESOURCE_ROUTE_PATHS, pairedPluginBackendResource
 import type { SessionDaemonClient } from "../../sessiond/sessionDaemonClient.js";
 import type { PluginBackendResourceParams } from "../sessiond/pluginBackendResourceRoutes.js";
 import { requestCancellation } from "../requestCancellation.js";
+import { logDaemonRequestFailure, logInvalidDaemonResponse } from "../sessiond/daemonProxyDiagnostics.js";
 import { applyPluginResourcePolicy, pluginResourceError, pluginResourceRange, sendPluginResourceResponse } from "./pluginBackendResourceResponse.js";
 
 export function registerPluginBackendResourceProxyRoutes(app: FastifyInstance, daemon: Pick<SessionDaemonClient, "requestStream">, prefix = "/api"): void {
@@ -19,12 +20,22 @@ export function registerPluginBackendResourceProxyRoutes(app: FastifyInstance, d
           range = pluginResourceRange(request.headers.range);
         } catch (error) { return await pluginResourceError(reply, 400, error); }
         const query = new URLSearchParams({ revision: envelope.revision, input: JSON.stringify(envelope.input) });
-        const upstream = await daemon.requestStream(`${pairedPluginBackendResourcePath(request.params)}?${query.toString()}`, {
-          signal: cancellation.signal, headers: range === undefined ? {} : { range }, timeoutMs: 30_000,
-        });
-        return await sendPluginResourceResponse(reply, upstream, cancellation.signal);
-      } catch (error) { return await pluginResourceError(reply, 502, error); }
-      finally { cancellation.dispose(); }
+        let upstream;
+        try {
+          upstream = await daemon.requestStream(`${pairedPluginBackendResourcePath(request.params)}?${query.toString()}`, {
+            signal: cancellation.signal, headers: range === undefined ? {} : { range }, timeoutMs: 30_000,
+          });
+        } catch (error) {
+          logDaemonRequestFailure(request, error, cancellation.signal);
+          return await pluginResourceError(reply, 502, error);
+        }
+        try {
+          return await sendPluginResourceResponse(reply, upstream, cancellation.signal);
+        } catch (error) {
+          if (!cancellation.signal.aborted) logInvalidDaemonResponse(request);
+          return await pluginResourceError(reply, 502, error);
+        }
+      } finally { cancellation.dispose(); }
     },
   });
 }

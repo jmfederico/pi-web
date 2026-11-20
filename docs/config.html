@@ -699,6 +699,9 @@
 <td>Development UI restart. No sessiond restart.</td>
 </tr>
 </tbody></table></div>
+<h3 id="service-logging">Service logging</h3>
+<p>To log completed HTTP requests on a machine, set <code>httpAccessLog</code> to <code>true</code> (default: <code>false</code>). Use <code>logLevel</code> of <code>info</code> (the default), <code>debug</code>, or <code>trace</code> to see them. The higher thresholds <code>warn</code>, <code>error</code>, and <code>fatal</code> hide access records. <code>silent</code> disables the service logger. These levels apply to Fastify/Pino, not independent console, plugin, or child-process output. Restart web/API and sessiond on that machine after changing either setting.</p>
+<p>Match the <code>x-request-id</code> response header to the <code>reqId</code> in the gateway and local daemon logs. The gateway generates its own ID; remote gateways generate theirs. Keep the daemon private: a request ID is not authentication. Access records identify routes by template and omit raw URLs, concrete parameters, queries, hosts, headers, and bodies. Other diagnostics may contain details. See <a href="config.md#service-logging">service logging</a> for fields, exclusions, and ID forwarding.</p>
 <p id="deployment-paths"><strong>Serving at a URL prefix?</strong> No config key is needed. The proxy must redirect to a trailing slash and strip the prefix before forwarding HTTP and WebSocket traffic. <a href="install#reverse-proxy-prefix">Reverse-proxy example →</a></p>
 <h3 id="restart-services">Restarting from PI WEB</h3>
 <p>Open <strong>Restart…</strong> from the actions menu, choose <strong>Web service</strong>, <strong>Session daemon</strong>, or <strong>Both services</strong>, and select <strong>Run in terminal</strong>. The dialog names the selected machine and opens its displayed command in that machine's maintenance terminal. A missing targeted command disables that choice rather than restarting additional services.</p>
@@ -1035,6 +1038,16 @@ PI_WEB_PLUGINS='{"git":{"settings":{"workspaceDiscoveryHooks":false}}}'</code></
 <th scope="row"><code>allowedHosts</code></th>
 <td><code>PI_WEB_ALLOWED_HOSTS</code></td>
 <td>Legacy development-only fallback when <code>hostAccess</code> is absent. JSON <code>true</code> or string array; legacy <code>true</code>/comma-separated hosts also accepted. See <a href="#host-access-migration">migration to the shared policy</a>. The <a href="#origin-checks">Origin guard</a> remains active regardless of policy.</td>
+</tr>
+<tr>
+<th scope="row"><code>logLevel</code></th>
+<td><code>PI_WEB_LOG_LEVEL</code></td>
+<td>Minimum <a href="#service-logging">service log level</a>. Default: <code>info</code>.</td>
+</tr>
+<tr>
+<th scope="row"><code>httpAccessLog</code></th>
+<td><code>PI_WEB_HTTP_ACCESS_LOG</code></td>
+<td>Enable <a href="#service-logging">HTTP access logging</a> at info level. Default: <code>false</code>.</td>
 </tr>
 <tr>
 <th scope="row"><code>maxUploadBytes</code></th>

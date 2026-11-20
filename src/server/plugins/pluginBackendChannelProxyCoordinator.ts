@@ -11,6 +11,7 @@ import {
   closePluginBackendChannelWebSocket,
   decodeBoundedPluginBackendChannelTextFrame,
   PluginBackendChannelTransportFrameError,
+  type ReportWebSocketProxyFailure,
   setPluginBackendChannelSocketPayloadLimit,
 } from "../webSocketBridge.js";
 import {
@@ -28,6 +29,7 @@ export interface PluginBackendChannelProxyCoordinatorOptions {
   readonly scope: PluginBackendChannelProxyScope;
   readonly admissions: PluginBackendChannelProxyAdmissionPool;
   readonly connectUpstream: PluginBackendChannelProxyUpstreamConnector;
+  readonly onUpstreamFailure?: ReportWebSocketProxyFailure;
 }
 
 export class PluginBackendChannelProxyConnectionError extends Error {
@@ -85,11 +87,13 @@ class ManagedPluginBackendChannelProxy {
     this.beginBridge();
   };
 
-  private readonly onUpstreamClose = (): void => {
+  private readonly onUpstreamClose = (code: number): void => {
+    this.options.onUpstreamFailure?.({ phase: "connect", reason: "unexpected-close", closeCode: code });
     this.beginClosing(1011, "Plugin backend channel upstream disconnected during transport setup");
   };
 
   private readonly onUpstreamError = (error: Error): void => {
+    this.options.onUpstreamFailure?.({ phase: "connect", reason: "socket-error" }, error);
     this.beginClosing(1011, `Plugin backend channel upstream transport setup failed: ${errorMessage(error)}`);
   };
 
@@ -115,6 +119,7 @@ class ManagedPluginBackendChannelProxy {
 
     const timeoutMs = this.reservation.transportConnectTimeoutMs;
     this.transportConnectDeadline = setTimeout(() => {
+      this.options.onUpstreamFailure?.({ phase: "connect", reason: "timeout" });
       this.beginClosing(
         1011,
         `Plugin backend channel transport connection timed out after ${String(timeoutMs)}ms`,
@@ -155,6 +160,7 @@ class ManagedPluginBackendChannelProxy {
     if (upstream.readyState === WebSocket.OPEN) {
       this.beginBridge();
     } else if (upstream.readyState !== WebSocket.CONNECTING) {
+      this.options.onUpstreamFailure?.({ phase: "connect", reason: "unexpected-close" });
       this.beginClosing(1011, "Plugin backend channel upstream was not available");
     }
   }
@@ -163,6 +169,7 @@ class ManagedPluginBackendChannelProxy {
     const upstream = this.upstream;
     if (this.phase !== "connecting" || upstream === undefined) return;
     if (upstream.readyState !== WebSocket.OPEN) {
+      this.options.onUpstreamFailure?.({ phase: "connect", reason: "unexpected-close" });
       this.beginClosing(1011, "Plugin backend channel upstream did not open cleanly");
       return;
     }
@@ -182,7 +189,7 @@ class ManagedPluginBackendChannelProxy {
       bridgeCompletion = bridgePluginBackendChannelSockets(
         this.options.downstream,
         upstream,
-        { initialClientFrames },
+        { initialClientFrames, ...(this.options.onUpstreamFailure === undefined ? {} : { onUpstreamFailure: this.options.onUpstreamFailure }) },
       );
     } catch (error) {
       this.beginClosing(1011, `Plugin backend channel bridge setup failed: ${errorMessage(error)}`);
@@ -197,6 +204,7 @@ class ManagedPluginBackendChannelProxy {
 
   private handleConnectionFailure(error: unknown): void {
     if (this.phase !== "resolving") return;
+    this.options.onUpstreamFailure?.({ phase: "connect", reason: "socket-error" }, error);
     if (error instanceof PluginBackendChannelProxyConnectionError) {
       this.beginClosing(error.closeCode, error.message);
       return;
