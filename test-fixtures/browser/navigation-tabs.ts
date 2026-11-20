@@ -1,3 +1,5 @@
+import { html } from "lit";
+import { WorkspacePanel } from "../../src/client/src/components/WorkspacePanel";
 import { AppMobileMainTabs, type AppMobileMainTab } from "../../src/client/src/components/appShell/AppMobileMainTabs";
 import { NavigationDialog } from "../../src/client/src/components/appShell/NavigationDialog";
 import { loadNavigationPreferences, orderedNavigationTabs, pinnedNavigationTabs, saveNavigationPreferences } from "../../src/client/src/navigationPreferences";
@@ -67,6 +69,17 @@ document.addEventListener("keydown", (event) => {
 });
 updateBar();
 application.append(opener, bar, selected);
+if (new URLSearchParams(location.search).has("workspace")) {
+  const panel = new WorkspacePanel();
+  panel.style.inlineSize = "320px";
+  panel.panels = Array.from({ length: 8 }, (_, i) => ({
+    id: `fixture:tool-${String(i)}`, title: `Workspace tool ${String(i)}`, render: () => html``,
+  }));
+  panel.onShowNavigation = openNavigation;
+  panel.onTogglePanel = () => undefined;
+  application.append(panel);
+  await panel.updateComplete;
+}
 await bar.updateComplete;
 window.addEventListener("pagehide", () => { dialog?.remove(); }, { once: true });
 document.body.dataset["ready"] = "true";
