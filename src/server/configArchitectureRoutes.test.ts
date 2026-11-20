@@ -48,6 +48,23 @@ describe("layered config updates", () => {
     }
   });
 
+  it("edits machine logging, inherits unset levels, and preserves access policy overrides", async () => {
+    writeFileSync(defaults, JSON.stringify({ logLevel: "warn" }));
+    writeFileSync(writable, JSON.stringify({ httpAccessLog: true }));
+    start({ PI_WEB_HTTP_ACCESS_LOG: "0" });
+    const url = "/api/machines/local/config";
+    const saved = await app.inject({ method: "PATCH", url, payload: { set: { logLevel: "debug" } } });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json<PiWebConfigResponse>()).toMatchObject({
+      config: { logLevel: "debug", httpAccessLog: true }, effectiveConfig: { logLevel: "debug", httpAccessLog: false },
+      enforcedSettings: { "/httpAccessLog": "PI_WEB_HTTP_ACCESS_LOG" },
+    });
+    const reset = await app.inject({ method: "PATCH", url, payload: { unset: ["/logLevel"] } });
+    expect(reset.statusCode).toBe(200);
+    expect(reset.json<PiWebConfigResponse>().effectiveConfig.logLevel).toBe("warn");
+    expect(JSON.parse(readFileSync(writable, "utf8"))).toEqual({ httpAccessLog: true });
+  });
+
   it.each(["sessionMessages", "crossProjectSessionMessages"] as const)("resets %s to deployment defaults without persisting effective values", async (key) => {
     writeFileSync(defaults, JSON.stringify({ [key]: false }));
     writeFileSync(writable, JSON.stringify({ spawnSessions: false, subsessions: false }));

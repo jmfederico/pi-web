@@ -5,6 +5,7 @@ import type { SessionNotificationPresentation } from "./sessionNotificationPrese
 import type { RuntimeActivityPresentation } from "./sessionActivityPresentation.js";
 import type { MachineStatusUiEvent } from "./machineStatus.js";
 import type { TerminalPluginMode } from "./requiredTerminalPlugin.js";
+import type { PiWebLogLevel } from "./logLevel.js";
 import type { PiWebDefaultLocalization } from "./defaultLocalization.js";
 export type { PiWebDefaultLocalization, LocalizationHourCycle } from "./defaultLocalization.js";
 import type {
@@ -194,6 +195,10 @@ export interface PiWebConfigValues {
   quietMode?: boolean;
   host?: string;
   port?: number;
+  /** Minimum service logger level; silent disables this logger. */
+  logLevel?: PiWebLogLevel;
+  /** Emit info-level HTTP request completion logs on this machine. */
+  httpAccessLog?: boolean;
   /** Legacy Vite-only fallback, ignored when hostAccess is supplied. */
   allowedHosts?: string[] | true;
   /** Shared gateway/Vite Host policy; omission leaves the decision unset. */

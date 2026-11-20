@@ -1,5 +1,6 @@
 import { Readable } from "node:stream";
-import Fastify, { type FastifyInstance } from "fastify";
+import type { FastifyInstance } from "fastify";
+import { createHttpServer } from "../httpServer.js";
 import fastifyWebsocket from "@fastify/websocket";
 import { WebSocket, WebSocketServer } from "ws";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,9 +9,11 @@ import { PI_WEB_CAPABILITIES } from "../../shared/capabilities.js";
 
 let app: FastifyInstance;
 let daemon: FakeSessionDaemon;
+let errorLines: string[];
 
 beforeEach(async () => {
-  app = Fastify({ logger: false });
+  errorLines = [];
+  app = createHttpServer("web", {}, { logger: { stream: { write: (line: string) => { errorLines.push(line); } } } });
   await app.register(fastifyWebsocket);
   daemon = await FakeSessionDaemon.create();
   registerSessionProxyRoutes(app, daemon, "/api/machines/local");
@@ -30,6 +33,7 @@ describe.each(["/api", "/api/machines/local"])("project mutation proxy at %s", (
     const input = { name: "Repo", path: "/repo", create: true };
     const added = await app.inject({ method: "POST", url: `${prefix}/projects`, payload: input });
     const closed = await app.inject({ method: "DELETE", url: `${prefix}/projects/project%201` });
+    expect(errorLines).toEqual([]);
     expect(added.statusCode).toBe(200);
     expect(added.json()).toEqual(project);
     expect(closed.statusCode).toBe(404);
@@ -332,14 +336,46 @@ describe("machine-scoped session proxy routes", () => {
     expect(response.headers["cache-control"]).toBeUndefined();
   });
 
-  it("returns a 502 response when the daemon request fails", async () => {
-    daemon.failWith(new Error("connection refused"));
-
-    const response = await app.inject({ method: "GET", url: "/api/machines/local/sessions" });
+  it("diagnoses a failed daemon request once without logging raw URLs, messages, or stacks", async () => {
+    const cause = Object.assign(new Error("connection to private-socket refused"), { code: "ECONNREFUSED" });
+    daemon.failWith(new TypeError("fetch failed", { cause }));
+    const response = await app.inject({ url: "/api/machines/local/sessions/private-session?cwd=private-dir" });
 
     expect(response.statusCode).toBe(502);
-    expect(response.json()).toEqual({ error: "Session daemon unavailable: connection refused" });
-    expect(daemon.requests).toEqual([{ method: "GET", path: "/sessions", body: undefined }]);
+    expect(response.json()).toEqual({ error: "Session daemon unavailable: fetch failed" });
+    expect(errorLines).toHaveLength(1);
+    expect(JSON.parse(errorLines[0] ?? "")).toMatchObject({ event: "sessiond.proxy.failure", transport: "http", phase: "request",
+      method: "GET", route: "/api/machines/local/sessions/*", errorCode: "ECONNREFUSED", reqId: response.headers["x-request-id"] });
+    expect(errorLines.join("")).not.toMatch(/private-|stack|fetch failed/u);
+  });
+
+  it("does not report browser cancellation as a daemon outage", async () => {
+    let disconnect: (() => void) | undefined;
+    app.addHook("onRequest", (request, _reply, done) => {
+      disconnect = () => { request.raw.emit("aborted"); };
+      done();
+    });
+    vi.spyOn(daemon, "request").mockImplementation(() => {
+      disconnect?.();
+      throw new DOMException("aborted", "AbortError");
+    });
+    await app.inject({ url: "/api/plugin-catalog/installed" });
+    expect(errorLines).toEqual([]);
+  });
+
+  it("diagnoses an asynchronous WebSocket setup failure once even when followed by close", async () => {
+    const cause = Object.assign(new Error("private socket error"), { code: "ECONNREFUSED" });
+    vi.spyOn(daemon, "connectWebSocket").mockImplementation(() => new WebSocket("ws://127.0.0.1", {
+      finishRequest: (request) => { request.destroy(cause); },
+    }));
+    await app.ready();
+    const client = await app.injectWS("/api/sessions/private-session/events?cwd=private-dir");
+    const closed = new Promise<void>((resolve) => { client.once("close", () => { resolve(); }); });
+    await closed;
+    expect(errorLines).toHaveLength(1);
+    expect(JSON.parse(errorLines[0] ?? "")).toMatchObject({ event: "sessiond.proxy.failure", transport: "websocket", phase: "connect",
+      reason: "socket-error", route: "/api/sessions/:sessionId/events", errorCode: "ECONNREFUSED" });
+    expect(errorLines.join("")).not.toMatch(/private|stack/u);
   });
 
   it("preserves cwd query context when forwarding session event websockets", async () => {

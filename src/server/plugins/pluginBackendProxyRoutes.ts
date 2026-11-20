@@ -8,6 +8,7 @@ import {
 } from "../../shared/pluginBackendProtocol.js";
 import type { SessionDaemonRequestClient } from "../../sessiond/sessionDaemonClient.js";
 import { requestCancellation } from "../requestCancellation.js";
+import { logDaemonRequestFailure, logInvalidDaemonResponse } from "../sessiond/daemonProxyDiagnostics.js";
 
 interface PluginBackendProxyParams {
   pluginId: string;
@@ -29,6 +30,7 @@ export function registerPairedPluginBackendProxyRoutes(app: FastifyInstance, dae
         try {
           upstream = await daemon.request("POST", path, request.body, { signal: cancellation.signal });
         } catch (error) {
+          logDaemonRequestFailure(request, error, cancellation.signal);
           return await reply.code(502).send({
             error: `Session daemon unavailable: ${errorMessage(error)}`,
             code: "daemon-unavailable",
@@ -71,6 +73,7 @@ function daemonPluginBackendPath(params: PluginBackendProxyParams): string {
 }
 
 function daemonProtocolError(reply: FastifyReply, params: PluginBackendProxyParams, message: string): FastifyReply {
+  logInvalidDaemonResponse(reply.request);
   return reply.code(502).send({
     error: message,
     code: "daemon-protocol-error",

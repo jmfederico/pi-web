@@ -2,6 +2,7 @@ import { PassThrough, Readable } from "node:stream";
 import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionDaemonClient } from "../../sessiond/sessionDaemonClient.js";
+import { createHttpServer } from "../httpServer.js";
 import { RemoteMachineClient } from "../machines/machineClient.js";
 import { registerMachineProxyRoutes } from "../machines/machineProxyRoutes.js";
 import { registerPluginBackendResourceRoutes, type PluginBackendResourceDispatcher } from "../sessiond/pluginBackendResourceRoutes.js";
@@ -61,6 +62,36 @@ describe("plugin resource HTTP hops", () => {
     const second = await reader.read();
     expect(Buffer.from(second.value ?? [])).toEqual(bytes.subarray(2));
     expect((await reader.read()).done).toBe(true);
+  });
+
+  it.each(["upstream", "browser"])("attributes a mid-body disconnect to the right peer: %s", async (peer) => {
+    const lines: string[] = [];
+    const edge = createHttpServer("web", {}, { logger: { stream: { write(line: string) { lines.push(line); } } } });
+    apps.push(edge);
+    const body = new PassThrough();
+    registerPluginBackendResourceProxyRoutes(edge, { requestStream: () => Promise.resolve({
+      body, statusCode: 200, headers: { "content-type": "application/octet-stream" },
+    }) });
+    const url = await edge.listen({ port: 0, host: "127.0.0.1" });
+    lines.length = 0;
+    body.write("partial");
+    const response = await fetch(`${url}/api${machinePath}${query}`);
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("Missing response body");
+    expect((await reader.read()).done).toBe(false);
+    if (peer === "browser") {
+      const closed = new Promise<void>((resolve) => { body.once("close", resolve); });
+      await reader.cancel();
+      await closed;
+      expect(lines).toEqual([]);
+    } else {
+      body.destroy(Object.assign(new Error("private-socket"), { code: "ECONNRESET" }));
+      await expect(reader.read()).rejects.toThrow();
+      expect(lines).toHaveLength(1);
+      expect(JSON.parse(lines[0] ?? "")).toMatchObject({ event: "sessiond.proxy.failure", transport: "http", phase: "response",
+        reason: "stream-failed", errorCode: "ECONNRESET", reqId: response.headers.get("x-request-id") });
+      expect(lines[0]).not.toMatch(/private-socket|stack|revision=/u);
+    }
   });
 
   it("preserves an unsatisfied range through every hop as inert JSON", async () => {

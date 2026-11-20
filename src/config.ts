@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, realpathSync, renameSync, rmSync, sta
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, normalize, resolve } from "node:path";
+import { requireLogLevel, type PiWebLogLevel } from "./shared/logLevel.js";
 import type { PiWebConfigValues, PiWebDeprecatedAgentInput } from "./shared/apiTypes.js";
 import { isPiWebPluginId, piWebPluginIdPattern } from "./shared/pluginIds.js";
 import { requireDefaultThemePreference } from "./shared/themePreference.js";
@@ -30,6 +31,8 @@ export interface LoadedPiWebConfig {
 }
 
 export interface EffectivePiWebConfig extends Omit<PiWebConfig, "uploads" | "attachments" | "spawnSessions" | "sessionMessages" | "crossProjectSessionMessages" | "subsessions" | "askUser" | "dockerEnvironmentFacts" | "agent" | "extensionDialogsTimeoutMs"> {
+  logLevel: PiWebLogLevel;
+  httpAccessLog: boolean;
   uploads: NonNullable<PiWebConfig["uploads"]>;
   attachments: NonNullable<PiWebConfig["attachments"]>;
   spawnSessions: boolean;
@@ -66,6 +69,9 @@ export function defaultPiWebDataDir(): string {
  * per-image inline limit so several images fit in one request).
  */
 export const DEFAULT_MAX_UPLOAD_BYTES = 64 * 1024 * 1024;
+
+export const DEFAULT_LOG_LEVEL = "info" satisfies PiWebLogLevel;
+export const DEFAULT_HTTP_ACCESS_LOG = false;
 
 export const DEFAULT_UPLOADS_FOLDER = ".pi-web/uploads";
 
@@ -234,6 +240,8 @@ export function resolveEffectivePiWebConfig(loaded: LoadedPiWebConfig, options: 
     ...loaded,
     config: {
       ...config,
+      logLevel: config.logLevel ?? DEFAULT_LOG_LEVEL,
+      httpAccessLog: config.httpAccessLog ?? DEFAULT_HTTP_ACCESS_LOG,
       uploads: effectiveUploadsConfig(config),
       attachments: effectiveAttachmentsConfig(config),
       // Always resolved (on by default) so the effective config is the single
@@ -393,6 +401,8 @@ export function parsePiWebConfig(value: Record<string, unknown>, path = "request
     ...(value["installationName"] !== undefined ? { installationName: requireInstallationName(value["installationName"], `PI WEB config installationName: ${path}`) } : {}),
     ...(value["host"] !== undefined ? { host: parseString(value["host"], "host", path) } : {}),
     ...(value["port"] !== undefined ? { port: parsePort(value["port"], "port", path) } : {}),
+    ...(value["logLevel"] !== undefined ? { logLevel: requireLogLevel(value["logLevel"], path) } : {}),
+    ...(value["httpAccessLog"] !== undefined ? { httpAccessLog: parseBooleanKey(value["httpAccessLog"], "httpAccessLog", path) } : {}),
     ...(value["allowedHosts"] !== undefined ? { allowedHosts: parseAllowedHosts(value["allowedHosts"], path) } : {}),
     ...(value["hostAccess"] !== undefined ? { hostAccess: requireHostAccess(value["hostAccess"], `PI WEB config hostAccess: ${path}`) } : {}),
     ...(value["shortcuts"] !== undefined ? { shortcuts: parseShortcuts(value["shortcuts"], path) } : {}),

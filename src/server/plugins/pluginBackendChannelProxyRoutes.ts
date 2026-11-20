@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
 import { PAIRED_PLUGIN_BACKEND_CHANNEL_ROUTE_PATHS, pairedPluginBackendPath, pluginBackendScopeFromRoute, PLUGIN_BACKEND_CHANNEL_DATA_FRAME_MAX_BYTES } from "../../shared/pluginBackendProtocol.js";
 import { markPluginBackendChannelUpgradeRequest } from "../webSocketBridge.js";
+import { logDaemonProxyFailure } from "../sessiond/daemonProxyDiagnostics.js";
 import {
   type PluginBackendChannelProxyAdmissionPool,
   pluginBackendChannelProxyAdmissionPool,
@@ -50,6 +51,7 @@ export function registerPluginBackendChannelProxyRoutes(
           projectId: request.params.projectId,
           workspaceId: request.params.workspaceId,
         },
+        onUpstreamFailure(failure, error) { logDaemonProxyFailure(request, { transport: "websocket", ...failure }, error); },
         connectUpstream() {
           try {
             return daemon.connectWebSocket(upstreamPath, {

@@ -3,6 +3,7 @@ import type { PiWebConfigValues } from "./apiTypes.js";
 /** Core file settings and the environment syntax accepted for their top-level inputs. */
 export const PI_WEB_CONFIG_DEFINITIONS = {
   installationName: "string", host: "string", port: "number", allowedHosts: "allowedHosts", hostAccess: "json",
+  logLevel: "string", httpAccessLog: "boolean",
   shortcuts: "json", defaultTheme: "json", defaultLocalization: "json",
   defaultStreamingBehavior: "string", quietMode: "boolean", plugins: "json",
   basePaths: "json", pathAccess: "json", uploads: "json", attachments: "json",

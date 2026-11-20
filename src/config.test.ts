@@ -35,6 +35,27 @@ describe("configuration save integrity", () => {
   });
 });
 
+describe("service logging", () => {
+  it("defaults to info without HTTP access logs", () => {
+    expect(effectivePiWebConfig(testOptions()).config).toMatchObject({ logLevel: "info", httpAccessLog: false });
+    expect(loadPiWebConfig(testOptions()).config).toEqual({});
+  });
+
+  it.each(["trace", "debug", "info", "warn", "error", "fatal", "silent"])("accepts logLevel %s", (level) => {
+    expect(applyPiWebConfigEnv({}, { PI_WEB_LOG_LEVEL: level }).logLevel).toBe(level);
+  });
+
+  it.each([
+    ["logLevel", "PI_WEB_LOG_LEVEL", "verbose"],
+    ["logLevel", "PI_WEB_LOG_LEVEL", ""],
+    ["httpAccessLog", "PI_WEB_HTTP_ACCESS_LOG", "yes"],
+  ])("rejects invalid %s in files and environment with the source", async (key, envName, value) => {
+    await writeFile(configPath, JSON.stringify({ [key]: value }));
+    expect(() => loadPiWebConfig(testOptions())).toThrow(configPath);
+    expect(() => applyPiWebConfigEnv({}, { [envName]: value })).toThrow(envName);
+  });
+});
+
 describe("Host access decision", () => {
   it("leaves fresh installs undecided without writing an override", async () => {
     expect(effectivePiWebConfig(testOptions()).config).not.toHaveProperty("hostAccess");

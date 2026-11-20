@@ -16,9 +16,11 @@ import { registerPluginBackendChannelProxyRoutes } from "./pluginBackendChannelP
 let app: FastifyInstance;
 let upstream: WebSocketServer;
 let sockets: WebSocket[];
+let errors: string[];
 
 beforeEach(async () => {
-  app = Fastify({ logger: false });
+  errors = [];
+  app = Fastify({ logger: { level: "error", stream: { write: (line: string) => { errors.push(line); } } } });
   await app.register(fastifyWebsocket);
   installPluginBackendChannelWebSocketPayloadLimit(app.websocketServer);
   upstream = new WebSocketServer({ host: "127.0.0.1", port: 0 });
@@ -86,6 +88,27 @@ describe("local plugin backend channel proxy", () => {
     browser.close(1000, "complete");
     await Promise.all([browserClosed, upstreamClosed]);
     await vi.waitFor(() => { expect(admissions.activeCount).toBe(0); });
+  });
+
+  it("reports an established daemon channel dropping without a close frame", async () => {
+    const connected = new Promise<WebSocket>((resolve) => { upstream.once("connection", resolve); });
+    registerPluginBackendChannelProxyRoutes(app, {
+      connectWebSocket: (path, options) => new WebSocket(`${webSocketServerUrl(upstream)}${path}`, options),
+    });
+    await app.ready();
+    const browser = await app.injectWS("/api/paired-plugin-backends/test/projects/p/workspaces/w/channels/private-operation");
+    sockets.push(browser);
+    const daemon = await connected;
+    sockets.push(daemon);
+    const bridged = nextMessage(browser);
+    daemon.send("ready");
+    await bridged;
+    const closed = nextClose(browser);
+    daemon.terminate();
+    await closed;
+    expect(errors).toHaveLength(1);
+    expect(JSON.parse(errors[0] ?? "")).toMatchObject({ transport: "websocket", phase: "bridge", reason: "unexpected-close", closeCode: 1006 });
+    expect(errors.join("")).not.toContain("private-operation");
   });
 
   it("rejects excess proxy admissions before opening another daemon socket", async () => {
@@ -172,6 +195,8 @@ describe("local plugin backend channel proxy", () => {
       const closeEvent = await closed;
       expect(closeEvent.code).toBe(1011);
       expect(closeEvent.reason).toContain("transport connection timed out");
+      expect(errors).toHaveLength(1);
+      expect(JSON.parse(errors[0] ?? "")).toMatchObject({ transport: "websocket", phase: "connect", reason: "timeout" });
       await stalledClosed;
       await vi.waitFor(() => { expect(admissions.activeCount).toBe(0); });
       expect(stalledSockets.size).toBe(0);
@@ -222,6 +247,7 @@ describe("local plugin backend channel proxy", () => {
       await stalledClosed;
       await vi.waitFor(() => { expect(admissions.activeCount).toBe(0); });
       expect(stalledSockets.size).toBe(0);
+      expect(errors).toEqual([]);
     } finally {
       for (const socket of stalledSockets) socket.destroy();
       await close(stalled);

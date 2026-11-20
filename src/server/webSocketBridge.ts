@@ -225,7 +225,16 @@ export function createBoundedTextWebSocketSender(
   return Object.assign(send, { drain });
 }
 
+export interface WebSocketProxyFailure {
+  phase: "connect" | "bridge";
+  reason: "socket-error" | "unexpected-close" | "timeout";
+  closeCode?: number;
+}
+
+export type ReportWebSocketProxyFailure = (failure: WebSocketProxyFailure, error?: unknown) => void;
+
 export interface PluginBackendChannelBridgeOptions {
+  onUpstreamFailure?: ReportWebSocketProxyFailure;
   /** Opaque bounded text frames captured while an asynchronous upstream was resolved. */
   initialClientFrames?: readonly string[];
 }
@@ -318,6 +327,7 @@ export function bridgePluginBackendChannelSockets(
   }
   function onUpstreamClose(code: number, reason: Buffer): void {
     if (closing) return;
+    if (code === 1006 || code === 1011) options.onUpstreamFailure?.({ phase: "bridge", reason: "unexpected-close", closeCode: code });
     closing = true;
     void propagatePluginChannelClose(client, sendToClient, code, decodeCloseReason(reason)).finally(notifyClosed);
   }
@@ -325,6 +335,7 @@ export function bridgePluginBackendChannelSockets(
     fail(1011, `Plugin backend channel client transport failed: ${bridgeErrorMessage(error)}`);
   }
   function onUpstreamError(error: Error): void {
+    if (!closing) options.onUpstreamFailure?.({ phase: "bridge", reason: "socket-error" }, error);
     fail(1011, `Plugin backend channel upstream transport failed: ${bridgeErrorMessage(error)}`);
   }
   client.on("message", onClientMessage);
