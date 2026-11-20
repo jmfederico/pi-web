@@ -89,6 +89,29 @@ describe("task definitions and SQLite ledger", () => {
     ] });
   });
 
+  it("counts tasks by latest inserted execution, including paused but excluding archived tasks", () => {
+    const store = memory();
+    const failed = store.create(input(), NOW);
+    const uncertain = store.create(input(), NOW);
+    const errored = store.create(input(), NOW);
+    expect(store.attentionCount()).toBe(0);
+    store.dispatchProblem(required(store.claim(failed.id, "manual", LATER)).id, "Rejected", true);
+    store.dispatchProblem(required(store.claim(uncertain.id, "manual", NOW)).id, "Confirmation lost", false);
+    store.report(required(store.claim(errored.id, "manual", NOW)).id, "errored", "Could not finish", NOW);
+    store.setPaused(uncertain.id, uncertain.revision, true, NOW);
+    expect(store.attentionCount()).toBe(3);
+    store.archive(errored.id, errored.revision, NOW);
+    expect(store.attentionCount()).toBe(2);
+
+    // Even if the clock moves backwards, a later claim supersedes the older failure.
+    const retry = required(store.claim(failed.id, "manual", NOW));
+    expect(store.attentionCount()).toBe(1);
+    store.confirmDispatch(retry.id, "session");
+    expect(store.attentionCount()).toBe(1);
+    store.report(retry.id, "completed", "Done", NOW);
+    expect(store.attentionCount()).toBe(1);
+  });
+
   it("deletes only archived tasks at their current revision and removes all owned records", () => {
     const store = memory();
     const task = store.create(input(), NOW);

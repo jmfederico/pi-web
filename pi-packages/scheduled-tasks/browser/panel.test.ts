@@ -13,7 +13,7 @@ const execution = { id: "execution", task, status: "dispatched", trigger: "manua
 const cleanup: (() => void)[] = [];
 afterEach(() => { cleanup.splice(0).forEach((dispose) => { dispose(); }); document.body.replaceChildren(); localStorage.clear(); vi.restoreAllMocks(); });
 
-function setup(request = vi.fn<(operation: string, input: JsonValue, options?: PluginPeerRequestOptions) => Promise<JsonValue>>((operation) => Promise.resolve(operation === "overview" ? { tasks: [{ ...task, latestExecution: execution }] } : { executions: [execution], nextOffset: 20 }))) {
+function activate(request = vi.fn<(operation: string, input: JsonValue, options?: PluginPeerRequestOptions) => Promise<JsonValue>>((operation) => Promise.resolve(operation === "overview" ? { tasks: [{ ...task, latestExecution: execution }] } : { executions: [execution], nextOffset: 20 }))) {
   const lifetime = new AbortController();
   const service = new LocalizationService({ development: true, preferences: { language: "en", formatLocale: "en-US" } });
   const localization = createPluginLocalization(service, "scheduled-tasks", "@jmfederico/pi-web-scheduled-tasks", lifetime.signal);
@@ -23,20 +23,27 @@ function setup(request = vi.fn<(operation: string, input: JsonValue, options?: P
   if (!panel) throw new Error("Panel missing");
   const forScope = vi.fn(() => ({ request }));
   const navigate = vi.fn(() => Promise.resolve());
+  const requestRender = vi.fn();
   const context: ApplicationPanelContextV5 = {
     machine: { id: "captured-machine", name: "Machine", kind: "remote" }, state: {},
     catalog: { version: 1, machineId: "captured-machine", projects: { list: vi.fn(), get: vi.fn() }, workspaces: { list: vi.fn(), get: vi.fn() }, sessions: { list: vi.fn(), get: vi.fn() } },
     backend: { machineId: "captured-machine", forScope }, navigate,
-    host: { requestRender: vi.fn() }, prompt: { insertText: vi.fn(), getText: () => "draft", getSelection: () => null },
+    host: { requestRender }, prompt: { insertText: vi.fn(), getText: () => "draft", getSelection: () => null },
   };
+  cleanup.push(() => { lifetime.abort(); });
+  return { panel, request, forScope, context, service, lifetime, navigate, requestRender };
+}
+function setup(request?: Parameters<typeof activate>[0]) {
+  const target = activate(request);
+  const { panel, context } = target;
   const container = document.createElement("div"); document.body.append(container);
   const mount = (next = context) => { render(panel.render(next), container); };
   mount();
   const element = document.querySelector("pi-web-scheduled-tasks-panel");
   if (!(element instanceof ScheduledTasksPanel) || !element.shadowRoot) throw new Error("Dashboard missing");
   const root = element.shadowRoot;
-  cleanup.push(() => { lifetime.abort(); render(nothingTemplate, container); });
-  return { element, root, request, forScope, context, mount, service, lifetime, navigate };
+  cleanup.push(() => render(nothingTemplate, container));
+  return { ...target, element, root, mount };
 }
 const nothingTemplate = html``;
 function deferred() {
@@ -53,6 +60,60 @@ function button(root: ShadowRoot, name: string): HTMLButtonElement {
 async function ready(target: ReturnType<typeof setup>): Promise<void> { await vi.waitFor(() => { expect(target.root.querySelector("article")).not.toBeNull(); }); }
 
 describe("Scheduled tasks dashboard", () => {
+  it("refreshes the tab badge without mounting the dashboard and hides it once no tasks need attention", async () => {
+    vi.useFakeTimers();
+    try {
+      const target = activate(vi.fn().mockResolvedValueOnce(2).mockResolvedValueOnce(0));
+      const read = () => target.panel.badge(target.context);
+      expect(read()).toBeUndefined();
+      expect(read()).toBeUndefined();
+      await Promise.resolve();
+      expect(target.request).toHaveBeenCalledExactlyOnceWith("attentionCount", {}, expect.anything());
+      expect(target.requestRender).toHaveBeenCalledTimes(1);
+      expect(read()).toBe(2);
+      await vi.advanceTimersToNextTimerAsync();
+      expect(target.requestRender).toHaveBeenCalledTimes(2);
+      read(); await Promise.resolve();
+      expect(read()).toBeUndefined();
+      expect(target.requestRender).toHaveBeenCalledTimes(3);
+      target.lifetime.abort();
+      await vi.runAllTimersAsync();
+      expect(target.requestRender).toHaveBeenCalledTimes(3);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("does not restore a cleared badge when an older overview finishes waiting for history", async () => {
+    const history = deferred();
+    const target = setup(vi.fn((operation) => {
+      if (operation === "history") return history.promise;
+      if (operation === "attentionCount") return Promise.resolve(0);
+      return Promise.resolve({ tasks: [{ ...task, latestExecution: { ...execution, status: "errored" } }] });
+    }));
+    await ready(target);
+    button(target.root, `View task: ${task.name}`).click();
+    const read = () => target.panel.badge(target.context);
+    read(); await Promise.resolve();
+    history.resolve({ executions: [execution], nextOffset: null });
+    await vi.waitFor(() => { expect(target.root.querySelector(".history-entry")).not.toBeNull(); });
+    expect(read()).toBeUndefined();
+
+    // A subsequent user refresh can still publish its newer overview.
+    button(target.root, "Refresh").click();
+    await vi.waitFor(() => { expect(read()).toBe(1); });
+  });
+
+  it("ignores obsolete badge responses after switching machines or losing the backend", async () => {
+    const first = deferred();
+    const target = activate(vi.fn().mockReturnValueOnce(first.promise).mockResolvedValueOnce(1));
+    const other = { ...target.context, machine: { ...target.context.machine, id: "other" } };
+    target.panel.badge(target.context);
+    expect(target.panel.badge(other)).toBeUndefined();
+    first.resolve(5); await Promise.resolve();
+    expect(target.panel.badge(other)).toBe(1);
+    const unavailable = { ...other }; delete unavailable.backend;
+    expect(target.panel.badge(unavailable)).toBeUndefined();
+  });
+
   it("initially loads only the machine overview, escapes task names, and opens stored conversation targets", async () => {
     const target = setup(); await ready(target);
     expect(target.forScope).toHaveBeenCalledWith({ kind: "machine" });

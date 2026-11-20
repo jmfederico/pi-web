@@ -1,5 +1,6 @@
 import type { PiWebPluginV5, PluginCapability, StylesheetIntegrationCapabilityV1 } from "@jmfederico/pi-web/plugin-api";
 import definitions from "./messages.js";
+import { AttentionBadge } from "./attentionBadge.js";
 import { definePanel, type PanelContent } from "./panel.js";
 
 const stylesCapability: PluginCapability<StylesheetIntegrationCapabilityV1, 1> = {
@@ -22,14 +23,16 @@ const plugin = {
     if (!localization) throw new Error("Scheduled tasks requires a localization-capable host");
     definePanel();
     const messages = localization.registerMessages("dashboard", definitions);
+    const badge = new AttentionBadge(lifetimeSignal);
     let content: PanelContent | undefined;
     return {
-      start({ capabilities }) { content = { localization, messages, lifetimeSignal, styles: capabilities.resolve(stylesCapability) }; },
+      start({ capabilities }) { content = { localization, messages, lifetimeSignal, badge, styles: capabilities.resolve(stylesCapability) }; },
       contributions: {
         applicationPanels: [{
           id: "scheduled-tasks.overview",
           get title() { return messages.t("title"); },
           order: 60,
+          badge: (context) => badge.read(context),
           icon: svg`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>`,
           render: (context) => html`<pi-web-scheduled-tasks-panel .content=${content} .context=${context}></pi-web-scheduled-tasks-panel>`,
         }],

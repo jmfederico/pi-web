@@ -25,6 +25,9 @@ export class TaskService {
           ? { projects: await this.catalog.projects.list(options) }
           : { workspaces: await this.catalog.workspaces.list(identifier(args, "projectId"), options) };
       }
+      case "attentionCount":
+        only(args, []);
+        return this.store.attentionCount();
       case "overview":
         only(args, []);
         return { defaultTimezone: this.defaultTimezone ?? null, tasks: this.store.listTasks().map((task) => ({
