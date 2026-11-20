@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { ATTENTION_STATUSES } from "./attention.js";
 import { nextOccurrence, text, validateTask, type Execution, type Task, type TaskInput, type ThinkingLevel } from "./domain.js";
 import { openSqlite, type SqliteDatabase } from "./sqlite.js";
 
@@ -34,6 +35,19 @@ export class TaskStore {
 
   listTasks(): Task[] {
     return this.db.prepare("SELECT body FROM tasks ORDER BY id").all().map((row) => decode<Task>(row));
+  }
+
+  attentionCount(): number {
+    // Use the same insertion order as executions(taskId, 1), not execution timestamps.
+    const count = this.db.prepare(`
+      SELECT count(*) AS count FROM tasks
+      WHERE json_extract(tasks.body, '$.archived') = 0 AND (
+        SELECT json_extract(executions.body, '$.status') FROM executions
+        WHERE executions.task_id = tasks.id ORDER BY executions.rowid DESC LIMIT 1
+      ) IN (${ATTENTION_STATUSES.map(() => "?").join(", ")})
+    `).get(...ATTENTION_STATUSES)?.["count"];
+    if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) throw new Error("Invalid scheduled task count");
+    return count;
   }
 
   task(id: string): Task {

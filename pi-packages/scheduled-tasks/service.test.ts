@@ -7,7 +7,7 @@ const NOW = "2030-01-01T00:00:00.000Z";
 const stores: TaskStore[] = [];
 afterEach(() => { for (const store of stores.splice(0)) store.close(); });
 
-it("accepts overrides through create/update and exposes requested/effective selections and notices in summaries", async () => {
+function fixture() {
   const store = TaskStore.open(":memory:");
   stores.push(store);
   const scheduler = new TaskScheduler(store, { dispatch: () => Promise.reject(new Error("Unused")) }, () => NOW, vi.fn());
@@ -17,6 +17,22 @@ it("accepts overrides through create/update and exposes requested/effective sele
     workspaces: { list: () => Promise.resolve([]), get: () => Promise.reject(new Error("Unused")) },
     sessions: { list: () => Promise.resolve([]), get: () => Promise.reject(new Error("Unused")) },
   });
+  return { service, store };
+}
+
+it("returns the attention count as a bare integer and rejects request fields", async () => {
+  const { service, store } = fixture();
+  const task = store.create({ name: "Work", projectId: "p", workspaceId: "w", prompt: "Do work",
+    timezone: "UTC", schedule: { kind: "once", at: NOW }, contextPaths: [] }, NOW);
+  const execution = store.claim(task.id, "manual", NOW);
+  if (execution === null) throw new Error("Missing execution");
+  store.dispatchProblem(execution.id, "Rejected", true);
+  await expect(service.request("attentionCount", {})).resolves.toBe(1);
+  await expect(service.request("attentionCount", { taskId: task.id })).rejects.toThrow("Unexpected input field");
+});
+
+it("accepts overrides through create/update and exposes requested/effective selections and notices in summaries", async () => {
+  const { service, store } = fixture();
   const definition = { name: "Work", projectId: "project", workspaceId: "workspace", prompt: "Do work",
     schedule: { kind: "once", at: NOW }, model: "provider/requested", thinkingLevel: "max" };
   await expect(service.request("create", definition)).resolves.toMatchObject({ model: "provider/requested", thinkingLevel: "max" });

@@ -1,5 +1,15 @@
 # @jmfederico/pi-web
 
+## 1.202611.5
+
+### Patch Changes
+
+- db971e5: Allow agents to message sessions across all projects on the same machine with the global `crossProjectSessionMessages` setting or `PI_WEB_CROSS_PROJECT_SESSION_MESSAGES` environment override. It defaults to off, still requires session messaging to be enabled, and takes effect after restarting the session daemon.
+
+  Keep archived transcripts read-only when archival races with session-message delivery.
+- 97dfd40: Fix MCP sign-in when an iPad copies the loopback callback URL without its `http://` prefix. Restore the current callback's scheme before submitting the pasted URL, while preserving OAuth validation.
+- 6a733bf: Reorder tabs from the Navigation menu using drag handles or arrow controls. Remember the order in this browser, including when tabs are hidden and shown again. Use Reset order to restore the default arrangement without changing tab visibility. Show a notice if browser storage cannot save the preferences.
+
 ## 1.202611.4
 
 ### Patch Changes

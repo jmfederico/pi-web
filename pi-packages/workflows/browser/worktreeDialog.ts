@@ -1,11 +1,11 @@
-import type { JsonObject, JsonValue, LocalizedMessages, PluginLocalization, PluginPeer, PluginRuntimeContextV5 } from "@jmfederico/pi-web/plugin-api";
+import type { JsonObject, JsonValue, LocalizedMessages, PluginLocalization, PluginPeer, PluginRuntimeContextV5, StylesheetIntegrationCapabilityV1 } from "@jmfederico/pi-web/plugin-api";
 
 import type definitions from "./workflows.messages.js";
 
 type DialogContext = Pick<PluginRuntimeContextV5, "state" | "catalog" | "navigate">;
 
 /** Plugin-owned UI; all machine operations go through the captured public backend. */
-export function openWorktreeDialog(context: DialogContext, peer: PluginPeer, localization: PluginLocalization, messages: LocalizedMessages<typeof definitions>, onClose: () => void): () => void {
+export function openWorktreeDialog(context: DialogContext, peer: PluginPeer, localization: PluginLocalization, messages: LocalizedMessages<typeof definitions>, styles: StylesheetIntegrationCapabilityV1, onClose: () => void): () => void {
   const t = messages.t.bind(messages);
   const project = context.state.selectedProject;
   if (!project) throw new Error(t("noProject"));
@@ -22,8 +22,8 @@ export function openWorktreeDialog(context: DialogContext, peer: PluginPeer, loc
       h2 { margin-top:0; font-size:20px; } p { line-height:1.5; overflow-wrap:anywhere; }
       label { display:block; margin:16px 0 6px; font-weight:600; }
       input, textarea { box-sizing:border-box; width:100%; padding:10px; font:inherit; color:inherit; background:var(--pi-bg, #202124); border:1px solid var(--pi-border, #888); border-radius:6px; }
-      textarea { resize:vertical; min-height:100px; } button { font:inherit; padding:8px 14px; cursor:pointer; border-radius:6px; }
-      button:disabled { cursor:default; opacity:.6; } footer { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:10px; margin-top:20px; }
+      textarea { resize:vertical; min-height:100px; }
+      footer { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:10px; margin-top:20px; }
       input { direction:ltr; text-align:start; } textarea { unicode-bidi:plaintext; }
       [role=alert] { color:var(--pi-error, #ffaaaa); } small { display:block; margin-top:6px; line-height:1.5; }
     </style>
@@ -40,7 +40,7 @@ export function openWorktreeDialog(context: DialogContext, peer: PluginPeer, loc
         <textarea id="description" dir="auto" name="description" required maxlength="8000" disabled aria-describedby="description-help"></textarea>
         <small id="description-help"></small>
         <p id="error" role="alert" hidden></p>
-        <footer><button type="button" id="cancel"></button><button type="submit" disabled></button></footer>
+        <footer><button type="button" id="cancel" class="ui-button"></button><button type="submit" class="ui-button ui-button--primary" disabled></button></footer>
       </form>
     </dialog>`;
   function element<T extends Element>(selector: string, constructor: new () => T): T {
@@ -77,12 +77,14 @@ export function openWorktreeDialog(context: DialogContext, peer: PluginPeer, loc
     error.textContent = errorText();
   }
   updateText();
+  const releaseStyles = styles.registerRoot(root, { sharedUi: true });
   const unsubscribe = localization.subscribe(updateText);
   base.setAttribute("aria-describedby", "base-help");
   function close() {
     if (controller.signal.aborted) return;
     controller.abort();
     unsubscribe();
+    releaseStyles();
     host.remove();
     if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
     onClose();
