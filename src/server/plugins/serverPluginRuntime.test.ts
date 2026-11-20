@@ -90,6 +90,28 @@ function createServerPluginRuntimeWithRequiredTerminal(options: Omit<CreateServe
 }
 
 describe("server plugin runtime", () => {
+  it("attributes plugin logs to the catalog ID at every severity while preserving other details", async () => {
+    const logger = testLogger();
+    const levels = ["debug", "info", "warn", "error"] as const;
+    const plugin = {
+      apiVersion: 5,
+      name: "Reporter",
+      activate({ logger: scopedLogger }) {
+        for (const level of levels) scopedLogger[level](`${level} event`, { pluginId: "other", taskId: 42 });
+        return {};
+      },
+    } satisfies SupportedPiWebServerPlugin;
+    const runtime = await createServerPluginRuntime({
+      catalog: { snapshot: () => Promise.resolve(testSnapshot([entry("reporter")])) },
+      importer: () => Promise.resolve({ default: plugin }),
+      logger,
+    });
+    for (const level of levels) {
+      expect(logger[level]).toHaveBeenCalledWith({ pluginId: "reporter", taskId: 42 }, `${level} event`);
+    }
+    await runtime.stop();
+  });
+
   it("discovers resource-only v5 peers and snapshots a bound resource callback", async () => {
     const peer = {
       contentType: "application/octet-stream",
