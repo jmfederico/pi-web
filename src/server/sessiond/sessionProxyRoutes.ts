@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { logDaemonProxyFailure, logDaemonRequestFailure, logInvalidDaemonResponse } from "./daemonProxyDiagnostics.js";
+import { isObservedDaemonBodyError, logDaemonProxyFailure, logDaemonRequestFailure, logInvalidDaemonResponse, observeDaemonBody } from "./daemonProxyDiagnostics.js";
 import type { ReportWebSocketProxyFailure, WebSocketProxyFailure } from "../webSocketBridge.js";
 import { WebSocket, type RawData } from "ws";
 import {
@@ -106,9 +106,11 @@ export function registerSessionProxyRoutes(
         const value = upstream.headers[name];
         if (value !== undefined && value !== "") reply.header(name, value);
       }
-      return await reply.send(upstream.body);
+      const stopObserving = observeDaemonBody(request, upstream.body, cancellation.signal);
+      try { return await reply.send(upstream.body); } finally { stopObserving(); }
     } catch (error) {
-      logDaemonRequestFailure(request, error, cancellation.signal);
+      if (!isObservedDaemonBodyError(request, error)) logDaemonRequestFailure(request, error, cancellation.signal);
+      if (cancellation.signal.aborted || reply.raw.headersSent) return;
       requestFailed(reply, error);
       return await reply;
     } finally {

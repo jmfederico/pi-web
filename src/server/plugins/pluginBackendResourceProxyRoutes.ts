@@ -3,7 +3,7 @@ import { PAIRED_PLUGIN_BACKEND_RESOURCE_ROUTE_PATHS, pairedPluginBackendResource
 import type { SessionDaemonClient } from "../../sessiond/sessionDaemonClient.js";
 import type { PluginBackendResourceParams } from "../sessiond/pluginBackendResourceRoutes.js";
 import { requestCancellation } from "../requestCancellation.js";
-import { logDaemonRequestFailure, logInvalidDaemonResponse } from "../sessiond/daemonProxyDiagnostics.js";
+import { isObservedDaemonBodyError, logDaemonRequestFailure, logInvalidDaemonResponse, observeDaemonBody } from "../sessiond/daemonProxyDiagnostics.js";
 import { applyPluginResourcePolicy, pluginResourceError, pluginResourceRange, sendPluginResourceResponse } from "./pluginBackendResourceResponse.js";
 
 export function registerPluginBackendResourceProxyRoutes(app: FastifyInstance, daemon: Pick<SessionDaemonClient, "requestStream">, prefix = "/api"): void {
@@ -29,12 +29,15 @@ export function registerPluginBackendResourceProxyRoutes(app: FastifyInstance, d
           logDaemonRequestFailure(request, error, cancellation.signal);
           return await pluginResourceError(reply, 502, error);
         }
+        const stopObserving = observeDaemonBody(request, upstream.body, cancellation.signal);
         try {
           return await sendPluginResourceResponse(reply, upstream, cancellation.signal);
         } catch (error) {
-          if (!cancellation.signal.aborted) logInvalidDaemonResponse(request);
+          if (cancellation.signal.aborted) return;
+          if (!isObservedDaemonBodyError(request, error)) logInvalidDaemonResponse(request);
+          if (reply.raw.headersSent) return;
           return await pluginResourceError(reply, 502, error);
-        }
+        } finally { stopObserving(); }
       } finally { cancellation.dispose(); }
     },
   });

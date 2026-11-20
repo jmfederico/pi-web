@@ -3,6 +3,7 @@ import { hostname } from "node:os";
 import Fastify, { LogController, type FastifyInstance, type FastifyReply, type FastifyRequest, type FastifyServerOptions } from "fastify";
 import { DEFAULT_HTTP_ACCESS_LOG, DEFAULT_LOG_LEVEL, type PiWebConfig } from "../config.js";
 import { withGatewayRequestId } from "../sessiond/gatewayRequestContext.js";
+import { isObservedDaemonBodyError } from "./sessiond/daemonProxyDiagnostics.js";
 
 type Service = "web" | "sessiond";
 
@@ -25,7 +26,12 @@ class HttpLogController extends LogController {
     }
   }
 
+  override defaultErrorLog(error: Error, request: FastifyRequest, reply: FastifyReply): void {
+    if (!isObservedDaemonBodyError(request, error)) super.defaultErrorLog(error, request, reply);
+  }
+
   override streamError(error: NodeJS.ErrnoException, request: FastifyRequest, reply: FastifyReply): void {
+    if (isObservedDaemonBodyError(request, error)) return;
     if (reply.raw.destroyed && (error.code === "ERR_STREAM_PREMATURE_CLOSE" || error.name === "AbortError")) return;
     super.streamError(error, request, reply);
   }
