@@ -14,6 +14,12 @@ function setup(request = vi.fn<(operation: string, input: JsonValue, options?: P
   const service = new LocalizationService({ development: true, preferences: { language: "en", formatLocale: "en-US" } });
   const localization = createPluginLocalization(service, "workflows", "@jmfederico/pi-web-workflows", lifetime.signal);
   const activation = plugin.activate({ lifetimeSignal: lifetime.signal, localization, ...(selection ? { selection } : {}) });
+  const releaseStyles = vi.fn();
+  const registerRoot = vi.fn(() => releaseStyles);
+  activation.start({
+    capabilities: { resolve: capability => capability.parse({ registerRoot, createController: vi.fn(), subscribe: vi.fn() }) },
+    signal: lifetime.signal,
+  });
   disposals.push(() => { activation.dispose(); lifetime.abort(); });
   const action = activation.contributions.actions[0];
   if (!action) throw new Error("Worktree action missing");
@@ -29,7 +35,7 @@ function setup(request = vi.fn<(operation: string, input: JsonValue, options?: P
     catalog, backend: { machineId: "remote", forScope }, navigate: vi.fn(() => Promise.resolve()),
     prompt: { insertText: vi.fn(), getText: () => "existing draft", getSelection: () => null },
   } satisfies Pick<PluginRuntimeContextV5, "state" | "catalog" | "backend" | "navigate" | "prompt">;
-  return { action, activation, context, request, forScope, lifetime, service, localization };
+  return { action, activation, context, request, forScope, lifetime, service, localization, registerRoot, releaseStyles };
 }
 function root(): ShadowRoot {
   const shadow = document.body.firstElementChild?.shadowRoot;
@@ -48,6 +54,14 @@ async function open(target: ReturnType<typeof setup>) {
 function submit() { control("form", HTMLFormElement).dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); }
 
 describe("Workflows worktree dialog", () => {
+  it("registers shared UI styles for the dialog and releases them on close", async () => {
+    const target = setup();
+    await open(target);
+    expect(target.registerRoot).toHaveBeenCalledExactlyOnceWith(root(), { sharedUi: true });
+    control("#cancel", HTMLButtonElement).click();
+    expect(target.releaseStyles).toHaveBeenCalledOnce();
+  });
+
   it("updates live labels, validation and direction without replacing fields or repeating requests", async () => {
     const target = setup();
     const opener = document.createElement("button");
