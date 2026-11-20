@@ -17,11 +17,23 @@ describe("session title generation", () => {
       return stream;
     });
     const result = await generateShortSessionName({ streamSimple }, model, "x".repeat(5_000),
-      resolveSessionNamingConfig({ maxTokens: 2048, thinkingLevel: level }), new AbortController().signal);
+      resolveSessionNamingConfig({ maxTokens: 2048, thinkingLevel: level }), new AbortController().signal, "session-1");
     expect(result).toBeUndefined();
     const call = streamSimple.mock.calls[0];
     expect(call?.[1].messages).toMatchObject([{ role: "user", content: `Create a 2-6 word title for this request:\n\n${"x".repeat(4_000)}…` }]);
     expect(call?.[2]?.maxTokens).toBe(2048);
     expect(call?.[2]?.reasoning).toBe(level === "off" ? undefined : level);
+    expect(call?.[2]?.sessionId).toBe("session-1");
+  });
+
+  it("omits the session id when the caller provides none", async () => {
+    const streamSimple = vi.fn<ExtensionContext["modelRegistry"]["streamSimple"]>(() => {
+      const stream = createAssistantMessageEventStream();
+      stream.end();
+      return stream;
+    });
+    await generateShortSessionName({ streamSimple }, model, "hello",
+      resolveSessionNamingConfig({}), new AbortController().signal);
+    expect(streamSimple.mock.calls[0]?.[2]?.sessionId).toBeUndefined();
   });
 });
