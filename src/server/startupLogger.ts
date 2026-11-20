@@ -1,6 +1,6 @@
 import type { FastifyServerOptions } from "fastify";
 
-/** The readable startup banner replaces Fastify's per-address listening messages. */
+/** PI WEB's readiness output replaces Fastify's per-address listening messages. */
 export const startupLogger: Exclude<FastifyServerOptions["logger"], boolean | undefined> = {
   hooks: {
     logMethod(args, method, level) {
