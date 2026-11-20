@@ -96,6 +96,23 @@ for (const width of [1280, 360]) {
   });
 }
 
+test("the workspace menu scrolls with overflowing tool tabs while the panel toggle stays put", async ({ page }) => {
+  // The workspace header is only shown in the wide side-by-side layout.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/navigation-tabs.html?workspace");
+  const panel = page.locator("workspace-panel");
+  const menu = panel.getByRole("button", { name: "Navigation", exact: true });
+  const toggle = panel.getByRole("button", { name: "Collapse workspace panel" });
+  await expect(toggle).toBeInViewport();
+  const initial = await box(toggle);
+  await expect(menu).not.toBeInViewport();
+  await panel.locator(".workspace-header-strip").evaluate((strip) => { strip.scrollLeft = strip.scrollWidth; });
+  await expect(menu).toBeInViewport({ ratio: 0.99 }); // Allow subpixel rounding at the scroll boundary.
+  expect(await box(toggle)).toEqual(initial);
+  await menu.click();
+  await expect(page.locator("navigation-dialog dialog")).toBeVisible();
+});
+
 test("keyboard moves keep focus on the moved item, including boundary moves", async ({ page }) => {
   await open(page);
   const tasks = row(page, "fixture:tasks");

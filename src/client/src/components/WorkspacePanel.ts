@@ -103,9 +103,9 @@ export class WorkspacePanel extends LitElement {
                   `;
                 })}
               </div>
+              ${this.renderNavigationButton(selectedPanel !== undefined && !pinnedPanels.some((panel) => panel.id === selectedPanel.id))}
             </div>
           </div>
-          ${this.renderNavigationButton(selectedPanel !== undefined && !pinnedPanels.some((panel) => panel.id === selectedPanel.id))}
           ${renderPanelToggleButton("workspace", false, this.onTogglePanel)}
         </header>
       `}
