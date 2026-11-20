@@ -7,6 +7,7 @@ import { defineConfig, normalizePath } from "vite";
 import { effectivePiWebConfig } from "./src/config";
 import { developmentAllowedHosts } from "./src/shared/hostAccess";
 import { DEPLOYMENT_MANIFEST_CONTENT_TYPE, DEPLOYMENT_MANIFEST_PATH, createDeploymentFlavorResolver, deploymentHtmlForFlavor, deploymentIdentityAssetForPath, deploymentManifestForFlavor, isDeploymentIdentityAssetPath } from "./src/server/deploymentIdentity";
+import { icuBrowserModules, icuModuleDirectory, installedBrowserModules } from "./src/server/installedBrowserModules";
 import { detectPiWebInstallation } from "./src/server/piWebStatus";
 import { fetchThemeBootstrap, injectThemeBootstrap } from "./src/server/themeBootstrap";
 
@@ -224,7 +225,15 @@ export function devThemeBootstrapPlugin(load = () => fetchThemeBootstrap(`http:/
 }
 
 export default defineConfig({
-  plugins: [devDocsPlugin(), devDeploymentIdentityPlugin(), manualRefreshPlugin(), devThemeBootstrapPlugin()],
+  plugins: [devDocsPlugin(), devDeploymentIdentityPlugin(), manualRefreshPlugin(), devThemeBootstrapPlugin(), {
+    name: "pi-web-installed-icu-imports",
+    apply: "build",
+    transformIndexHtml() {
+      const imports = Object.fromEntries(icuBrowserModules.map(({ id, path }) => [id, `./${path}`]));
+      return [{ tag: "script", attrs: { type: "importmap" }, injectTo: "head-prepend",
+        children: JSON.stringify({ scopes: { [`./${icuModuleDirectory}`]: imports } }) }];
+    },
+  }],
   root: "src/client",
   base: "./",
   build: {
@@ -233,7 +242,10 @@ export default defineConfig({
     // Accept the measured ~1,570 kB main chunk, but flag growth beyond ~15%.
     chunkSizeWarningLimit: 1800,
     rollupOptions: {
+      external: installedBrowserModules.map(({ id }) => id),
       output: {
+        // Imports resolve from dist/client/assets/, including behind a nested proxy.
+        paths: Object.fromEntries(installedBrowserModules.map(({ id, path }) => [id, `../${path}`])),
         manualChunks(id) {
           if (!id.includes("node_modules")) return;
           if (id.includes("@codemirror/legacy-modes")) return "vendor-editor-legacy";
@@ -259,6 +271,7 @@ export default defineConfig({
     proxy: {
       "/api": { target: `http://localhost:${String(apiPort)}`, ws: true },
       "/pi-web-plugins": { target: `http://localhost:${String(apiPort)}` },
+      "/pi-web-dependencies": { target: `http://localhost:${String(apiPort)}` },
       "/pi-web-theme-assets": { target: `http://localhost:${String(apiPort)}` },
     },
   },

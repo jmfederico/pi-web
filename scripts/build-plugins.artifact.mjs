@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -110,6 +110,9 @@ describe("plugin delivery artifacts", () => {
     const builtPackageFiles = (await recursiveFiles(builtPackagesRoot)).map((path) => `dist/pi-packages/${path}`).sort();
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/package.json");
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/pi-web-plugin.js");
+    // A remote Relays viewer cannot resolve the host's node_modules or private URLs.
+    expect(moduleSpecifiers(await readFile(join(builtPackagesRoot, "relays/markdownDocument.js"), "utf8"))).toEqual([]);
+    expect(await readFile(join(builtPackagesRoot, "relays/markdownDocument.licenses.md"), "utf8")).toContain("MarkedJS");
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/prompts/relay.md");
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/prompts/relay-worktree.md");
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/skills/relay/SKILL.md");
@@ -265,9 +268,15 @@ describe("plugin delivery artifacts", () => {
     const tools = loader.getExtensions().extensions.flatMap((extension) => [...extension.tools.values()]);
     expect(tools.map((tool) => tool.definition.name)).toContain("scheduled_tasks_report");
     expect(tools.every((tool) => tool.definition.exposure === "deferred")).toBe(true);
-    // Execute outside PI WEB's dependency tree: the server bundle must carry cron and public host API values.
+    expect(moduleSpecifiers(await readFile(join(source, "extensions/index.js"), "utf8"))).toContain("typebox");
+    // Run outside PI WEB's tree with just the declared runtime dependency installed.
+    // Link the real package (and its transitive resolution) without a registry request.
     const standalone = join(tempDir, "scheduler");
-    await mkdir(standalone);
+    await mkdir(join(standalone, "node_modules"), { recursive: true });
+    expect(metadata.dependencies["cron-parser"]).toEqual(expect.any(String));
+    expect(moduleSpecifiers(await readFile(join(source, "server-plugin.js"), "utf8"))).toContain("cron-parser");
+    const cronRoot = dirname(fileURLToPath(import.meta.resolve("cron-parser/package.json")));
+    await symlink(cronRoot, join(standalone, "node_modules/cron-parser"), "junction");
     await cp(join(source, "server-plugin.js"), join(standalone, "server-plugin.mjs"));
     const probe = join(standalone, "probe.mjs");
     await writeFile(probe, `

@@ -7,9 +7,13 @@
   "keywords": [
     "pi-package"
   ],
+  "dependencies": {
+    "cron-parser": "^5.10.2"
+  },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
   },
   "pi": {
     "extensions": ["./extensions/index.js"],

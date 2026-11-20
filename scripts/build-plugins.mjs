@@ -65,6 +65,7 @@ async function buildAll() {
       await buildFilesBrowserPackage(codeHighlightSourceDir, codeHighlightOutputDir);
     } else {
       for (const [packageName, config] of [
+        ["relays", "vite.config.mjs"],
         ["workflows", "vite.config.mjs"],
         ["private-input", "vite.config.mjs"],
         ["private-input", "vite.companion.config.mjs"],

@@ -9,6 +9,7 @@ import fastifyCompress from "@fastify/compress";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import { ProjectStore } from "./storage/projectStore.js";
+import { registerInstalledClientAssetRoutes } from "./installedClientAssetRoutes.js";
 import { registerBrowserRequestGuard } from "./browserRequestGuard.js";
 import { NavigationPreferenceStore } from "./storage/navigationPreferenceStore.js";
 import { registerNavigationPreferenceRoutes } from "./navigationPreferenceRoutes.js";
@@ -226,6 +227,7 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
     agentDirProvider: async () => effectiveAgentConfig(process.env, await readConfig()).dir,
   }));
   registerThemeCatalogRoutes(app, themeCatalog, configService);
+  await registerInstalledClientAssetRoutes(app);
 
   app.get("/pi-web-plugins/manifest.json", async (_request, reply) => withProfileDependency(reply, () => piWebPlugins.manifest()));
 

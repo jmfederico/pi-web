@@ -51,7 +51,7 @@ export const themePackPlugin: PiWebPlugin = {
         get name() { return messages.t("materialName"); },
         get description() { return messages.t("materialDescription"); },
         order: 10,
-        ...materialFileIcons,
+        ...materialFileIcons(),
       }],
     } };
   },
