@@ -1540,18 +1540,19 @@ function parseServerPluginNoticeInput(value: unknown): ServerPluginNoticeInput {
 }
 
 function createScopedLogger(pluginId: string, logger: ServerPluginRuntimeLogger): ServerPluginLogger {
+  const attributedDetails = (details?: JsonObject) => ({ ...details, pluginId });
   return Object.freeze({
     debug(message: string, details?: JsonObject): void {
-      logger.debug({ pluginId, ...(details ?? {}) }, message);
+      logger.debug(attributedDetails(details), message);
     },
     info(message: string, details?: JsonObject): void {
-      logger.info({ pluginId, ...(details ?? {}) }, message);
+      logger.info(attributedDetails(details), message);
     },
     warn(message: string, details?: JsonObject): void {
-      logger.warn({ pluginId, ...(details ?? {}) }, message);
+      logger.warn(attributedDetails(details), message);
     },
     error(message: string, details?: JsonObject): void {
-      logger.error({ pluginId, ...(details ?? {}) }, message);
+      logger.error(attributedDetails(details), message);
     },
   });
 }
