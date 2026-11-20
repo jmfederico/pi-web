@@ -22,7 +22,7 @@ describe("PiWebApp workspace topology refresh wiring", () => {
   it("refreshes a visible idle selected transcript", async () => {
     const app = createApp();
     selectSessionForPolling(app);
-    vi.stubGlobal("document", { visibilityState: "visible" });
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
     const sessions: unknown = Reflect.get(app, "sessions");
     if (!hasSelectedSessionRefresh(sessions)) throw new Error("PiWebApp SessionController was unavailable");
     const refresh = vi.spyOn(sessions, "refreshSelectedSession").mockResolvedValue();
@@ -37,12 +37,10 @@ describe("PiWebApp workspace topology refresh wiring", () => {
     expect(refresh).toHaveBeenCalledWith("session-1", { silent: true });
   });
 
-  it.each([
-    ["hidden document", { visibilityState: "hidden", isStreaming: false }],
-  ])("does not poll a %s", async (_label: string, options: { visibilityState: string; isStreaming: boolean }) => {
+  it("does not poll a hidden document", async () => {
     const app = createApp();
-    selectSessionForPolling(app, options.isStreaming);
-    vi.stubGlobal("document", { visibilityState: options.visibilityState });
+    selectSessionForPolling(app);
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
     const sessions: unknown = Reflect.get(app, "sessions");
     if (!hasSelectedSessionRefresh(sessions)) throw new Error("PiWebApp SessionController was unavailable");
     const refresh = vi.spyOn(sessions, "refreshSelectedSession").mockResolvedValue();
@@ -58,7 +56,7 @@ describe("PiWebApp workspace topology refresh wiring", () => {
     vi.useFakeTimers();
     const app = createApp();
     selectSessionForPolling(app, true);
-    vi.stubGlobal("document", { visibilityState: "visible" });
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
     const sessions: unknown = Reflect.get(app, "sessions");
     if (!hasSelectedSessionRefresh(sessions)) throw new Error("SessionController unavailable");
     const refresh = vi.spyOn(sessions, "refreshSelectedSession").mockResolvedValue();
