@@ -49,7 +49,9 @@ function serveCommands(): void {
       const child = children.get(message.id);
       if (child === undefined) return;
       killChildTree(child, "SIGTERM");
-      // Descendants can outlive the command, so the group is killed even after it closes.
+      // Descendants can outlive the command. Once its close reply reaches the daemon,
+      // only this timer still owns group cleanup. If the helper dies before it fires,
+      // a descendant that ignored SIGTERM can survive.
       setTimeout(() => {
         killChildTree(child, "SIGKILL");
       }, FORCE_KILL_GRACE_MS);

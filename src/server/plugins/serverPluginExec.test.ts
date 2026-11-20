@@ -273,38 +273,40 @@ describe("server plugin execFile helper", () => {
     })).rejects.toThrow("AbortSignal");
   });
 
-  it.skipIf(process.platform === "win32")("terminates the command process group when a deadline expires", async () => {
+  it("enforces the host timeout cap and kills the direct child (Windows) or process group (POSIX)", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "pi-web-plugin-exec-tree-"));
-    const pidPath = join(tempDir, "descendant.pid");
+    const pidPath = join(tempDir, "target.pid");
     const controller = new AbortController();
     const execFile = createServerPluginExecFile({ maxTimeoutMs: 200 });
     let command: ReturnType<typeof execFile> | undefined;
-    let descendantPid: number | undefined;
+    let targetPid: number | undefined;
     // Keep real process startup outside the 200 ms deadline, even under suite load.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
-      const parentSource = `
-        const { spawn } = require("node:child_process");
-        const { writeFileSync } = require("node:fs");
-        const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
-        writeFileSync(${JSON.stringify(pidPath)}, String(child.pid));
+      const readyAndWait = `require("node:fs").writeFileSync(${JSON.stringify(pidPath)}, String(process.pid)); setInterval(() => {}, 1000)`;
+      // On POSIX the leader exits on SIGTERM, but its descendant needs the later group SIGKILL.
+      const descendant = `process.on("SIGTERM", () => {}); ${readyAndWait}`;
+      const commandSource = process.platform === "win32" ? readyAndWait : `
+        require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], { stdio: "ignore" });
         setInterval(() => {}, 1000);
       `;
 
       command = execFile({
         file: process.execPath,
-        args: ["-e", parentSource],
+        args: ["-e", commandSource],
+        timeoutMs: 5_000,
         signal: controller.signal,
       });
       // Observe early spawn errors; the original promise is still asserted below.
       void command.catch(() => undefined);
-      descendantPid = await waitForDescendantPid(pidPath);
-      expect(processIsAlive(descendantPid)).toBe(true);
+      targetPid = Number(await waitForPidFile(pidPath));
+      if (!Number.isSafeInteger(targetPid) || targetPid <= 0) throw new Error("Command fixture published an invalid PID");
+      expect(processIsAlive(targetPid)).toBe(true);
 
       const timedOut = expect(command).rejects.toThrow("200ms");
       await vi.advanceTimersByTimeAsync(200);
       await timedOut;
-      await expectProcessExit(descendantPid);
+      await expectProcessExit(targetPid);
     } finally {
       controller.abort();
       try {
@@ -312,8 +314,8 @@ describe("server plugin execFile helper", () => {
       } finally {
         vi.useRealTimers();
         try {
-          if (descendantPid !== undefined && processIsAlive(descendantPid)) {
-            process.kill(descendantPid, "SIGKILL");
+          if (targetPid !== undefined && targetPid > 0 && processIsAlive(targetPid)) {
+            process.kill(targetPid, "SIGKILL");
           }
         } finally {
           await rm(tempDir, { recursive: true, force: true });
@@ -321,24 +323,7 @@ describe("server plugin execFile helper", () => {
       }
     }
   }, 10_000);
-
-  it("enforces the host timeout cap", async () => {
-    const execFile = createServerPluginExecFile({ maxTimeoutMs: 40 });
-
-    await expect(execFile({
-      file: process.execPath,
-      args: ["-e", "setInterval(() => {}, 1000)"],
-      timeoutMs: 5_000,
-      signal: new AbortController().signal,
-    })).rejects.toThrow("40ms");
-  });
 });
-
-async function waitForDescendantPid(pidPath: string): Promise<number> {
-  const pid = Number(await waitForPidFile(pidPath));
-  if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("Command fixture published an invalid PID");
-  return pid;
-}
 
 async function waitForPidFile(pidPath: string): Promise<string> {
   for (let attempt = 0; attempt < 500; attempt += 1) {
@@ -359,7 +344,7 @@ async function expectProcessExit(pid: number): Promise<void> {
     if (!processIsAlive(pid)) return;
     await waitForIo(10);
   }
-  throw new Error(`Descendant process ${String(pid)} survived the command deadline`);
+  throw new Error(`Process ${String(pid)} did not exit`);
 }
 
 function sleepSync(milliseconds: number): void {

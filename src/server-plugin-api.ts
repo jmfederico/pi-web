@@ -122,6 +122,8 @@ export interface ServerPluginActivationContextV5 {
   /**
    * Execute an argv-based command through host-owned output and time bounds.
    * The caller must forward the signal for its current bounded operation.
+   * Cancellation requests termination of the process group on POSIX and the direct
+   * child on Windows. Rejection does not guarantee that descendants have exited.
    */
   readonly execFile: (request: ServerPluginExecFileRequest) => Promise<ServerPluginExecFileResult>;
   /**
