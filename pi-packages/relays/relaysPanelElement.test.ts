@@ -205,7 +205,7 @@ describe("workspace states", () => {
 });
 
 describe("single relay", () => {
-  it("auto-opens the relay without a picker and renders its default document", async () => {
+  it("selects the only relay in the picker and opens its default document", async () => {
     const fake = workspaceFilesFake();
     fake.addDirectory(RELAYS_ROOT, [relayDirectory("only-relay", "2026-02-01T00:00:00.000Z")]);
     fake.addDirectory(`${RELAYS_ROOT}/only-relay`, [
@@ -217,8 +217,10 @@ describe("single relay", () => {
 
     const panel = await mountPanel(panelContext(fake));
 
-    expect(picker(panel)).toBeNull();
-    expect(shadow(panel).querySelector(".relay-name")?.textContent).toBe("only-relay");
+    const select = picker(panel);
+    expect(select?.options).toHaveLength(1);
+    expect(select?.value).toBe(`${RELAYS_ROOT}/only-relay`);
+    expect(select?.options[0]?.textContent).toBe("only-relay");
     expect(tabNames(panel)).toEqual(["status.md", "charter.md"]);
     expect(activeTab(panel)?.textContent).toBe("status.md");
     expect(documentText(panel)).toContain("All good.");
@@ -234,7 +236,8 @@ describe("single relay", () => {
     const panel = await mountPanel(panelContext(fake));
 
     expect(shadow(panel).querySelector("img")).toBeNull();
-    expect(shadow(panel).querySelector(".relay-name")?.textContent).toBe("<img src=x>");
+    expect(picker(panel)?.options[0]?.textContent).toBe("<img src=x>");
+    expect(picker(panel)?.value).toBe(`${RELAYS_ROOT}/<img src=x>`);
   });
 });
 
@@ -285,7 +288,8 @@ describe("exact packet navigation", () => {
     const context = linkedPanelContext(fake, packetPath);
     const panel = await mountPanel(context);
 
-    expect(shadow(panel).querySelector(".relay-name")?.textContent).toBe("workflow & notes");
+    expect(picker(panel)?.value).toBe(packetPath);
+    expect(picker(panel)?.options[0]?.textContent).toBe("workflow & notes");
     expect(documentText(panel)).toBe("custom baton");
     refreshButton(panel).click();
     await flushAsync();
