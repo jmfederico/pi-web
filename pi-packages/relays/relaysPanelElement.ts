@@ -391,11 +391,6 @@ class PiWebRelaysPanel extends HTMLElement {
   private renderRelayPicker(): string {
     const listing = this.listing;
     if (listing?.kind !== "loaded" || listing.relays.length === 0) return "";
-    // A single relay opens immediately; a one-option picker would be noise.
-    if (listing.relays.length === 1) {
-      const relay = listing.relays[0];
-      return relay === undefined ? "" : `<span dir="auto" class="relay-name" title="${escapeAttr(relay.path)}">${escapeHtml(relay.name)}</span>`;
-    }
     const options = listing.relays.map((relay) => {
       const selected = relay.path === this.selectedRelayPath ? " selected" : "";
       return `<option value="${escapeAttr(relay.path)}"${selected}>${escapeHtml(relay.name)}</option>`;
@@ -604,7 +599,6 @@ function relaysStyles(): string {
       .toolbar { flex: 0 0 auto; justify-content: space-between; padding-inline-start: 10px; }
       .toolbar[hidden], .document-tabs[hidden] { display: none; }
       .toolbar-actions { justify-content: flex-end; }
-      .relay-name { min-width: 0; color: var(--pi-text-secondary); overflow-wrap: anywhere; }
       .document-tabs { flex: 0 0 auto; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; }
       .viewer { flex: 1 1 auto; box-sizing: border-box; display: grid; align-content: start; gap: 12px; min-height: 0; overflow: auto; padding: 12px; }
       /* Grid children default to min-width: auto; without these caps a wide code
