@@ -153,7 +153,8 @@ describe("iPad Shortcuts overlay repair", () => {
     expect(host.viewportController.reserve).toBe(50);
     host.viewportController.removeReserve();
     expect(host.viewportController.reserve).toBeUndefined();
-    showBar(50);
+    // No further viewport event: removal itself measures the still-visible bar.
+    flushFrame();
     vi.advanceTimersByTime(SHORTCUTS_RESERVE_SETTLE_MS);
     expect(host.viewportController.reserve).toBe(50);
     expect(storedReserve).toBe(50);

@@ -62,7 +62,11 @@ export class ShellViewportController implements ReactiveController {
     this.reserveStore.clear();
     this.host.style.removeProperty(SHORTCUTS_RESERVE_PROPERTY);
     document.documentElement.removeAttribute(SHORTCUTS_RESERVED_ATTRIBUTE);
-    if (this.viewport !== null) this.startRepair();
+    if (this.viewport !== null) {
+      this.startRepair();
+      // A bar that is still showing is learned again without waiting for another event.
+      this.scheduleRefresh();
+    }
     this.host.requestUpdate();
   }
 
