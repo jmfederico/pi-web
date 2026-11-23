@@ -325,6 +325,36 @@ describe("composable normal chat", () => {
     expect(group.querySelector(".group-body")).toBeNull();
   });
 
+  it("follows a height change from a block expanded inside a nested shadow root", async () => {
+    // Tool cards and rendered markdown expand a disclosure inside their own
+    // shadow root, so the native toggle never reaches the transcript. The
+    // ResizeObserver over the transcript's blocks is what keeps follow-scroll
+    // aware of that height change.
+    const triggers: (() => void)[] = [];
+    class FakeResizeObserver {
+      readonly observed = new Set<Element>();
+      constructor(private readonly callback: ResizeObserverCallback) {
+        triggers.push(() => { this.callback([], this); });
+      }
+      observe(target: Element): void { this.observed.add(target); }
+      unobserve(target: Element): void { this.observed.delete(target); }
+      disconnect(): void { this.observed.clear(); }
+    }
+    vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+    const view = await mount();
+    const { metrics, write } = controlledChatViewport(view);
+    flushFrames(); await view.updateComplete;
+    write.mockClear();
+    const trigger = triggers.at(-1);
+    if (trigger === undefined) throw new Error("Expected a transcript ResizeObserver");
+
+    metrics.height = 2600;
+    trigger();
+    flushFrames();
+
+    expect(write).toHaveBeenCalledWith(2600);
+  });
+
   it.each(["paused", "disabled"])("leaves disclosure layout alone when following is %s", async (mode) => {
     const view = await mount({ ...DEFAULT_CHAT_BEHAVIORS, followTail: mode !== "disabled" });
     const { metrics, write } = controlledChatViewport(view);

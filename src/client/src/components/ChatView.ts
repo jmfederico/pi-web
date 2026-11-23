@@ -225,6 +225,15 @@ export class ChatView extends LitElement {
       if (event.target instanceof HTMLDetailsElement) this.scrollFlows.onContentLayoutChanged();
     },
   };
+  // Native `toggle` events do not cross shadow roots, so an expandable block
+  // rendered inside a nested component (a tool card's argument/diff disclosure,
+  // a rendered-markdown disclosure) changes the transcript height without that
+  // event reaching this element. Watch the transcript's blocks for resize so
+  // follow-scroll recalculates its height whenever any of them expands.
+  private readonly transcriptLayoutObserver: ResizeObserver | undefined = typeof ResizeObserver === "undefined"
+    ? undefined
+    : new ResizeObserver(() => { this.scrollFlows.onContentLayoutChanged(); });
+  private transcriptLayoutChildren: Element[] = [];
   private readonly handleWheel = (event: WheelEvent) => {
     if (event.deltaY !== 0) this.scrollFlows.onInteraction();
     if (event.deltaY < 0) this.scrollFlows.onUpIntent();
@@ -282,6 +291,8 @@ export class ChatView extends LitElement {
 
   override disconnectedCallback(): void {
     this.scrollFlows.dispose();
+    this.transcriptLayoutObserver?.disconnect();
+    this.transcriptLayoutChildren = [];
     this.messageActionController.reset();
     window.removeEventListener("resize", this.onViewportResize);
     window.removeEventListener("pagehide", this.onPageHide);
@@ -353,6 +364,7 @@ export class ChatView extends LitElement {
       this.navigationLocalizationChanged = false;
       this.onNavigationChange?.(this.renderNavigation());
     }
+    this.observeTranscriptLayout();
   }
 
   private readonly renderKeys = new ChatRenderKeys();
@@ -692,6 +704,21 @@ export class ChatView extends LitElement {
 
   private scrollAnchorElements(): HTMLElement[] {
     return Array.from(this.renderRoot.querySelectorAll<HTMLElement>("[data-scroll-anchor-id]"));
+  }
+
+  /** Track the transcript's top-level blocks so a block that grows (for example a
+   *  disclosure expanded inside a nested shadow root) triggers the same layout
+   *  recalculation a native toggle in this shadow tree would. */
+  private observeTranscriptLayout(): void {
+    const observer = this.transcriptLayoutObserver;
+    const container = this.chat;
+    if (observer === undefined || container === undefined) return;
+    const children = [...container.children];
+    const observed = this.transcriptLayoutChildren;
+    if (children.length === observed.length && children.every((child, index) => child === observed[index])) return;
+    for (const child of observed) observer.unobserve(child);
+    for (const child of children) observer.observe(child);
+    this.transcriptLayoutChildren = children;
   }
 
   private groupDisclosureKey(group: Extract<ChatGroup, { kind: "group" }>, liveTail: boolean): string {
