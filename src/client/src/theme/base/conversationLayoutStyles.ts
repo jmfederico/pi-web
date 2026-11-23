@@ -6,6 +6,11 @@ export const conversationLayoutStyles = css`
     :host([hidden]) { display: none; }
     .transcript { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; min-width: 0; isolation: isolate; }
     ::slotted(chat-view) { flex: 1 1 auto; min-height: 0; min-width: 0; }
+    .bottom-chrome { position: relative; z-index: 5; flex: 0 0 auto; min-width: 0; transition: transform .18s ease; }
+    /* Floating mode overlays the transcript, which reserves the chrome's height
+       as bottom padding, so the last message still clears the composer. */
+    .bottom-chrome.floating { position: absolute; inset-inline-start: 0; inset-inline-end: var(--pi-chat-scrollbar-gutter, 0px); bottom: 0; }
+    :host([chrome-hidden]) .bottom-chrome { transform: translateY(100%); }
     .composer-boundary { position: relative; flex: 0 0 auto; min-width: 0; container-type: inline-size; }
     .chat-composer[hidden], .question-actions[hidden] { display: none; }
     .question-mode { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; padding: 8px 12px; border-top: 1px solid var(--pi-border); background: var(--pi-surface); color: var(--pi-text); font: 13px var(--pi-font, system-ui, sans-serif); }

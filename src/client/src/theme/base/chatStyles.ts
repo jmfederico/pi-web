@@ -14,11 +14,17 @@ export const chatStyles = css`
   :host { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: visible; color: var(--pi-text); font: 14px var(--pi-font, system-ui, sans-serif); }
   .chat-wrap { --pi-chat-jump-size: 28px; position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: visible; display: flex; flex-direction: column; }
   .visually-hidden { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0 0 0 0) !important; clip-path: inset(50%) !important; white-space: nowrap !important; border: 0 !important; }
-  /* Contain sticky headers below the overlay scrollbar. Disable native anchoring
+  /* Contain sticky headers in the scroller's paint context, below its overlay scrollbar.
+     A stuck header parks under the floating top chrome while it is shown, and at the
+     screen edge once the chrome slides away, so it never halts mid-transcript. The top
+     padding below reserves that chrome, and a sticky offset counts from the padded
+     content start, so the offset drops the reservation and adds back only the chrome
+     that is still on screen. The --pi-chat-sticky-header-position property is the single switch a
+     reduced-effects transcript flips for every header kind at once. Disable native anchoring
      to avoid browser-driven jumps; ChatScrollFlows anchors history prepends. */
-  .chat { isolation: isolate; --pi-chat-sticky-top: 0px; flex: 1 1 auto; min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; overflow-anchor: none; padding: 0; box-sizing: border-box; }
+  .chat { isolation: isolate; --pi-chat-sticky-top: calc(0px - var(--pi-chat-hidden-sticky-shift, 0px)); flex: 1 1 auto; min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; overflow-anchor: none; scrollbar-gutter: stable; padding: calc(var(--pi-chat-top-inset, 0px)) 0 calc(var(--pi-chat-bottom-inset, 0px)); box-sizing: border-box; }
   .chat-wrap > .chat-jumps { position: absolute; right: 0; bottom: 0; }
-  .chat-wrap.plain .event-group > summary { position: static; top: auto; }
+  .chat-wrap.plain { --pi-chat-sticky-header-position: static; }
   .chat-wrap.plain *, .chat-wrap.plain *::before, .chat-wrap.plain *::after { transition: none !important; animation: none !important; box-shadow: none !important; text-shadow: none !important; filter: none !important; backdrop-filter: none !important; transform: none !important; border-radius: 0 !important; }
   .chat-wrap.plain .chat-image { --pi-image-radius: 0; }
   .msg { --ui-transcript-bg: var(--pi-bg); display: flow-root; max-width: 100%; min-width: 0; margin: 0; padding: 12px 16px 16px; overflow: visible; }
@@ -37,7 +43,7 @@ export const chatStyles = css`
   .system-message-sender:hover { color: var(--pi-text); }
   .system-message-sender:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 2px; }
   .msg.event-group { --ui-activity-tone: var(--pi-border); --ui-transcript-bg: var(--pi-bg); --ui-transcript-heading-bg: var(--pi-bg); padding: 0; color: var(--pi-text); }
-  .msg.event-group > summary { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px; padding-inline: 13px; }
+  .msg.event-group > summary { position: var(--pi-chat-sticky-header-position, sticky); top: var(--pi-chat-sticky-top, 0px); z-index: 5; display: flex; align-items: center; gap: 8px; padding-inline: 13px; }
   .msg.event-group > summary:hover { background: var(--pi-surface-hover); }
   .msg.event-group > summary .label { flex: 0 1 auto; margin: 0; color: inherit; font-weight: 600; }
   .msg.event-group > summary > span { min-width: 0; overflow-wrap: anywhere; }
