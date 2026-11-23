@@ -33,6 +33,12 @@ describe("dragWouldPanPage", () => {
     expect(dragWouldPanPage(strip, 20, 5)).toBe(false);
     expect(dragWouldPanPage(strip, 5, 20)).toBe(true);
   });
+
+  it("treats a diagonal first move over a list at its end as a page drag unless something scrolls sideways", () => {
+    // A finger pulling a top-scrolled list down often starts slightly sideways.
+    expect(dragWouldPanPage(vertical(atTop), 20, 10)).toBe(true);
+    expect(dragWouldPanPage({ vertical: [atTop], horizontal: true }, 20, 10)).toBe(false);
+  });
 });
 
 describe("ViewportPanGuard", () => {

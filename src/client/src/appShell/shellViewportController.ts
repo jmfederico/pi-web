@@ -52,8 +52,9 @@ export class ShellViewportController implements ReactiveController {
   }
 
   /**
-   * Free the reserved strip and forget its height. The bar is learned again
-   * the next time it appears, e.g. when a keyboard is reattached.
+   * Free the reserved strip and forget its height. Meant for when the bar is
+   * no longer used, e.g. the keyboard was detached. Whenever the bar is showing,
+   * including still showing at removal, its height is learned again as usual.
    */
   removeReserve(): void {
     if (this.reservedHeight === undefined) return;

@@ -147,7 +147,19 @@ describe("iPad Shortcuts overlay repair", () => {
     expect(storedReserve).toBe(55);
   });
 
-  it("guards against page panning only while the Shortcuts bar is up", async () => {
+  it("learns the bar again when it is still showing at removal", () => {
+    showBar(50);
+    vi.advanceTimersByTime(SHORTCUTS_RESERVE_SETTLE_MS);
+    expect(host.viewportController.reserve).toBe(50);
+    host.viewportController.removeReserve();
+    expect(host.viewportController.reserve).toBeUndefined();
+    showBar(50);
+    vi.advanceTimersByTime(SHORTCUTS_RESERVE_SETTLE_MS);
+    expect(host.viewportController.reserve).toBe(50);
+    expect(storedReserve).toBe(50);
+  });
+
+    it("guards against page panning only while the Shortcuts bar is up", async () => {
     const setActive = vi.spyOn(ViewportPanGuard.prototype, "setActive");
     storedReserve = 50;
     host.remove();

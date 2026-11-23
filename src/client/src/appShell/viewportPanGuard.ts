@@ -31,7 +31,8 @@ export interface DragScrollers {
 export function dragWouldPanPage(scrollers: DragScrollers, deltaX: number, deltaY: number): boolean {
   const mostlyHorizontal = Math.abs(deltaX) > Math.abs(deltaY);
   if (scrollers.vertical.length === 0) return !(scrollers.horizontal && mostlyHorizontal);
-  if (deltaY === 0 || mostlyHorizontal) return false;
+  // Sideways movement passes only where something can scroll sideways.
+  if (deltaY === 0 || (scrollers.horizontal && mostlyHorizontal)) return false;
   return scrollers.vertical.every((scroller) => deltaY > 0
     ? scroller.scrollTop <= 0
     : scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1);
