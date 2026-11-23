@@ -61,7 +61,7 @@ import {
 } from "./parsers";
 import { messagePath, streamSnapshotPath, transcriptSnapshotPath } from "./urls";
 
-const machinePrefix = (machineId = "local") => `api/machines/${encodeURIComponent(machineId)}`;
+export const machinePrefix = (machineId = "local") => `api/machines/${encodeURIComponent(machineId)}`;
 
 function sessionBasePath(session: SessionRef, machineId = "local"): string {
   return `${machinePrefix(machineId)}/sessions/${encodeURIComponent(session.id)}`;

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -36,6 +36,34 @@ describe("client static caching", () => {
     } finally {
       await app.close();
     }
+  });
+
+  it("serves the installed browser parser distributions as revalidating JavaScript", async () => {
+    const app = await buildApp({ clientDist, logger: false });
+    try {
+      for (const [file, entry] of [["marked.esm.js", "marked"], ["csstree.esm.js", "css-tree/dist/csstree.esm"]] as const) {
+        const asset = await app.inject(`/pi-web-dependencies/${file}`);
+        expect(asset.statusCode).toBe(200);
+        expect(asset.headers["content-type"]).toContain("javascript");
+        expect(asset.headers["cache-control"]).toBe("public, max-age=0");
+        expect(asset.body).toBe(await readFile(new URL(import.meta.resolve(entry)), "utf8"));
+      }
+    } finally { await app.close(); }
+  });
+
+  it("serves installed Material SVGs, not arbitrary dependency files or an HTML fallback", async () => {
+    const app = await buildApp({ clientDist, logger: false });
+    const prefix = "/pi-web-dependencies/material-icon-theme/";
+    try {
+      const icon = await app.inject(`${prefix}angular-component.clone.svg`);
+      expect(icon.statusCode).toBe(200);
+      expect(icon.headers["content-type"]).toContain("image/svg+xml");
+      expect(icon.body).toBe(await readFile(new URL(import.meta.resolve("material-icon-theme/icons/angular-component.clone.svg")), "utf8"));
+      expect(icon.headers.link).toContain("licenses/material-icon-theme/NOTICE.txt");
+      for (const file of ["missing.svg", "package.json", "dist/module/index.js"]) {
+        expect((await app.inject(`${prefix}${file}`)).statusCode).toBe(404);
+      }
+    } finally { await app.close(); }
   });
 
   it("marks content-hashed assets immutable", async () => {

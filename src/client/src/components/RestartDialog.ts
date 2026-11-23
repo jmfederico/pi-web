@@ -1,6 +1,7 @@
 import { LitElement, css, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import { piWebApi, type PiWebStatusResponse } from "../api";
+import type { RestartResult, RestartServices } from "../../../plugin-api";
+import { restartCommand, type RestartCommands, type RestartConfirmation } from "../controllers/restartController";
 import { LocalizationController } from "../localization/browser";
 import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { restartMessages as m } from "../restartMessages";
@@ -8,18 +9,15 @@ import { uiDialogStyles, uiFormStyles } from "./ui/dialogStyles";
 import { uiNoticeStyles } from "./ui/noticeStyles";
 import "./ModalSurface";
 
-type RestartTarget = "web" | "sessiond" | "both";
-const commandKeys = { web: "restartWeb", sessiond: "restartSessiond", both: "restart" } as const;
-
 /** Confirmation only. The existing maintenance terminal owns command execution and output. */
 @customElement("restart-dialog")
 export class RestartDialog extends LitElement {
-  @property({ attribute: false }) loadCommands: () => Promise<PiWebStatusResponse["commands"]> = async () => (await piWebApi.piWebStatus("local")).commands;
-  @property({ attribute: false }) onRun?: (command: string, title: string) => Promise<void>;
-  @property() activity: "active" | "idle" | "unknown" = "unknown";
-  @state() private visible = false;
-  @state() private target: RestartTarget = "web";
-  @state() private commands: PiWebStatusResponse["commands"] = {};
+  @property({ attribute: false }) activityForMachine: (machineId: string) => "active" | "idle" | "unknown" = () => "unknown";
+  @state() private request: RestartConfirmation | undefined;
+  @state() private target: RestartServices = "web";
+  @state() private commands: RestartCommands = {};
+  private resolveRequest: ((result: RestartResult) => void) | undefined;
+  private rejectRequest: ((error: unknown) => void) | undefined;
   @state() private loading = false;
   @state() private submitting = false;
   @state() private error = "";
@@ -32,24 +30,45 @@ export class RestartDialog extends LitElement {
   }
 
   override disconnectedCallback(): void {
-    this.loadSequence += 1;
+    // Removing the UI cannot cancel a terminal launch already in progress.
+    if (!this.submitting) this.finish("cancelled");
     super.disconnectedCallback();
   }
 
-  show(): void {
-    if (this.submitting) return;
-    this.visible = true;
-    this.target = "web";
+  show(request: RestartConfirmation): Promise<RestartResult> {
+    if (this.submitting) return Promise.reject(new Error(m.t("pending")));
+    this.finish("cancelled");
+    this.request = request;
+    this.target = request.services;
+    const result = new Promise<RestartResult>((resolve, reject) => {
+      this.resolveRequest = resolve;
+      this.rejectRequest = reject;
+    });
     void this.load();
+    return result;
+  }
+
+  private finish(result: RestartResult): void {
+    this.resolveRequest?.(result);
+    this.clearRequest();
+  }
+
+  private clearRequest(): void {
+    this.loadSequence += 1;
+    this.request = undefined;
+    this.resolveRequest = undefined;
+    this.rejectRequest = undefined;
   }
 
   private async load(): Promise<void> {
+    const request = this.request;
+    if (request === undefined) return;
     const sequence = ++this.loadSequence;
     this.loading = true;
     this.commands = {};
     this.error = "";
     try {
-      const commands = await this.loadCommands();
+      const commands = await request.loadCommands();
       if (sequence === this.loadSequence) this.commands = commands;
     } catch (error) {
       if (sequence === this.loadSequence) this.error = error instanceof Error ? error.message : String(error);
@@ -60,49 +79,55 @@ export class RestartDialog extends LitElement {
 
   private close(): void {
     if (this.submitting) return;
-    this.loadSequence += 1;
-    this.visible = false;
+    this.finish("cancelled");
   }
 
   private async confirm(): Promise<void> {
-    const command = this.commands[commandKeys[this.target]];
-    if (this.loading || this.submitting || command === undefined || this.onRun === undefined) return;
+    const request = this.request;
+    if (this.loading || this.submitting || restartCommand(this.commands, this.target) === undefined || request === undefined) return;
     this.submitting = true;
     this.error = "";
     try {
-      await this.onRun(command, m.t(this.target));
-      this.visible = false;
+      await request.run(this.target, this.commands);
+      this.finish("launched");
     } catch (error) {
-      this.error = error instanceof Error ? error.message : String(error);
+      if (!this.isConnected) {
+        this.rejectRequest?.(error);
+        this.clearRequest();
+      } else {
+        this.error = error instanceof Error ? error.message : String(error);
+      }
     } finally {
       this.submitting = false;
     }
   }
 
   override render() {
-    if (!this.visible) return nothing;
-    const command = this.commands[commandKeys[this.target]];
+    const request = this.request;
+    if (request === undefined) return nothing;
+    const activity = this.activityForMachine(request.machine.id);
+    const command = restartCommand(this.commands, this.target);
     return html`
       <modal-surface .label=${m.t("title")} .initialFocus=${"#restart-close"} .onClose=${() => { this.close(); }}>
         <header class="ui-dialog-header"><strong class="ui-dialog-title">${m.t("title")}</strong></header>
         <div class="ui-dialog-body ui-form-body">
-          <p>${m.t("scope")}</p>
+          <p>${m.t("scope", { machine: request.machine.name })}</p>
           <fieldset ?disabled=${this.loading || this.submitting} aria-describedby="restart-effect">
             <legend>${m.t("services")}</legend>
             ${(["web", "sessiond", "both"] as const).map((target) => html`
               <label class="ui-checkbox-field"><input type="radio" name="restart-target" value=${target}
-                .checked=${this.target === target} ?disabled=${this.commands[commandKeys[target]] === undefined}
+                .checked=${this.target === target} ?disabled=${restartCommand(this.commands, target) === undefined}
                 @change=${() => { this.target = target; }}>${m.t(target)}</label>`)}
           </fieldset>
           <p id="restart-effect">${m.t(this.target === "web" ? "webEffect" : this.target === "sessiond" ? "daemonEffect" : "bothEffect")}</p>
-          ${this.target !== "web" && this.activity !== "idle" ? html`<p id="restart-activity" class="ui-notice ui-notice--warning">${m.t(this.activity === "active" ? "active" : "unknownActivity")}</p>` : nothing}
+          ${this.target !== "web" && activity !== "idle" ? html`<p id="restart-activity" class="ui-notice ui-notice--warning">${m.t(activity === "active" ? "active" : "unknownActivity")}</p>` : nothing}
           ${this.loading ? html`<p role="status">${m.t("loading")}</p>` : command === undefined ? html`<p>${m.t("unavailable")}</p>` : html`<code>${command}</code><p>${m.t("terminalHint")}</p>`}
           ${this.error === "" ? nothing : html`<p role="alert" class="ui-notice ui-notice--error">${this.error}</p>`}
         </div>
         <footer class="ui-dialog-footer">
           <button id="restart-close" class="ui-button" ?disabled=${this.submitting} @click=${() => { this.close(); }}>${m.t("cancel")}</button>
           ${this.error !== "" && !this.submitting ? html`<button class="ui-button" @click=${() => { void this.load(); }}>${m.t("retryAvailability")}</button>` : nothing}
-          <button id="restart-confirm" class="ui-button ui-button--primary" ?disabled=${this.loading || this.submitting || command === undefined || this.onRun === undefined} @click=${() => { void this.confirm(); }}>${m.t(this.submitting ? "opening" : "confirm")}</button>
+          <button id="restart-confirm" class="ui-button ui-button--primary" ?disabled=${this.loading || this.submitting || command === undefined} @click=${() => { void this.confirm(); }}>${m.t(this.submitting ? "opening" : "confirm")}</button>
         </footer>
       </modal-surface>`;
   }

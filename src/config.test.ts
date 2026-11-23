@@ -35,6 +35,27 @@ describe("configuration save integrity", () => {
   });
 });
 
+describe("service logging", () => {
+  it("defaults to info without HTTP access logs", () => {
+    expect(effectivePiWebConfig(testOptions()).config).toMatchObject({ logLevel: "info", httpAccessLog: false });
+    expect(loadPiWebConfig(testOptions()).config).toEqual({});
+  });
+
+  it.each(["trace", "debug", "info", "warn", "error", "fatal", "silent"])("accepts logLevel %s", (level) => {
+    expect(applyPiWebConfigEnv({}, { PI_WEB_LOG_LEVEL: level }).logLevel).toBe(level);
+  });
+
+  it.each([
+    ["logLevel", "PI_WEB_LOG_LEVEL", "verbose"],
+    ["logLevel", "PI_WEB_LOG_LEVEL", ""],
+    ["httpAccessLog", "PI_WEB_HTTP_ACCESS_LOG", "yes"],
+  ])("rejects invalid %s in files and environment with the source", async (key, envName, value) => {
+    await writeFile(configPath, JSON.stringify({ [key]: value }));
+    expect(() => loadPiWebConfig(testOptions())).toThrow(configPath);
+    expect(() => applyPiWebConfigEnv({}, { [envName]: value })).toThrow(envName);
+  });
+});
+
 describe("Host access decision", () => {
   it("leaves fresh installs undecided without writing an override", async () => {
     expect(effectivePiWebConfig(testOptions()).config).not.toHaveProperty("hostAccess");
@@ -546,6 +567,31 @@ describe("sessionMessages configuration", () => {
   });
 });
 
+describe("crossProjectSessionMessages configuration", () => {
+  it("defaults off and resolves deployment, saved, and enforced choices without enabling messaging", async () => {
+    expect(effectivePiWebConfig(testOptions()).config.crossProjectSessionMessages).toBe(false);
+    const defaultsPath = join(tempDir, "defaults.json");
+    await writeFile(defaultsPath, JSON.stringify({ crossProjectSessionMessages: true }));
+    const options = { env: { ...testOptions().env, PI_WEB_DEFAULTS_CONFIG: defaultsPath } };
+    expect(effectivePiWebConfig(options).config.crossProjectSessionMessages).toBe(true);
+    savePiWebConfig({ crossProjectSessionMessages: false, sessionMessages: false }, options);
+    expect(loadPiWebConfig(options).config.crossProjectSessionMessages).toBe(false);
+    expect(effectivePiWebConfig(options).config.crossProjectSessionMessages).toBe(false);
+    const enforcedOptions = { env: { ...options.env, PI_WEB_CROSS_PROJECT_SESSION_MESSAGES: "1" } };
+    expect(effectivePiWebConfig(enforcedOptions).config).toMatchObject({ crossProjectSessionMessages: true, sessionMessages: false });
+    expect(loadPiWebConfig(enforcedOptions).config.crossProjectSessionMessages).toBe(false);
+    expect(piWebConfigSources(loadPiWebConfig(enforcedOptions), enforcedOptions)["/crossProjectSessionMessages"]).toBe("PI_WEB_CROSS_PROJECT_SESSION_MESSAGES");
+    savePiWebConfig({}, options);
+    expect(loadPiWebConfig(options).config).not.toHaveProperty("crossProjectSessionMessages");
+    expect(effectivePiWebConfig(options).config.crossProjectSessionMessages).toBe(true);
+  });
+
+  it.each([null, "true", 1, {}, []])("rejects nonboolean file value %j", async (crossProjectSessionMessages) => {
+    await writeFile(configPath, JSON.stringify({ crossProjectSessionMessages }));
+    expect(() => loadPiWebConfig(testOptions())).toThrow("crossProjectSessionMessages must be a boolean");
+  });
+});
+
 describe("spawnSessionsEnabled", () => {
   it("is on by default when nothing is configured", () => {
     expect(spawnSessionsEnabled({}, {})).toBe(true);
@@ -734,7 +780,7 @@ describe("environment setting resolution", () => {
       quietMode: true, plugins: { git: { enabled: false, settings: { key: { value: 1 } } } },
       basePaths: [], pathAccess: { allowedPaths: ["/a,b"] }, uploads: {}, attachments: {},
       maxUploadBytes: 100, sessionArchive: { directory: "archive" },
-      spawnSessions: false, sessionMessages: false, subsessions: false, askUser: false, environmentFacts: false, extensionDialogsTimeoutMs: 0,
+      spawnSessions: false, sessionMessages: false, crossProjectSessionMessages: true, subsessions: false, askUser: false, environmentFacts: false, extensionDialogsTimeoutMs: 0,
     };
     const env = Object.fromEntries(Object.entries(config).map(([key, value]) => [
       `PI_WEB_${key.replace(/[A-Z]/g, (letter) => `_${letter}`).toUpperCase()}`,
@@ -782,6 +828,7 @@ describe("environment setting resolution", () => {
 
   it.each([
     ["PI_WEB_SESSION_MESSAGES", "yes"], ["PI_WEB_SESSION_MESSAGES", ""],
+    ["PI_WEB_CROSS_PROJECT_SESSION_MESSAGES", "yes"], ["PI_WEB_CROSS_PROJECT_SESSION_MESSAGES", ""],
     ["PI_WEB_QUIET_MODE", "yes"], ["PI_WEB_SPAWN_SESSIONS", "no"], ["PI_WEB_SUBSESSIONS", "2"],
     ["PI_WEB_QUIET_MODE", ""], ["PI_WEB_SPAWN_SESSIONS", ""], ["PI_WEB_SUBSESSIONS", ""],
     ["PI_WEB_ASK_USER", ""], ["PI_WEB_ENVIRONMENT_FACTS", ""], ["PI_WEB_INSTALLATION_NAME", "bad\nname"],
@@ -797,6 +844,7 @@ describe("environment setting resolution", () => {
   it.each(["TRUE", "true", "1", "FALSE", "false", "0"])("parses strict boolean %s consistently", (value) => {
     const expected = /^(true|1)$/i.test(value);
     expect(applyPiWebConfigEnv({}, { PI_WEB_QUIET_MODE: value }).quietMode).toBe(expected);
+    expect(applyPiWebConfigEnv({}, { PI_WEB_CROSS_PROJECT_SESSION_MESSAGES: value }).crossProjectSessionMessages).toBe(expected);
     expect(spawnSessionsEnabled({ PI_WEB_SPAWN_SESSIONS: value })).toBe(expected);
     expect(sessionMessagesEnabled({ PI_WEB_SESSION_MESSAGES: value }, { sessionMessages: !expected })).toBe(expected);
     expect(subsessionsEnabled({ PI_WEB_SUBSESSIONS: value })).toBe(expected);

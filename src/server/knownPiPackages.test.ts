@@ -20,9 +20,11 @@ afterEach(async () => {
 });
 
 describe("optional shipped Pi packages", () => {
-  it("offers scheduled tasks for explicit installation without authorizing auto-installation", () => {
-    const id = "@jmfederico/pi-web-scheduled-tasks";
-    expect(KNOWN_PI_PACKAGES.find((known) => known.id === id)?.shippedPathSegments).toEqual(["dist", "pi-packages", "scheduled-tasks"]);
+  it.each([
+    ["@jmfederico/pi-web-scheduled-tasks", "scheduled-tasks"],
+    ["@jmfederico/pi-web-private-input", "private-input"],
+  ])("offers %s for explicit installation without authorizing auto-installation", (id, directory) => {
+    expect(KNOWN_PI_PACKAGES.find((known) => known.id === id)?.shippedPathSegments).toEqual(["dist", "pi-packages", directory]);
     expect(KNOWN_AUTO_INSTALLABLE_PI_PACKAGE_IDS).not.toContain(id);
   });
 

@@ -21,6 +21,7 @@ export type ExtensionDialogCancelCallback = (dialogId: string) => void | Promise
 export type ExtensionDialogDismissCallback = (dialogId: string) => void;
 
 const COUNTDOWN_TICK_MS = 1_000;
+const AUTO_DISMISS_SECONDS = 10;
 
 /** Header status label for a closed extension dialog. */
 export function extensionDialogCloseLabel(reason: ExtensionDialogCloseReason): string {
@@ -78,8 +79,8 @@ export function extensionDialogCountdownText(timeoutAt: string | undefined, nowM
  * The card owns only browser-local form state (the half-typed input, the
  * in-flight close flag, the display-only countdown); the daemon remains the
  * source of truth for whether the dialog is open. Closed mode renders the
- * settled outcome — a browser-local record that stays until dismissed — for a
- * browser that saw the dialog open.
+ * settled outcome for a browser that saw the dialog open. Its browser-local
+ * auto-dismiss countdown can be cancelled without changing the dialog outcome.
  */
 @customElement("extension-dialog-card")
 export class ExtensionDialogCard extends LitElement {
@@ -101,20 +102,25 @@ export class ExtensionDialogCard extends LitElement {
   @state() private countdownNow = 0;
   private dialogIdentity: string | undefined;
   private countdownTimer: number | undefined;
+  @state() private dismissSeconds = AUTO_DISMISS_SECONDS;
+  @state() private autoDismissCancelled = false;
+  private dismissTimer: number | undefined;
 
   override connectedCallback(): void {
     super.connectedCallback();
     this.syncCountdownTimer();
+    this.syncDismissTimer();
   }
 
   override disconnectedCallback(): void {
     this.answerVisible = false;
     this.stopCountdownTimer();
+    this.stopDismissTimer();
     super.disconnectedCallback();
   }
 
   protected override willUpdate(changed: PropertyValues<this>): void {
-    if (!changed.has("dialog") && !changed.has("outcome")) return;
+    if (!changed.has("dialog") && !changed.has("outcome") && !changed.has("onDismiss")) return;
     // Identity is keyed by dialogId, not object identity: status refreshes
     // re-project the same open dialog as a new object and must not wipe a
     // half-typed answer or an in-flight close.
@@ -124,8 +130,12 @@ export class ExtensionDialogCard extends LitElement {
       this.inputValue = "";
       this.closing = false;
       this.answerVisible = false;
+      this.stopDismissTimer();
+      this.dismissSeconds = AUTO_DISMISS_SECONDS;
+      this.autoDismissCancelled = false;
     }
     this.syncCountdownTimer();
+    this.syncDismissTimer();
   }
 
   override render(): TemplateResult | null {
@@ -222,7 +232,10 @@ export class ExtensionDialogCard extends LitElement {
                 title=${visibilityLabel}
                 aria-expanded=${String(this.answerVisible)}
                 aria-controls="extension-dialog-answer"
-                @click=${() => { this.answerVisible = !this.answerVisible; }}
+                @click=${() => {
+                  this.answerVisible = !this.answerVisible;
+                  if (this.answerVisible) this.keepVisible();
+                }}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
                   ${this.answerVisible
@@ -235,6 +248,12 @@ export class ExtensionDialogCard extends LitElement {
           </div>
         </header>
         <p id="extension-dialog-answer" class="closed-summary" dir="auto">${extensionDialogCloseSummary(closed, this.answerVisible)}</p>
+        ${!this.autoDismissCancelled && this.onDismiss !== undefined ? html`
+          <div class="auto-dismiss">
+            <span>${messages.t("autoDismiss", { seconds: this.dismissSeconds })}</span>
+            <button class="ui-button ui-button--compact" type="button" @click=${() => { this.keepVisible(); }}>${messages.t("keepVisible")}</button>
+          </div>
+        ` : null}
       </article>
     `;
   }
@@ -275,7 +294,39 @@ export class ExtensionDialogCard extends LitElement {
   }
 
   private dismissClosed(closed: ClosedExtensionDialog): void {
+    this.keepVisible();
     this.onDismiss?.(closed.dialog.dialogId);
+  }
+
+  private keepVisible(): void {
+    // The countdown row disappears; keep keyboard focus on the card's
+    // remaining action instead of dropping it onto the document body.
+    const keepButton = this.renderRoot.querySelector(".auto-dismiss button");
+    if (keepButton !== null && keepButton === this.shadowRoot?.activeElement) {
+      this.renderRoot.querySelector<HTMLButtonElement>(".closed-actions .secondary-action")?.focus();
+    }
+    this.autoDismissCancelled = true;
+    this.stopDismissTimer();
+  }
+
+  private syncDismissTimer(): void {
+    const closed = this.outcome;
+    if (!this.isConnected || closed === undefined || this.onDismiss === undefined || this.autoDismissCancelled) {
+      this.stopDismissTimer();
+      return;
+    }
+    if (this.dismissTimer !== undefined) return;
+    // Count only mounted time: navigating away must not dismiss an unseen card.
+    this.dismissTimer = window.setInterval(() => {
+      this.dismissSeconds -= 1;
+      if (this.dismissSeconds <= 0) this.dismissClosed(closed);
+    }, COUNTDOWN_TICK_MS);
+  }
+
+  private stopDismissTimer(): void {
+    if (this.dismissTimer === undefined) return;
+    window.clearInterval(this.dismissTimer);
+    this.dismissTimer = undefined;
   }
 
   private currentIdentity(): string | undefined {
@@ -355,6 +406,16 @@ export class ExtensionDialogCard extends LitElement {
       padding: 12px 16px;
     }
     .dialog-message + .dialog-footer, .dialog-options + .dialog-footer { border-top: 0; }
+    .auto-dismiss {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 0 8px;
+      padding: 0 16px 12px;
+      color: var(--pi-muted);
+      font-size: 13px;
+    }
     .closed-summary {
       margin: 0;
       padding: 12px 16px;

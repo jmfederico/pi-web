@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 
-// Keep the server package installable without a second host or cron-parser copy.
+// Carry the public host API values for standalone use; Node resolves cron-parser.
 export default defineConfig({
   build: {
     emptyOutDir: false,
@@ -10,7 +10,7 @@ export default defineConfig({
       formats: ["es"],
       fileName: () => "server-plugin.js",
     },
-    rollupOptions: { external: [/^node:/u] },
+    rollupOptions: { external: [/^node:/u, "cron-parser"] },
     target: "node22",
     minify: false,
   },

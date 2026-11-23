@@ -8,13 +8,18 @@ import { InMemorySessionSelectionMemory } from "./sessionSelection";
 import { defaultApi, deferred, emptyPage, FakeSocket, oldSession, sessionKey, sessionLookupId, status, workspace, type AppState, type MessagePage } from "./sessionController.testSupport";
 
 describe("SessionController reload and selection", () => {
-  it("returns the restored unselected session for navigation without changing the current selection", async () => {
-    const archivedSession = { ...oldSession, id: "archived", archived: true, archivedAt: "later" };
+  it.each([
+    { modified: "2026-05-17T00:00:00.000Z", order: ["archived", "recent", oldSession.id, "still-archived"] },
+    { modified: "2026-05-15T12:00:00.000Z", order: ["recent", "archived", oldSession.id, "still-archived"] },
+  ])("restores an unselected session into date order ($modified) without changing selection", async ({ modified, order }) => {
+    const archivedSession = { ...oldSession, id: "archived", modified, archived: true, archivedAt: "later" };
+    const recentSession = { ...oldSession, id: "recent", modified: "2026-05-16T00:00:00.000Z" };
+    const stillArchived = { ...oldSession, id: "still-archived", modified: "2026-05-18T00:00:00.000Z", archived: true };
     let state: AppState = {
       ...initialAppState(),
       selectedWorkspace: workspace,
       selectedSession: oldSession,
-      sessions: [oldSession, archivedSession],
+      sessions: [recentSession, oldSession, stillArchived, archivedSession],
     };
     const controller = new SessionController(
       () => state,
@@ -26,8 +31,10 @@ describe("SessionController reload and selection", () => {
 
     const restored = await controller.restoreSession(archivedSession);
 
-    expect(restored).toEqual({ ...oldSession, id: archivedSession.id });
-    expect(state.sessions).toEqual([oldSession, restored]);
+    expect(restored).toEqual({ ...oldSession, id: archivedSession.id, modified });
+    expect(state.sessions.map((session) => session.id)).toEqual(order);
+    expect(state.sessions.find((session) => session.id === archivedSession.id)).toEqual(restored);
+    expect(state.sessions.find((session) => session.id === stillArchived.id)).toBe(stillArchived);
     expect(state.selectedSession).toBe(oldSession);
   });
 

@@ -634,7 +634,8 @@ export class PluginRegistry {
       });
     });
     const transcriptRenderers = (contributions.transcriptRenderers ?? []).map((renderer): RegisteredTranscriptRenderer => {
-      const snapshot = snapshotTranscriptRenderer(renderer, lifetimeSignal);
+      const snapshot = snapshotTranscriptRenderer(renderer, lifetimeSignal,
+        workspacePluginBinding(runtimePluginId, registration.sourcePluginId, backendRevision, pairedRequestVersion, pairedChannelVersion, pairedResourceVersion));
       return Object.freeze({
         ...snapshot,
         id: this.qualify(runtimePluginId, snapshot.id, contributionIds),

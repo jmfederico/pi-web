@@ -18,5 +18,5 @@ export function askUserConfigPatch(enabled: boolean): PiWebConfigValues {
 }
 
 export function mergeSelectedMachineSessiondConfig(base: PiWebConfigResponse, selectedMachine: PiWebConfigResponse): PiWebConfigResponse {
-  return mergeSelectedSettingsResponse(base, selectedMachine, ["spawnSessions", "subsessions", "sessionMessages", "askUser", "agent"]);
+  return mergeSelectedSettingsResponse(base, selectedMachine, ["spawnSessions", "subsessions", "sessionMessages", "crossProjectSessionMessages", "askUser", "agent"]);
 }

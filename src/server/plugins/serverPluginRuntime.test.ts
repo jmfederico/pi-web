@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   PI_WEB_HOST_PI_SESSIONS_CAPABILITY,
   PI_WEB_HOST_WORKSPACES_CAPABILITY,
+  PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY,
+  PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY,
 } from "../../server-plugin-api.js";
 import type {
   JsonObject,
@@ -38,6 +40,8 @@ import {
   type ServerPluginHostCapabilityFactory,
   type ServerPluginModuleImporter,
 } from "./serverPluginRuntime.js";
+
+import { createServerPluginSessionLifecycleCapabilityFactory, createServerPluginSessionLifecycleV2CapabilityFactory, type CreateServerPluginSessionLifecycleCapabilityOptions } from "./serverPluginSessionLifecycleCapability.js";
 
 // A test-owned service exercises generic host factory lifetimes, not host storage.
 interface TestScopedService {
@@ -86,6 +90,28 @@ function createServerPluginRuntimeWithRequiredTerminal(options: Omit<CreateServe
 }
 
 describe("server plugin runtime", () => {
+  it("attributes plugin logs to the catalog ID at every severity while preserving other details", async () => {
+    const logger = testLogger();
+    const levels = ["debug", "info", "warn", "error"] as const;
+    const plugin = {
+      apiVersion: 5,
+      name: "Reporter",
+      activate({ logger: scopedLogger }) {
+        for (const level of levels) scopedLogger[level](`${level} event`, { pluginId: "other", taskId: 42 });
+        return {};
+      },
+    } satisfies SupportedPiWebServerPlugin;
+    const runtime = await createServerPluginRuntime({
+      catalog: { snapshot: () => Promise.resolve(testSnapshot([entry("reporter")])) },
+      importer: () => Promise.resolve({ default: plugin }),
+      logger,
+    });
+    for (const level of levels) {
+      expect(logger[level]).toHaveBeenCalledWith({ pluginId: "reporter", taskId: 42 }, `${level} event`);
+    }
+    await runtime.stop();
+  });
+
   it("discovers resource-only v5 peers and snapshots a bound resource callback", async () => {
     const peer = {
       contentType: "application/octet-stream",
@@ -550,6 +576,58 @@ describe("server plugin runtime", () => {
     await expect(alphaState.read()).rejects.toThrow("state revoked for state-alpha");
     await runtime.stop();
     expect(cleanups).toEqual(["start-failure", "state-beta", "state-alpha"]);
+  });
+
+  it("coexists and resolves exact session lifecycle v1 and v2 at the late host boundary", async () => {
+    const cwd = resolve("/repo");
+    const target = { projectId: "p", workspaceId: "w", sessionId: "s" };
+    const abort = vi.fn(() => Promise.resolve());
+    const stop = vi.fn(() => Promise.resolve());
+    const pin = vi.fn(() => Promise.resolve());
+    const dependencies: CreateServerPluginSessionLifecycleCapabilityOptions = {
+      projects: { requireProject: () => Promise.resolve({ id: "p", name: "Project", path: cwd, createdAt: "now" }) },
+      workspaces: { checkCurrent: () => Promise.resolve({ projectId: "p", status: "provider", diagnostics: [], workspaces: [{ id: "w", projectId: "p", path: cwd, label: "Main", isMain: true }] }) },
+      sessions: {
+        listCatalogSessions: () => Promise.resolve([{ id: "s", cwd, created: null, modified: null, archivedAt: null, archived: false, runtime: "busy" }]),
+        abort,
+        stop,
+        archiveMany: vi.fn(),
+        restore: vi.fn(),
+        deleteArchivedMany: vi.fn(),
+      },
+      pins: { pinnedSessionIds: () => Promise.resolve([]), setPinned: pin },
+    };
+    const start = vi.fn<NonNullable<ServerPluginActivation["start"]>>(async ({ capabilities }) => {
+      const legacy = capabilities.resolve(PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY);
+      const modern = capabilities.resolve(PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY);
+      expect(legacy.version).toBe(1);
+      expect(legacy).not.toHaveProperty("abort");
+      expect(legacy).not.toHaveProperty("close");
+      expect(modern.version).toBe(2);
+      await legacy.pin(target);
+      await modern.abort(target);
+      await modern.close(target);
+    });
+    const runtime = await createServerPluginRuntime({
+      catalog: { snapshot: () => Promise.resolve(testSnapshot([entry("lifecycle-consumer")])) },
+      lateHostCapabilities: [PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY, PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY],
+      logger: testLogger(),
+      importer: () => Promise.resolve({ default: plugin("Lifecycle consumer", () => ({ start }), [PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY, PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY]) }),
+    });
+    try {
+      expect(start).not.toHaveBeenCalled();
+      await runtime.resumeWithHostCapabilityFactories([
+        createServerPluginSessionLifecycleCapabilityFactory(dependencies),
+        createServerPluginSessionLifecycleV2CapabilityFactory(dependencies),
+      ]);
+      expect(runtime.healthRecords()).toMatchObject([{ pluginId: "lifecycle-consumer", state: "active" }]);
+      expect(start).toHaveBeenCalledOnce();
+      expect(pin).toHaveBeenCalledExactlyOnceWith({ kind: "session-pins", projectId: "p", workspaceId: "w" }, "s", true);
+      expect(abort).toHaveBeenCalledExactlyOnceWith({ id: "s", cwd });
+      expect(stop).toHaveBeenCalledExactlyOnceWith({ id: "s", cwd });
+    } finally {
+      await runtime.stop();
+    }
   });
 
   it("starts early authority immediately and resumes exact late host capabilities once with failure isolation", async () => {

@@ -15,25 +15,28 @@ export interface SendSessionMessageResult {
 }
 
 export interface SendSessionMessageToolDeps {
+  crossProjectSessionMessages?: boolean;
   send(input: SendSessionMessageInvocation): Promise<SendSessionMessageResult>;
 }
 
-const SendSessionMessageParams = Type.Object({
-  sessionId: Type.String({
-    description: "Target session id in the same project on the same machine; no parent-child relationship is required.",
-  }),
-  message: Type.String({
-    description: "Message to deliver as an instruction in the target session's conversation.",
-  }),
-});
-
 export function createSendSessionMessageToolDefinition(spawningCwd: string, deps: SendSessionMessageToolDeps) {
-  return defineTool<typeof SendSessionMessageParams, SendSessionMessageResult>({
+  const scope = deps.crossProjectSessionMessages === true
+    ? "across all projects on the same machine"
+    : "in the same project on the same machine";
+  const parameters = Type.Object({
+    sessionId: Type.String({
+      description: `Target session id ${scope}; no parent-child relationship is required.`,
+    }),
+    message: Type.String({
+      description: "Message to deliver as an instruction in the target session's conversation.",
+    }),
+  });
+  return defineTool<typeof parameters, SendSessionMessageResult>({
     name: "send_session_message",
     label: "Send session message",
-    description: "Send a message to any session in the same project on the same machine. An idle session starts a run; a busy session receives it as steering at the next safe agent boundary. A message may wake a stopped session. This creates no parent-child relationship, provides no access to results, and grants no control over the target session.",
+    description: `Send a message to any session ${scope}. An idle session starts a run; a busy session receives it as steering at the next safe agent boundary. A message may wake a stopped session. This creates no parent-child relationship, provides no access to results, and grants no control over the target session.`,
     promptSnippet: "send_session_message: start an idle session or steer a busy session; no relationship, results, or control",
-    parameters: SendSessionMessageParams,
+    parameters,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await deps.send({
         sendingCwd: spawningCwd,

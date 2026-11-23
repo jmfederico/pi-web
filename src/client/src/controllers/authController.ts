@@ -153,7 +153,7 @@ export class AuthController {
     const requestId = request.requestId;
     const target: OAuthResponseTarget = { flowId, requestId };
     if (isSameOAuthResponseTarget(this.inFlightResponse, target)) return;
-    const responseValue = value ?? dialog.inputValue ?? "";
+    const responseValue = normalizeMcpRedirectInput(value ?? dialog.inputValue ?? "", dialog.flow);
     const clean = { ...dialog };
     delete clean.error;
     this.inFlightResponse = target;
@@ -385,6 +385,27 @@ export class AuthController {
     const session = state.selectedSession;
     if (session === undefined || session.archived === true) return undefined;
     return session;
+  }
+}
+
+function normalizeMcpRedirectInput(value: string, flow: OAuthFlowState): string {
+  if (flow.target !== "mcp" || flow.prompt === undefined || flow.auth === undefined) return value;
+  const trimmed = value.trim();
+  // Safari can copy a loopback address without its scheme. Restore only the
+  // current callback's scheme; Pi still owns all OAuth response validation.
+  if (!/^(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?\//iu.test(trimmed)) return value;
+  try {
+    const redirectUri = new URL(flow.auth.url).searchParams.get("redirect_uri");
+    if (redirectUri === null) return value;
+    const expected = new URL(redirectUri);
+    if (expected.protocol !== "http:" && expected.protocol !== "https:") return value;
+    const restored = `${expected.protocol}//${trimmed}`;
+    const parsed = new URL(restored);
+    if (parsed.origin !== expected.origin || parsed.pathname !== expected.pathname) return value;
+    return restored;
+  } catch {
+    // Leave unrecognized input untouched for the authoritative Pi validator.
+    return value;
   }
 }
 

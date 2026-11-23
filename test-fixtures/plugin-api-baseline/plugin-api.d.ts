@@ -19,8 +19,8 @@ import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeResponse
 export type { FileContentMediaType, FileContentResponse, FileTreeEntry, FileTreeResponse, JsonObject, JsonPrimitive, JsonValue, PluginBackend, PluginBackendScope, PluginPeer, PluginPeerRequestOptions, PluginPeerChannelOptions, PluginPeerChannelClose, PluginPeerChannel, MachineKind, PiWebComponentStatus, PiWebRuntimeIdentity, PiWebDockerMode, PiWebInstallationInfo, PiWebInstallationKind, PiWebReleaseStatus, PiWebServiceComponent, PiWebStatusMessage, PiWebStatusResponse, PiWebStatusSeverity, PiWebVersionResponse, PluginCapability, PluginCapabilityProvision, SessionUiMetadata, AnyTerminalCommandRun, MaintenanceTerminalCommandRun, TerminalCommandRun, TerminalCommandRunHandle, TerminalCommandRunStatus, WorkspaceProviderCapabilities, WorkspaceProviderMetadata, WorkspaceRemovalPresentation, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse, DeleteWorkspaceFileResponse, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, } from "./shared/pluginApiTypes.js";
 export type { PluginCatalogV1, PluginCatalogProject, PluginCatalogWorkspace, PluginSessionSnapshot, PluginWorkspaceSelection, PluginSessionSelection, PluginCatalogReadOptions } from "./shared/pluginCatalogTypes.js";
 import type { PluginCatalogV1 } from "./shared/pluginCatalogTypes.js";
-export type { PluginSessionLifecycleV1, PluginSessionLifecycleState, PluginSessionLifecycleOptions } from "./shared/pluginSessionLifecycleTypes.js";
-import type { PluginSessionLifecycleV1 } from "./shared/pluginSessionLifecycleTypes.js";
+export type { PluginSessionLifecycleV1, PluginSessionLifecycleV2, PluginSessionLifecycleState, PluginSessionLifecycleOptions } from "./shared/pluginSessionLifecycleTypes.js";
+import type { PluginSessionLifecycleV1, PluginSessionLifecycleV2 } from "./shared/pluginSessionLifecycleTypes.js";
 export type PiWebPlugin = LegacyPiWebPlugin | PiWebPluginV5;
 /** Current browser entrypoint. Existing contribution kinds and lifecycle behavior are unchanged. */
 export interface PiWebPluginV5 {
@@ -41,6 +41,14 @@ export interface PluginCatalog extends PluginCatalogV1 {
 }
 export interface PluginSessionLifecycle extends PluginSessionLifecycleV1 {
     readonly machineId: string;
+    /** Interrupt current work without closing the runtime. Omitted by older browser hosts;
+     * an older target daemon may still reject the request. No persistent pause or descendant control.
+     */
+    readonly abort?: PluginSessionLifecycleV2["abort"];
+    /** Stop work and unload the runtime, preserving any saved conversation.
+     * Omitted by older browser hosts; an older target daemon may still reject the request.
+     */
+    readonly close?: PluginSessionLifecycleV2["close"];
 }
 export interface PluginDiscoveryContext {
     readonly catalog: PluginCatalog;
@@ -48,8 +56,12 @@ export interface PluginDiscoveryContext {
     readonly sessions?: PluginSessionLifecycle;
     readonly backend?: PluginBackend;
 }
-export type PluginRuntimeContextV5 = PluginRuntimeContext & PluginDiscoveryContext;
-export type ApplicationPanelContextV5 = ApplicationPanelContext & PluginDiscoveryContext;
+export type PluginRuntimeContextV5 = PluginRuntimeContext & PluginDiscoveryContext & {
+    readonly lifecycle?: MachineLifecycle;
+};
+export type ApplicationPanelContextV5 = ApplicationPanelContext & PluginDiscoveryContext & {
+    readonly lifecycle?: MachineLifecycle;
+};
 export type WorkspacePanelContextV5 = WorkspacePanelContext & PluginDiscoveryContext;
 export type WorkspaceLabelContextV5 = WorkspaceLabelContext & PluginDiscoveryContext;
 export type SessionLabelContextV5 = SessionLabelContext & PluginDiscoveryContext;
@@ -216,6 +228,8 @@ export interface TranscriptMessageEntry {
 }
 export interface TranscriptRendererInput {
     readonly scope: TranscriptRendererScope;
+    /** This renderer's paired backend on the entry's machine; revoked with signal. */
+    readonly backend?: PluginBackend;
     /** Aborted when the entry, selection, mounting, or plugin lifetime changes. */
     readonly signal: AbortSignal;
     /** Report asynchronous failure; calls from obsolete renders are ignored. */
@@ -232,6 +246,8 @@ export interface TranscriptMessageRendererInput extends TranscriptRendererInput 
  * Treat inputs as read-only and honor signal for component-owned asynchronous work.
  */
 export interface TranscriptToolRenderer {
+    /** Defaults to activity. Standalone keeps the entry outside collapsed activity, including its fallback. */
+    readonly placement?: "activity" | "standalone";
     render(input: TranscriptToolRendererInput): TemplateResult | undefined;
 }
 /**
@@ -553,6 +569,31 @@ export interface PluginNavigate {
     (destination: PluginNavigationPatchDestination, options: PluginNavigationOptions & {
         mode: "patch";
     }): Promise<void>;
+}
+export type RestartServices = "web" | "sessiond" | "both";
+/** Terminal acceptance is not service restart completion or health. */
+export type RestartResult = "cancelled" | "launched";
+/** Direct restarts require an explicit service choice. Confirmation is the default. */
+export type RestartRequest = {
+    services?: RestartServices;
+    confirm?: true;
+} | {
+    services: RestartServices;
+    confirm: false;
+};
+/** Host-owned lifecycle operations, bound to this context's machine. */
+export interface MachineLifecycle {
+    /**
+     * Open restart confirmation, or launch directly with confirm: false.
+     * Direct controls must identify the machine/services and warn about interruption.
+     * Returns "cancelled" when confirmation is dismissed, or "launched" when the
+     * terminal accepts the command; neither reports restart completion or health.
+     * Direct launch failures are reported by the host and reject. Confirmation
+     * errors stay in the dialog for retry or cancellation; if the dialog is removed
+     * during a launch, its promise still reports launch acceptance or rejects.
+     * Older hosts may omit this capability.
+     */
+    requestRestart(options?: RestartRequest): Promise<RestartResult>;
 }
 export interface PluginRuntimeContext {
     /** Navigate using host restoration defaults. Route failures appear in the host UI. */

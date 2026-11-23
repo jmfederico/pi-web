@@ -4,6 +4,7 @@ import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { withGatewayRequestId } from "./gatewayRequestContext.js";
 import { SessionDaemonClient } from "./sessionDaemonClient.js";
 
 const servers: http.Server[] = [];
@@ -34,12 +35,7 @@ describe("session daemon binary transport", () => {
     });
     servers.push(server);
     if (transport === "socket") {
-      const directory = await mkdtemp(join(tmpdir(), "pi-web-media-"));
-      directories.push(directory);
-      const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\pi-web-media-${randomUUID()}` : join(directory, "daemon.sock");
-      vi.stubEnv("PI_WEB_SESSIOND_URL", "");
-      vi.stubEnv("PI_WEB_SESSIOND_SOCKET", socketPath);
-      await new Promise<void>((resolve) => { server.listen(socketPath, resolve); });
+      await listenSocket(server);
     } else {
       await listenTcp(server);
     }
@@ -57,15 +53,19 @@ describe("session daemon binary transport", () => {
   });
 
   it("forwards selected Range headers without enabling arbitrary header forwarding", async () => {
+    const gatewayId = randomUUID();
+    let receivedHeaders: http.IncomingHttpHeaders | undefined;
     const server = http.createServer((request, response) => {
-      expect(request.headers.range).toBe("bytes=1-2");
-      expect(request.headers["accept-encoding"]).toBe("identity");
+      receivedHeaders = request.headers;
       response.writeHead(206, { "content-type": "application/octet-stream", "content-range": "bytes 1-2/4" });
       response.end(Buffer.from([0xff, 0x00]));
     });
     servers.push(server);
     await listenTcp(server);
-    const result = await new SessionDaemonClient().requestStream("/resource", { headers: { range: "bytes=1-2" } });
+    const browserHeaders = { range: "bytes=1-2", "x-request-id": randomUUID(), cookie: "private" };
+    const result = await withGatewayRequestId(gatewayId, () => new SessionDaemonClient().requestStream("/resource", { headers: browserHeaders }));
+    expect(receivedHeaders).toMatchObject({ range: "bytes=1-2", "accept-encoding": "identity", "x-request-id": gatewayId });
+    expect(receivedHeaders?.cookie).toBeUndefined();
     expect(result.statusCode).toBe(206);
     expect(result.headers["content-range"]).toBe("bytes 1-2/4");
     const chunks: Buffer[] = [];
@@ -76,11 +76,21 @@ describe("session daemon binary transport", () => {
     expect(Buffer.concat(chunks)).toEqual(Buffer.from([0xff, 0x00]));
   });
 
+  it("rejects interrupted buffered socket responses instead of leaving the proxy waiting", async () => {
+    const server = http.createServer((_request, response) => {
+      response.writeHead(200, { "content-length": 64, connection: "close" });
+      response.end("partial");
+    });
+    servers.push(server);
+    await listenSocket(server);
+    await expect(new SessionDaemonClient().request("GET", "/status")).rejects.toMatchObject({ code: "ECONNRESET" });
+  });
+
   it("bounds stalled response headers", async () => {
     const server = http.createServer(() => { /* Deliberately never send headers. */ });
     servers.push(server);
     await listenTcp(server);
-    await expect(new SessionDaemonClient().requestStream("/resource", { timeoutMs: 20 })).rejects.toThrow("headers timed out");
+    await expect(new SessionDaemonClient().requestStream("/resource", { timeoutMs: 20 })).rejects.toMatchObject({ name: "TimeoutError" });
   });
 
   it("propagates cancellation after headers to a streaming response", async () => {
@@ -102,6 +112,15 @@ describe("session daemon binary transport", () => {
     expect(controller.signal.aborted).toBe(true);
   });
 });
+
+async function listenSocket(server: http.Server): Promise<void> {
+  const directory = await mkdtemp(join(tmpdir(), "pi-web-media-"));
+  directories.push(directory);
+  const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\pi-web-media-${randomUUID()}` : join(directory, "daemon.sock");
+  vi.stubEnv("PI_WEB_SESSIOND_URL", "");
+  vi.stubEnv("PI_WEB_SESSIOND_SOCKET", socketPath);
+  await new Promise<void>((resolve) => { server.listen(socketPath, resolve); });
+}
 
 async function listenTcp(server: http.Server): Promise<void> {
   await new Promise<void>((resolve) => { server.listen(0, "127.0.0.1", resolve); });

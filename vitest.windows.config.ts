@@ -16,9 +16,11 @@ export default defineConfig({
       // Atomic replacement and host-native path normalization.
       "src/config.test.ts",
       "src/configSessionNamingMigration.test.ts",
+      "src/server/mcp/managedMcpConfig.test.ts",
       "src/serverPluginRecovery.test.ts",
       "src/server/workingDirectory.test.ts",
       "src/server/storage/navigationPreferenceStore.test.ts",
+      "src/server/storage/piPackageProvisioningStore.test.ts",
       "src/server/sessions/sessionArchiveStore.test.ts",
       "src/server/sessions/archiveSelfTool.integration.test.ts",
       "src/server/sessions/attachmentService.test.ts",
@@ -31,7 +33,9 @@ export default defineConfig({
       "src/server/workspaces/filePreviewService.test.ts",
       "src/server/piWebPluginCatalog.test.ts",
       "src/server/piWebPluginService.test.ts",
+      "src/server/sessiond/autoInstallPiPackageSources.test.ts",
       "pi-web-plugins/audio/server.test.ts",
+      "pi-packages/private-input/destination.test.ts",
       // Real Git processes, worktrees, and canonical repository paths.
       "pi-web-plugins/git/git-backend.test.ts",
       "pi-web-plugins/git/server-plugin.test.ts",

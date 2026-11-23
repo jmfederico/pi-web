@@ -3,7 +3,7 @@ import { COMPOSER_SEND_DESKTOP, COMPOSER_SEND_MOBILE, composerSendShortcut, matc
 import type { ShortcutKeyEvent } from "./keyboardShortcuts";
 
 describe("composer send bindings", () => {
-  it("defaults to Enter on desktop and Shift+Enter on touch or narrow screens", () => {
+  it("defaults to Enter on desktop and Shift+Enter on devices with a coarse primary pointer", () => {
     expect(composerSendShortcut({}, { matches: false }, "auto")).toBe("enter");
     expect(composerSendShortcut({}, { matches: true }, "auto")).toBe("shift+enter");
   });

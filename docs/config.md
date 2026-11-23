@@ -58,6 +58,16 @@ The deployment path is not a PI WEB config-file key or environment setting. The 
 
 For a nested deployment, redirect the slashless prefix to the trailing-slash URL, strip the prefix before forwarding to PI WEB, and proxy authenticated HTTP and WebSocket traffic through the same location. Relative browser and PWA URLs then stay within that prefix. See the [reverse proxy installation guide](https://pi-web.dev/install#reverse-proxy-prefix) for a complete Nginx example.
 
+## Service logging
+
+To see completed HTTP requests, set `httpAccessLog` to `true` in the machine config. It defaults to `false`. The web/API and session daemon log these records at `info`, so use `logLevel: "info"` (the default), `"debug"`, or `"trace"` to see them. Higher thresholds (`"warn"`, `"error"`, `"fatal"`) hide them. `"silent"` disables the service logger. This threshold applies to Fastify/Pino, not independent console, plugin, or child-process output.
+
+Restart the web/API and session daemon on that machine to apply changes. For deployment policy, set `PI_WEB_HTTP_ACCESS_LOG` and `PI_WEB_LOG_LEVEL` in the service environments. Neither setting takes project overrides.
+
+Each access record has `event: "http.access"` and includes `service` (`web` or `sessiond`), `reqId`, `method`, `route` (the registered route template or `<unmatched>`), `statusCode`, and `durationMs`. Access records omit concrete path parameters, raw URLs, queries, hosts, headers, and bodies. Other logs, including errors, may still contain diagnostic details. Access logging covers completed Fastify HTTP responses, not aborted connections, failures before routing, or WebSocket upgrades and frames.
+
+Match the `x-request-id` response header to `reqId` in access records. Even with access logging off, the gateway generates its own UUID rather than trusting the caller’s header. It forwards the ID to its configured local session daemon, including during WebSocket handshakes; remote gateways generate their own IDs. The daemon accepts a UUIDv4 on its private endpoint and generates a fresh one for missing or invalid IDs. These IDs correlate requests, not identities: keep the daemon private.
+
 ## Browser request security
 
 Choose one gateway `hostAccess` policy for both production and development in **Settings → General → Allowed hostnames**:
@@ -166,7 +176,9 @@ Use `PATCH /api/config` for explicit updates, or `PATCH /api/machines/<machineId
 
 ### Restarting from PI WEB
 
-Open **Restart…** from the actions menu, choose **Web service**, **Session daemon**, or **Both services**, and select **Run in terminal**. This opens the displayed restart command in the gateway's maintenance terminal, like the Updates panel. Confirmation switches to the gateway if a remote machine is selected. A missing targeted command disables that choice rather than restarting additional services.
+Open **Restart…** from the actions menu, choose **Web service**, **Session daemon**, or **Both services**, and select **Run in terminal**. The dialog names the selected machine and opens its displayed command in that machine's maintenance terminal. A missing targeted command disables that choice rather than restarting additional services.
+
+**Updates** and **Settings** offer direct restart buttons without another confirmation dialog. Read the machine, service, and interruption warning before clicking. Updates targets its selected machine. Gateway network/hostname settings target the gateway's web service; session-daemon and server-plugin settings target the machine selected inside Settings, which can differ from the sidebar. Saving settings alone never starts a restart. All entry points use the same core restart handling and the target machine's installation-specific commands. Updates disables restart buttons while preparing the command and opening its terminal; pending feedback ends at terminal acceptance, not restart completion.
 
 Web-only restart preserves agent sessions. Restarting the daemon interrupts agent work and terminals; the dialog shows a simple activity hint. Check terminal output for errors. The command owns the restart: the dialog does not track completion or retry it. If the daemon restart closes the terminal or web does not return, use your installation's service controls to inspect and recover it. After hostname-policy changes, reconnect using an allowed address and refresh the page.
 
@@ -176,8 +188,8 @@ Process restarts depend on the key:
 
 - `host` / `port`: restart the gateway web/API service or process.
 - `hostAccess`: restart web/API and, if running, the development UI server. The UI compares the effective policy, including the host list, with the running web/API snapshot; it cannot confirm the development server's running policy. Legacy `allowedHosts` changes require only a development UI restart and have no effect while `hostAccess` is supplied. No session-daemon restart is needed.
-- `maxUploadBytes`: restart both the web/API process and the session daemon on that machine.
-- `spawnSessions` / `subsessions` / `sessionMessages` / `askUser` / `extensionDialogsTimeoutMs` / `environmentFacts`: restart the session daemon on that machine.
+- `logLevel` / `httpAccessLog` / `maxUploadBytes`: restart both the web/API process and the session daemon on that machine.
+- `spawnSessions` / `subsessions` / `sessionMessages` / `crossProjectSessionMessages` / `askUser` / `extensionDialogsTimeoutMs` / `environmentFacts`: restart the session daemon on that machine.
 - `sessionArchive.directory`: restart the session daemon on that machine; changes only the destination for new archives.
 - Session naming is owned by a removable Pi package. Its config file is read for each new title. Old core file values are migrated and removed when configuration is loaded; they are no longer core settings. See [Session naming](#session-naming).
 - `pathAccess`: applies on the next request; existing file views may need a browser refresh.
@@ -241,6 +253,7 @@ Turn it on in **Settings → General → Chat display → Quiet mode**. It is of
   "spawnSessions": true,
   "subsessions": true,
   "sessionMessages": true,
+  "crossProjectSessionMessages": false,
   "askUser": true,
   "extensionDialogsTimeoutMs": 300000,
   "plugins": {
@@ -280,6 +293,8 @@ Unless environment-enforced, project-local `uploads.defaultFolder` overrides the
 
 Project-local `plugins.<id>.settings` supplies overrides for server plugins that support project settings, including Git. Only settings are allowed here: `plugins.<id>.enabled` is not supported; plugin enablement stays global. See [Project plugin settings](#project-plugin-settings) for merge and restart rules.
 
+The MCP manager package uses its own `.pi/mcp-manager.json`, not the project PI WEB config; see [managed MCP servers](#managed-mcp).
+
 Plugins may also own separate project files, such as `.pi-web/tasks.json` for the built-in Workspace Tasks plugin.
 
 PI WEB also honors one optional project hook; see [Worktree pre-remove hook](#worktree-pre-remove-hook).
@@ -307,6 +322,8 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 | Web/API bind host | `host` | `PI_WEB_HOST` | Global | Not supported locally | Restart web/API |
 | Web/API port | `port` | `PI_WEB_PORT`, `PORT` | Global | Not supported locally | Restart web/API |
 | Shared hostname policy | `hostAccess` | `PI_WEB_HOST_ACCESS` | Gateway only | Not supported locally; absent until an explicit decision | Restart web/API and development UI if running |
+| [Service log level](#service-logging) | `logLevel` | `PI_WEB_LOG_LEVEL` | Global | Not supported locally; default `info` | Restart web/API and session daemon |
+| [HTTP access log](#service-logging) | `httpAccessLog` | `PI_WEB_HTTP_ACCESS_LOG` | Global | Not supported locally; default `false` | Restart web/API and session daemon |
 | Legacy dev UI allowed hosts | `allowedHosts` | `PI_WEB_ALLOWED_HOSTS` | Gateway only | Not supported locally; ignored when `hostAccess` is supplied | Restart development UI |
 | Base filesystem roots | `basePaths` | `PI_WEB_BASE_PATHS` (JSON array) | Global | Not supported locally; default `[]` | Next file request |
 | Additional filesystem roots | `pathAccess.allowedPaths` | `PI_WEB_PATH_ACCESS` (JSON object) | Global + project | **Adds** after base roots; global then project, deduplicated; env replaces effective additions | Next file request; refresh existing views if needed |
@@ -316,6 +333,7 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 | Agent can spawn sessions | `spawnSessions` | `PI_WEB_SPAWN_SESSIONS` | Global/session daemon | Not supported locally | Restart session daemon on that machine |
 | Tracked subsessions | `subsessions` | `PI_WEB_SUBSESSIONS` | Global/session daemon | Not supported locally; also requires `spawnSessions` | Restart session daemon on that machine |
 | Session messaging | `sessionMessages` | `PI_WEB_SESSION_MESSAGES` | Global/session daemon | Not supported locally; independent of spawning flags | Restart session daemon on that machine |
+| Cross-project messaging | `crossProjectSessionMessages` | `PI_WEB_CROSS_PROJECT_SESSION_MESSAGES` | Global/session daemon | Not supported locally; defaults to `false`, requires `sessionMessages` | Restart session daemon on that machine |
 | Agent can post question forms | `askUser` | `PI_WEB_ASK_USER` | Global/session daemon | Not supported locally | Restart session daemon on that machine |
 | Session archive directory | `sessionArchive.directory` | `PI_WEB_SESSION_ARCHIVE` (JSON object), `PI_WEB_SESSION_ARCHIVE_DIR` alias | Global/session daemon | Not supported locally | Restart session daemon on that machine; new archives only |
 | Extension dialog auto-cancel timeout | `extensionDialogsTimeoutMs` | `PI_WEB_EXTENSION_DIALOGS_TIMEOUT_MS` | Global/session daemon | Not supported locally | Restart session daemon on that machine |
@@ -481,6 +499,54 @@ This prevents accidental provider, configuration, or credential contamination be
 
 Configure providers before the daemon starts: use the active agent directory's `models.json`, or install the Pi extension globally in that agent directory. Project Pi extensions and project-level `models.json` files cannot add providers to PI WEB's shared baseline. After updating PI WEB—or after installing, removing, or updating a global Pi extension that registers providers—manually restart `pi-web-sessiond.service` (`systemctl --user restart pi-web-sessiond`). Restarting only the web/API service and running `/reload` do not rebuild the baseline.
 
+## Managed MCP
+
+The **MCP** tab belongs to the `@jmfederico/pi-mcp-manager` Pi package (plugin ID `mcp-manager`). Its thin Pi extension loads configured servers in both standalone Pi TUI sessions and PI WEB, without a web runtime dependency. Management controls are available only in the web plugin; the package adds no TUI management commands. Disabling the plugin hides management but leaves the installed extension active. See [package installation and removal](plugins.md#mcp-manager).
+
+### Define a server
+
+For agent-assisted setup, open **Add or edit servers** in the MCP tab and select **Copy instruction**. Replace the placeholder at the end with the server's name, URL, or installation instructions, then send it to your agent. The instruction includes the configuration paths and this reference so the agent can choose the appropriate scope.
+
+Put shared definitions in `<Pi agent dir>/mcp-manager/config.json` and workspace-only definitions in `<workspace>/.pi/mcp-manager.json`. Both files use the same JSON root, without an `mcp` wrapper:
+
+```json
+{
+  "servers": {
+    "browser": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"]
+    }
+  },
+  "enabledServers": []
+}
+```
+
+An empty `enabledServers` defines the server without enabling it at this scope. Add `"browser"` to enable it, or use the tab. A project can enable a global definition with `{"enabledServers":["browser"]}`. Project definitions cannot be enabled globally. **Project** means the session's workspace directory, including a separate worktree's own file, not all worktrees of a repository.
+
+Definitions use Pi's MCP server fields (`command`/`args` or `url`, with optional `env`, `headers`, `oauth`, exposure, and other connection settings). Omit per-definition `enabled`: the scope's `enabledServers` list controls enablement. Prefer environment references such as `${TOKEN}` over committed credentials. Definitions are file-managed; the plugin shows redacted server summaries and edits enablement only. Pi owns validation, connections, tools, resources, and authentication.
+
+### Enablement and sessions
+
+Global, project, and session enablement are **additive**: any checked scope keeps the server enabled. Unchecking Session cannot turn off a globally enabled server. Global/project edits require **Save**; session edits save immediately. Session choices are saved with the conversation, survive resume and tree navigation, and are copied into forks, subsessions, and independent agent-created sessions. Copies evolve independently; ordinary new sessions have no session grants.
+
+The tab reports configured enablement, not transport health. Changes during an agent run wait until Pi settles that run; existing tool calls are not interrupted. Tab saves refresh affected loaded sessions. Manual file edits are read on **Refresh**, session startup/reload, and before the next agent run. Enablement changes need no daemon restart after the package is loaded.
+
+All project definitions and enablement require both a saved approval in Pi's trust store (or global `defaultProjectTrust: "always"`) and a current runtime that considers the project trusted. Save approval with Pi's native `/trust` command, then reload. The package reads this policy only from global Pi settings, never project settings. Neither the presence of native Pi resources nor automatic trust for an empty workspace supplies approval; `.pi/mcp-manager.json` alone is not a Pi-native trust-requiring resource. See [project trust](#project-trust-for-project-local-resources).
+
+### Pi-native servers and conflicts
+
+Pi still reads its own `<Pi agent dir>/mcp.json` and trusted `<workspace>/.pi/mcp.json`. Native entries remain authoritative, even when disabled. The tab marks same-name definitions **Managed by Pi** and disables their controls; it never edits Pi's files. To transfer a native definition to the manager, move it into the package config, omit `enabled`, remove the native entry, and reload Pi resources. Preserve the server name and URL to retain Pi's OAuth credential identity; no aliases or credential copying are needed.
+
+Duplicate global/project managed definitions are errors, not overrides. Names differing only by hyphens and underscores also conflict because Pi maps them to the same tool namespace. Resolve conflicts in the files before enabling the server.
+
+### Deployment policy and migration
+
+The package owns `servers` and `enabledServers` as independent atomic fields. Trusted project definitions contribute separately; connection properties are not merged. `PI_MCP_MANAGER` accepts a JSON object and enforces only supplied fields. Supplying `servers` enforces the catalog and excludes project additions. Supplying `enabledServers` enforces enablement across all scopes, including sessions, while preserving saved choices. For example, `PI_MCP_MANAGER='{"enabledServers":[]}'` disables manager-owned servers, not Pi-native servers. Restart the consuming Pi process or PI WEB session daemon after environment changes; daemon restarts interrupt active sessions and terminals.
+
+**Manual migration:** move the old `mcp` object's contents from PI WEB global/defaults config to `<Pi agent dir>/mcp-manager/config.json`, and from `.pi-web/config.json` to `.pi/mcp-manager.json`. Replace `PI_WEB_MCP` with `PI_MCP_MANAGER`, then remove the old keys. There is no automatic migration. Keep server names and URLs unchanged; native Pi entries remain authoritative. Old session choices used `pi-web.mcp-enabled`; the package uses the generic `mcp-manager` namespace. Reselect existing **Session** checkboxes once after migration; do not manually edit live session JSONL.
+
+Concurrent tab/file edits produce a refresh-and-retry error rather than overwriting a stale snapshot. Package writers use an advisory lock and atomic replacement; avoid concurrent external edits. A leftover `<config-path>.mcp-manager-lock` after a crash causes a visible error; verify no writer is active before removing it.
+
 ### MCP server sign-in and sign-out
 
 Select a nonarchived session, then choose **MCP login** or **MCP logout** from **Actions**. Each action asks you to select an eligible server, even when only one is available. MCP actions are separate from model-provider authentication; the provider dialogs have no MCP footer.
@@ -536,21 +602,23 @@ Both kinds of session use the same `send_session_message` tool for communication
 
 Parents use `manage_subsession` with a direct child's `sessionId` and an `action`: `stop` interrupts its current run, `resume` continues its conversation, and `archive` archives it. The optional `prompt` supplies new instructions for `resume` only; other actions reject it. Stop interrupts work rather than freezing a process or undoing changes; a later resume or message can start another run. Resume rejects a child that is already working. Archive requires the child to be idle; stop it first if needed. These controls do not extend to unrelated sessions or grandchildren.
 
-`sessionMessages` controls whether sessions, including tracked children, receive `send_session_message`. It defaults to `true`, independently of the spawning flags. Set it to `false` or set `PI_WEB_SESSION_MESSAGES=0` to remove the tool and block session-message delivery after restarting the session daemon. It sends a message to a known session ID in any workspace of the same registered project on the same machine. An idle recipient starts a turn; a busy recipient receives steering at the next safe agent boundary rather than after its run finishes. Messages do not interrupt an executing tool; delivery during compaction or standalone shell execution waits until that activity ends. Sending creates no parent/child relationship, grants no inspection or control rights, and subscribes to no results. Messages include the runtime-provided sender session ID so recipients can reply. Children also receive their parent's session ID in runtime context; neither identity implies additional permissions or a required collaboration workflow. The tool returns acceptance, not an answer or confirmation that the message was read. Queued messages use the runtime's normal queue and are not a durable mailbox; stopping or closing the recipient can discard pending work. Archived sessions cannot receive messages.
+`sessionMessages` controls whether sessions, including tracked children, receive `send_session_message`. It defaults to `true`, independently of the spawning flags. Set it to `false` or set `PI_WEB_SESSION_MESSAGES=0` to remove the tool and block session-message delivery after restarting the session daemon. By default, it sends a message to a known session ID in any workspace of the same registered project on the same machine. An idle recipient starts a turn; a busy recipient receives steering at the next safe agent boundary rather than after its run finishes. Messages do not interrupt an executing tool; delivery during compaction or standalone shell execution waits until that activity ends. Sending creates no parent/child relationship, grants no inspection or control rights, and subscribes to no results. Messages include the runtime-provided sender session ID so recipients can reply. Children also receive their parent's session ID in runtime context; neither identity implies additional permissions or a required collaboration workflow. The tool returns acceptance, not an answer or confirmation that the message was read. Queued messages use the runtime's normal queue and are not a durable mailbox; stopping or closing the recipient can discard pending work. Archived sessions cannot receive messages.
+
+To allow messaging across all projects on a machine, add `"crossProjectSessionMessages": true` to that machine's [writable global config](#config-files) (selected by `PI_WEB_CONFIG` when set), or set `PI_WEB_CROSS_PROJECT_SESSION_MESSAGES=1`. This setting defaults to `false` and has no project-local override or per-project allowlist. It lets agents wake idle sessions and steer busy sessions in other projects, including reopening inactive conversations. `sessionMessages: false` still blocks all messaging. Spawning, transcript-inspection tools, and subsession controls keep their existing scope; archived sessions remain read-only. Restart the session daemon to apply the change; restarting interrupts active sessions and terminals.
 
 Agent-created tracked subsessions are collapsed under their parent. Use **Agent subsessions** to expand them. User-created forks and clones, unknown-origin sessions, children without an available parent, and independent sessions remain visible.
 
 New sessions inherit the parent's model and thinking level unless another model is requested, for example with a `#provider/model-id` prompt reference. Thinking levels are limited to what the chosen model supports.
 
-In **Settings → Session daemon**, these keys are saved on the selected machine. Restart the session daemon on that machine after changing them.
+In **Settings → Session daemon**, the spawning, subsession, messaging, and question-form toggles are saved on the selected machine. Configure cross-project messaging through the global config file or environment. Restart the session daemon on that machine after changing these settings.
 
 #### Self-archival
 
-Agents can call `archive_self` with no arguments to end their run and archive their own session. The transcript is preserved and can be restored through the normal archive controls. Other sessions, descendants, and scheduled task definitions are unchanged. The tool is available independently of spawning, messaging, and question-form settings.
+Agents are instructed to use `archive_self` only for an explicit, unequivocal request to archive this session, such as “archive yourself” or “archive this session.” The tool takes no arguments and ends the run, requesting archival of the session and its tracked subsessions recursively. Archival makes these sessions unavailable for new work while preserving their transcripts. They remain restorable through normal archive controls. Independent sessions, forks, and scheduled task definitions stay unchanged. The tool is available independently of spawning, messaging, and question-form settings.
 
-Archival policy belongs in your instructions. The tool does not check task outcomes or decide whether a result needs your review. Agents should finish reports and any final summary before calling it, alone and last.
+Every tracked descendant must be idle. The tool reports blocking session IDs so the agent can finish or deliberately stop that work before retrying. PI WEB checks again after the caller settles; it cancels archival if any session has started work in the meantime. It does not wait in the background for children to finish.
 
-The tool acknowledges a request, not completed archival. PI WEB waits for the saved tool result and an idle session before archiving. New conversation work, queued work, interruption, or a branch change cancels the pending request; it is not replayed when a session reopens. Failures appear in session notifications and daemon logs rather than triggering an automatic retry. Restart the session daemon after upgrading to activate the tool.
+Outcome and review conditions come from your instructions. Called alone, a successful `archive_self` call ends the current run immediately. The result confirms an archival request; archival occurs after the run settles. New conversation work, queued work, interruption, or a branch change cancels the request; reopening a session does not replay it. Failures appear in session notifications and daemon logs without an automatic retry. After a persistence failure, check the archive before retrying because some sessions may already be archived. Restart the session daemon after upgrading to activate the changes. Restarting interrupts active sessions and terminals; finish important work first and restart from outside its hosted sessions.
 
 #### Human intervention
 
@@ -758,7 +826,7 @@ Prefer Settings → Keyboard for editing, recording, disabling, or resetting sho
 
 App shortcuts support single keys or sequences. Avoid conflicting bindings and browser-reserved combinations. Unmodified and Shift-only shortcuts do not start while editing text.
 
-Composer send bindings accept one key combination, not sequences. Desktop defaults to Enter; touch or narrow screens default to Shift+Enter. The touch or narrow-screen binding (`composer.send.mobile`) applies when the primary pointer is coarse or the viewport is at most 760px wide; desktop applies otherwise. This keyboard-specific exception does not affect control sizing. Touch keyboards can report autocapitalization as Shift, so this context requires an explicit Shift keydown for Shift+Enter; plain Enter inserts a newline by default. Unassigned Enter/Shift+Enter insert newlines; Enter accepts a selected completion first. `null` disables keyboard submission, not the send button.
+Composer send bindings accept one key combination, not sequences. When the browser reports a coarse primary pointer (typically a touchscreen), the composer uses `composer.send.mobile`, which defaults to Shift+Enter. Otherwise it uses `composer.send.desktop`, which defaults to Enter. Resizing the window does not switch bindings. Touch keyboards can report autocapitalization as Shift, so this context requires an explicit Shift keydown for Shift+Enter; plain Enter inserts a newline by default. Unassigned Enter/Shift+Enter insert newlines; Enter accepts a selected completion first. `null` disables keyboard submission, not the send button.
 
 Existing browser-local Enter preferences remain the fallback until a composer binding is configured. Reset restores that fallback. New bindings are saved in gateway config.
 

@@ -12,11 +12,11 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function mount(shortcut: string | null | undefined, narrow = false, coarse = false) {
+async function mount(shortcut: string | null | undefined, coarse = false) {
   const matchMedia = window.matchMedia.bind(window);
   vi.spyOn(window, "matchMedia").mockImplementation((query) => {
     const media = matchMedia(query);
-    Object.defineProperty(media, "matches", { value: (query.includes("max-width: 760px") && narrow) || (query.includes("pointer: coarse") && coarse) });
+    Object.defineProperty(media, "matches", { value: query === "(pointer: coarse)" && coarse });
     return media;
   });
   const editor = new PromptEditor();
@@ -185,8 +185,8 @@ describe("composer keyboard handling", () => {
     expect(editor.onSend).not.toHaveBeenCalled();
   });
 
-  it("keeps Enter as newline on a wide touch screen and requires explicit Shift to send", async () => {
-    const editor = await mount(undefined, false, true);
+  it("keeps Enter as newline on a touch screen and requires explicit Shift to send", async () => {
+    const editor = await mount(undefined, true);
     press(editor, "Enter");
     press(editor, "Enter", { shiftKey: true });
     expect(editor.view?.state.doc.toString()).toBe("Hello\n\n");

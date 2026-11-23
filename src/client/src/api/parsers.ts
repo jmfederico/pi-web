@@ -14,6 +14,7 @@ import { PI_WEB_PLUGIN_RECOVERY_COMMANDS, pluginDisableRecoveryCommand } from ".
 import { parseServerNoticeScope } from "../../../shared/serverNoticeContract";
 import { requireDefaultThemePreference } from "../../../shared/themePreference";
 import { requireDefaultLocalization } from "../../../shared/defaultLocalization";
+import { requireLogLevel } from "../../../shared/logLevel";
 import { requireDefaultStreamingBehavior } from "../../../shared/streamingBehavior";
 import { requireInstallationName } from "../../../shared/installationName";
 import { requireHostAccess } from "../../../shared/hostAccess";
@@ -1544,6 +1545,8 @@ function parsePiWebConfigValues(value: unknown): PiWebConfigValues {
     ...optionalField("host", optionalString(record, "host")),
     ...optionalField("port", optionalNumber(record, "port")),
     ...optionalField("installationName", record["installationName"] === undefined ? undefined : requireInstallationName(record["installationName"])),
+    ...optionalField("logLevel", record["logLevel"] === undefined ? undefined : requireLogLevel(record["logLevel"], "response")),
+    ...optionalField("httpAccessLog", optionalBoolean(record, "httpAccessLog")),
     ...optionalField("allowedHosts", optionalAllowedHosts(record["allowedHosts"])),
     ...optionalField("hostAccess", record["hostAccess"] === undefined ? undefined : requireHostAccess(record["hostAccess"], "response hostAccess")),
     ...optionalField("shortcuts", optionalShortcuts(record["shortcuts"])),
@@ -1561,6 +1564,7 @@ function parsePiWebConfigValues(value: unknown): PiWebConfigValues {
     ...optionalField("spawnSessions", optionalBoolean(record, "spawnSessions")),
     ...optionalField("subsessions", optionalBoolean(record, "subsessions")),
     ...optionalField("sessionMessages", optionalBoolean(record, "sessionMessages")),
+    ...optionalField("crossProjectSessionMessages", optionalBoolean(record, "crossProjectSessionMessages")),
     ...optionalField("askUser", optionalBoolean(record, "askUser")),
     ...optionalField("environmentFacts", optionalBoolean(record, "environmentFacts")),
     ...optionalField("extensionDialogsTimeoutMs", optionalNumber(record, "extensionDialogsTimeoutMs")),

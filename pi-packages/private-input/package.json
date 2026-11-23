@@ -1,0 +1,20 @@
+{
+  "name": "@jmfederico/pi-web-private-input",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Private secret capture into a new file, with non-secret conversation outcomes.",
+  "keywords": ["pi-package"],
+  "peerDependencies": { "@earendil-works/pi-coding-agent": "*", "typebox": "*" },
+  "pi": { "extensions": ["./extensions/index.js"] },
+  "piWeb": {
+    "plugins": [{
+      "id": "private-input",
+      "defaultEnabled": false,
+      "serverModule": "server-plugin.js",
+      "module": "browser/pi-web-plugin.js",
+      "browserRoot": "browser",
+      "machineSpecific": true
+    }]
+  }
+}

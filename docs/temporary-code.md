@@ -49,6 +49,15 @@ Release baselines below were checked against containing Git tags and GitHub stab
 - **Remove when:** both the two-calendar-month and four-subsequent-stable-release minimums have elapsed from first shipment, and the behavior for remaining legacy settings and manual upgrade guidance has been decided. Preserve users' unmigrated settings; do not silently discard them.
 - **Tracking:** introduction commit `ad06af3b`; pending release note [.changeset/optional-automatic-session-naming.md](../.changeset/optional-automatic-session-naming.md). The changeset is consumed at release preparation; replace that link with the published release when recording first shipment.
 
+### pi-package-dismissal-migration
+
+- **Why:** preserve earlier Settings removals when introducing one-time package provisioning. Import `pi-package-dismissals.json` records into `pi-package-provisioning.json`, using `dismissedAt` as `provisionedAt` without overwriting existing provisioning dates.
+- **Implementation:** [autoInstallPiPackages.ts](../src/server/sessiond/autoInstallPiPackages.ts) (dismissal import), wired by [sessiond.ts](../src/server/sessiond.ts). [piPackageService.ts](../src/server/piPackageService.ts) still writes removals through [piPackageDismissalStore.ts](../src/server/storage/piPackageDismissalStore.ts). Only the legacy dismissal path is temporary; retain [piPackageProvisioningStore.ts](../src/server/storage/piPackageProvisioningStore.ts) and ongoing configured-source updates.
+- **Tests:** [autoInstallPiPackages.test.ts](../src/server/sessiond/autoInstallPiPackages.test.ts) (dismissal dates, repeated imports, and migration failures), [piPackageService.test.ts](../src/server/piPackageService.test.ts), [piPackageDismissalStore.test.ts](../src/server/storage/piPackageDismissalStore.test.ts), and [package.integration.test.ts](../pi-packages/workflows/package.integration.test.ts).
+- **First shipped:** unreleased; record the first stable version and publication date at release preparation.
+- **Remove when:** both the two-calendar-month and four-subsequent-stable-release minimums have elapsed, removal is approved, and a documented manual upgrade path exists for users with only dismissal records. First retire or redirect the active Settings dismissal writer so removals remain protected even without a provisioning record. Remove the legacy import, store, wiring, and obsolete tests together; preserve the provisioning ledger, supported removal behavior, and unmigrated user state.
+- **Tracking:** [PR #418](https://github.com/jmfederico/pi-web/pull/418), [issue #417](https://github.com/jmfederico/pi-web/issues/417); pending release note [.changeset/one-time-package-provisioning.md](../.changeset/one-time-package-provisioning.md). Replace the changeset link with the published release when recording first shipment.
+
 ### deprecated-agent-config
 
 - **Why:** retain the old agent-directory inputs while users adopt `PI_CODING_AGENT_DIR` and `PI_CODING_AGENT_SESSION_DIR`; warn about ignored command inputs. The old directory aliases still affect precedence and storage selection.

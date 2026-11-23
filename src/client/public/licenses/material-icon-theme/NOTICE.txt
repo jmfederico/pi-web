@@ -1,0 +1,42 @@
+Material Icon Theme file icons
+
+Served locally from the pinned npm dependency material-icon-theme 5.40.0
+(Material Extensions), with package-lock.json recording npm integrity:
+https://www.npmjs.com/package/material-icon-theme/v/5.40.0
+https://github.com/material-extensions/vscode-material-icon-theme
+Tarball: https://registry.npmjs.org/material-icon-theme/-/material-icon-theme-5.40.0.tgz
+Integrity: sha512-IrvgusbwtqxhUtVgUy0nToJcfN7CYVRdbBxKMfbo0vab9flVBHA5INZ9UiE5SgRj+PM6opCl5nn5TZdpm2UaxA==
+
+License review:
+The npm package declares MIT and includes the Material Extensions copyright
+and MIT license retained here as LICENSE-MIT.txt. The upstream README names
+Material Design Icons (Pictogrammers) and Google Material Symbols as sources.
+Google Material Symbols are Apache-2.0; Pictogrammers documents Apache-2.0
+for its icons with exceptions for third-party assets and brand/logo icons.
+The package does not provide a per-icon provenance/license inventory.
+We retain its MIT grant and additionally include Apache-2.0 terms for the
+identified source collections (LICENSE-APACHE-2.0.txt). Brand images remain
+the property of their respective owners; inclusion conveys no endorsement
+or trademark rights. This is not a claim that every original logo is Apache-2.0.
+
+Source license references:
+https://developers.google.com/fonts/docs/material_symbols
+https://pictogrammers.com/docs/general/license/
+
+Import scope and changes:
+Generated from dist/material-icons.json's default file, fileNames and
+fileExtensions. Light overrides are omitted because consumers render these
+shapes as monochrome CSS masks. No folder pack, executable upstream
+code, language-id heuristics, or optional icon packs are imported. Path-based
+fileNames are omitted because PI WEB matches basenames, not full paths.
+Extension keys become dot-prefixed suffixes. Rules sharing an asset are
+grouped without changing filename/extension precedence.
+PI WEB serves the unmodified SVGs from the installed package, with a license
+link to this notice. Both complete licenses accompany it. There is no external
+network/CDN dependency at runtime. No separate upstream NOTICE was present.
+
+Regenerate with: npm run generate:material-icons
+The dev:client, build, typecheck, typecheck:cached and test npm scripts generate
+the mapping automatically from installed package data. No download or upstream
+executable code is involved in generation; npm checks package integrity during
+installation.

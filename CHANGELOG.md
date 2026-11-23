@@ -1,5 +1,57 @@
 # @jmfederico/pi-web
 
+## 1.202611.5
+
+### Patch Changes
+
+- db971e5: Allow agents to message sessions across all projects on the same machine with the global `crossProjectSessionMessages` setting or `PI_WEB_CROSS_PROJECT_SESSION_MESSAGES` environment override. It defaults to off, still requires session messaging to be enabled, and takes effect after restarting the session daemon.
+
+  Keep archived transcripts read-only when archival races with session-message delivery.
+- 97dfd40: Fix MCP sign-in when an iPad copies the loopback callback URL without its `http://` prefix. Restore the current callback's scheme before submitting the pasted URL, while preserving OAuth validation.
+- 6a733bf: Reorder tabs from the Navigation menu using drag handles or arrow controls. Remember the order in this browser, including when tabs are hidden and shown again. Use Reset order to restore the default arrangement without changing tab visibility. Show a notice if browser storage cannot save the preferences.
+
+## 1.202611.4
+
+### Patch Changes
+
+- d9f8ee0: Reduce slowdowns from long running chats by reusing usage statistics instead of recalculating them on every streamed update. Running state, queues, and questions still update promptly; token totals, cost, and context usage refresh on the next two-second heartbeat when their inputs change.
+- 7a8610d: Strip terminal colour and formatting codes from tool results and errors in the conversation view.
+- 6f219d1: Require clear archival wording in the agent's self-archival instructions. Archive tracked subsessions together with their parent, preserving transcripts and reporting busy descendants instead of stopping their work. Keep independent sessions and forks unchanged, and preserve new transcript content when retrying a failed archive batch. Reject conflicting archive destinations without overwriting transcripts or deleting active files.
+- 8716565: Refresh the bundled PI WEB preview banner with the current logo, colors, and uppercase name.
+- b97c0fa: Fix large photo attachments failing with “Maximum call stack size exceeded” during image validation.
+- 3dfdbb6: Make Restart target the selected machine and share restart handling across the action menu, Updates, and Settings. Updates and Settings now offer direct, service-specific restart buttons with machine and interruption warnings; the generic Restart action keeps its confirmation dialog. Wait for the target machine's Terminal plugin before launching, and keep the gateway web restart shortcut available across Settings visits because active host and port settings cannot be confirmed. Show pending feedback in Updates only while preparing and launching the terminal command, not while services restart. Add a machine-scoped restart capability for browser v5 plugins with explicit cancelled or launched outcomes.
+- 168f8be: Let plugins interrupt current session work or close its runtime to discard an unused, memory-only session. Closing preserves any saved conversation. Server plugins can require session-lifecycle v2; browser plugins can use the optional sessions.abort and sessions.close helpers. Existing lifecycle and catalog APIs remain supported. Neither operation persistently pauses sessions or stops descendants.
+- 1e4427f: Add an optional Private input package for saving a user-entered secret to a new file without including the value in the conversation. Include its installation, recovery, and privacy guide in the published package. Confirm outcome notifications from session history so a failed delivery can be retried without saving the secret again.
+- 58be8e7: Keep private-input forms outside collapsed activity with a reusable standalone placement option for plugin tool renderers. Add native password and multiline entry modes with Show/Hide controls, warn before visible multiline entry on browsers without masking, and prevent format switches from discarding line breaks. Simplify capture to the request, destination, secret field and Save/Cancel actions, with optional multiline entry and recovery controls only when needed. Saving confirms the displayed destination without a separate checkbox; existing files are never replaced. Keep secret fields at least 16px to avoid mobile focus zoom.
+- a37be0e: Reject dangling destination symlinks when saving private input on Windows instead of creating their targets. Windows capture now requires a filesystem that supports hard links; existing files and symlinks remain untouched.
+- b1c46c0: Automatically dismiss settled extension dialog cards after a ten-second countdown. Choosing Keep visible or revealing an answer cancels dismissal so the card stays available while reading.
+- 3149747: Let transcript renderers use their own paired plugin backend on the conversation's machine, with requests and channels cancelled when the rendered view is retired.
+- 7b3b571: Keep working indicators visible inside intervention circles on machines, projects, and workspaces, including when unread activity is also present.
+
+## 1.202611.3
+
+### Patch Changes
+
+- c93273e: Simplify MCP setup with one copyable agent instruction containing available configuration paths, a documentation link, and a clear placeholder for the server to configure.
+- 0c6e7f2: Apply environment-enforced MCP enablement to trusted project-defined servers as well as global definitions, while preserving project trust checks and enforced server definitions.
+- adb0e09: Add a removable MCP manager package. Its thin Pi extension loads configured servers in both the TUI and PI WEB; its web plugin provides Global, Project, and Session controls, setup guidance, and clear save feedback. Session choices survive resume and are copied to forks and agent-created sessions. Pi retains connection, authentication, and native `mcp.json` ownership.
+
+  Add capability-based APIs for private, inheritable session state and read-only project trust, so plugins can integrate with sessions without feature-specific core routes.
+- fb35fe8: Drag projects, workspaces, and pinned session trees to reorder them in the sidebar. Insertion feedback, edge scrolling, and press-and-hold dragging on touch screens complement the existing Move up and Move down menus. All paths share the saved order across devices. Prevent text selection from competing with row dragging on Safari, and add a copyable project path to the project menu. Unify project, workspace, session, and machine menus into actions, options, and details groups. Keep Copy ID last in Details without displaying the ID value, keep menus open after copying, and label the project action Close project.
+- 9271b42: Provision shipped automatic Pi packages once per agent profile so removals through `pi remove` or manual package-settings edits persist across daemon restarts. Preserve existing Settings dismissals, retry failed initial installs, and keep configured copies aligned with the running PI WEB version without changing resource filters. Explicit reinstall remains available. Older CLI or manual removals without a provisioning record may receive one final automatic reinstall during rollout.
+- 51bd733: Clarify PI WEB's positioning as a remote-first runtime for AI coding agents, with a web interface for managing their work.
+- 1f2d1ca: Restore sessions into the existing newest-modified-first order instead of leaving them at the bottom of the session list.
+- 7cf9a20: Clarify the Swedish retry label when checking whether a project is trusted.
+
+## 1.202611.2
+
+### Patch Changes
+
+- 3660d97: Keep question actions visible at the bottom of the conversation instead of showing competing chat and answer send buttons. Switch to chat without discarding draft answers, and return to answering by editing an answer or choosing Answer questions.
+- 74c97de: Fix JSON file uploads failing by sending files as raw bytes instead of parsing them as API requests.
+- f0d5f9b: Allow changing trust from each project's menu, including projects without Git. Clearly scope the setting to the root folder; other worktrees keep their own trust settings.
+- 91a7a38: Allow dragging image previews in both directions after pinch zoom without switching gallery images. Preserve browser zoom and gallery swipes at normal zoom.
+
 ## 1.202611.1
 
 ### Patch Changes

@@ -9,6 +9,7 @@ import { keyed } from "lit/directives/keyed.js";
 import { ChatMessageActionController } from "./ChatMessageActionController";
 import * as transcript from "./chatTranscriptTemplates";
 import type { TranscriptRenderContext } from "./chatTranscriptTemplates";
+import type { QuestionActionsCallback } from "./questionActions";
 import { ChatDisclosureController } from "../chatDisclosure";
 import { writeClipboardText } from "../clipboard";
 import { type QueuedMessageAction, type QueuedMessageActionTarget } from "../queuedMessageActions";
@@ -16,8 +17,8 @@ import { chatQueuedMessageSections, renderQueuedMessageSection, type QueuedMessa
 export { chatQueuedMessageSections, chatQueuedSectionShowsClearAction, type QueuedMessageSection } from "./chat/QueuedMessages";
 import type { DisplayedMessageActionAvailabilityContext, MessageActionAvailabilityContext, MessageActionResult } from "../../../plugin-api";
 import type { RegisteredMessageAction } from "../plugins/messageActions";
-import type { RegisteredTranscriptRenderer } from "../plugins/transcriptRenderers";
-import type { TranscriptRendererScope } from "../../../plugin-api";
+import { selectTranscriptToolRenderer, type RegisteredTranscriptRenderer, type TranscriptToolRendererSelection } from "../plugins/transcriptRenderers";
+import type { TranscriptRendererScope, TranscriptToolEntry } from "../../../plugin-api";
 import { machineSessionKey } from "../machineKeys";
 import { canonicalEntryActionHeaders, groupChatMessages, groupConsecutiveImageOutputs, type ChatDisplayGroup, type ChatGroup } from "../chatGroups";
 import { openTranscriptQuestion, transcriptQuestionOutcomes } from "../chatQuestions";
@@ -149,6 +150,12 @@ export class ChatView extends LitElement {
   @property({ attribute: false }) status?: SessionStatus;
   @property({ attribute: false }) activity?: SessionActivity;
   @property({ attribute: false }) askDraftSessionId = "";
+  @property({ attribute: false }) onQuestionActionsChange: QuestionActionsCallback | undefined;
+  private readonly handleQuestionActionsChange: QuestionActionsCallback = (actions) => {
+    if (actions?.key === JSON.stringify([this.askDraftSessionId, this.openQuestion()?.askId])) {
+      this.onQuestionActionsChange?.(actions);
+    }
+  };
   @property({ attribute: false }) onSubmitAsk: ((askId: string, submission: AskUserSubmission) => void | Promise<void>) | undefined;
   @property({ attribute: false }) pendingDialogs: PendingExtensionDialog[] = [];
   @property({ attribute: false }) closedDialogs: ClosedExtensionDialog[] = [];
@@ -192,9 +199,10 @@ export class ChatView extends LitElement {
   private lastOpenQuestionId: string | undefined;
   private questionOutcomes = transcriptQuestionOutcomes([]);
   private questionIds: ReadonlySet<string> = new Set();
-  private groupedMessagesInput?: ChatLine[];
+  private groupedMessagesInput: ChatLine[] | undefined;
   private groupedMessagesStart = 0;
   private groupedRenderers: readonly RegisteredTranscriptRenderer[] | undefined;
+  private toolRendererSelections = new WeakMap<TranscriptToolEntry, TranscriptToolRendererSelection>();
   private groupedMessagesCache: ChatGroup[] = [];
   private messageMetaCache = new WeakMap<ChatLine, string>();
   private navigationLocalizationChanged = false;
@@ -287,6 +295,10 @@ export class ChatView extends LitElement {
   }
 
   protected override willUpdate(changed: Map<string, unknown>): void {
+    if (changed.has("transcriptRenderers") || changed.has("machineId") || changed.has("sessionId") || changed.has("workspaceContext")) {
+      this.toolRendererSelections = new WeakMap();
+      this.groupedMessagesInput = undefined;
+    }
     if (changed.has("messages")) {
       this.questionOutcomes = transcriptQuestionOutcomes(this.messages);
       this.questionIds = new Set(this.messages.flatMap((line) => line.parts.flatMap((part) => part.type === "askUserQuestion" ? [part.ask.askId] : [])));
@@ -326,6 +338,9 @@ export class ChatView extends LitElement {
     if (changed.has("loadingMore") && !this.loadingMore) this.loadMoreRequested = false;
     if (changed.has("hasMore") && !this.hasMore) this.loadMoreRequested = false;
     const openQuestionId = this.openQuestion()?.askId;
+    if (openQuestionId === undefined || openQuestionId !== this.lastOpenQuestionId || changed.has("askDraftSessionId")) {
+      this.onQuestionActionsChange?.(undefined);
+    }
     this.scrollFlows.afterRender({
       sessionChanged: changed.has("sessionId") || changed.has("machineId"),
       contentChanged: this.scrollContentChanged(changed),
@@ -414,8 +429,18 @@ export class ChatView extends LitElement {
     this.groupedRenderers = this.transcriptRenderers;
     this.groupedMessagesCache = groupChatMessages(this.messages, this.messageStart,
       (customType) => customType === "session.message"
-        || this.transcriptRenderers.some((renderer) => renderer.target === "custom-message" && renderer.customType === customType));
+        || this.transcriptRenderers.some((renderer) => renderer.target === "custom-message" && renderer.customType === customType),
+      (part) => this.toolRendererSelection(part).renderer?.placement === "standalone");
     return this.groupedMessagesCache;
+  }
+
+  private toolRendererSelection(entry: TranscriptToolEntry): TranscriptToolRendererSelection {
+    let selection = this.toolRendererSelections.get(entry);
+    if (selection === undefined) {
+      selection = selectTranscriptToolRenderer(entry.toolName, this.transcriptRenderers);
+      this.toolRendererSelections.set(entry, selection);
+    }
+    return selection;
   }
 
   private isLiveTailGroup(groups: readonly ChatDisplayGroup[], index: number): boolean {
@@ -550,6 +575,7 @@ export class ChatView extends LitElement {
       behaviors: this.behaviors,
       contentRendering: this.contentRendering,
       transcriptRenderers: this.transcriptRenderers,
+      toolRendererSelection: (entry) => this.toolRendererSelection(entry),
       rendererScope: this.rendererScope,
       workspaceContext: this.workspaceContext,
       anchors: { message: chatMessageAnchorKey, event: chatEventAnchorKey },
@@ -568,6 +594,7 @@ export class ChatView extends LitElement {
       questionIds: this.questionIds,
       askDraftSessionId: this.askDraftSessionId,
       onSubmitAsk: this.onSubmitAsk,
+      onQuestionActionsChange: this.onQuestionActionsChange === undefined ? undefined : this.handleQuestionActionsChange,
       openImageGallery: (images, index) => { this.openToolImageGallery(images, index); },
     };
   }

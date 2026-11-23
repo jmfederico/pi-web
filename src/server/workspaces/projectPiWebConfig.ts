@@ -42,7 +42,9 @@ export async function loadProjectPiWebConfig(projectPath: string, signal?: Abort
       signal?.throwIfAborted();
       const content = await handle.readFile({ encoding: "utf8", signal });
       signal?.throwIfAborted();
-      const parsed: unknown = JSON.parse(content);
+      let parsed: unknown;
+      try { parsed = JSON.parse(content.replace(/^\uFEFF/, "")); }
+      catch { throw new Error(`PI WEB project config contains invalid JSON: ${path}`); }
       if (!isRecord(parsed)) throw new Error(`PI WEB project config must be a JSON object: ${path}`);
       return { path, exists: true, config: parseProjectPiWebConfig(parsed, path) };
     } finally {

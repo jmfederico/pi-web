@@ -2,10 +2,13 @@ import { type ThinkingLevel } from "./shared/thinkingLevels.js";
 import type { ServerNoticePresentation } from "./shared/serverNoticePresentation.js";
 export type { ServerNoticePresentation } from "./shared/serverNoticePresentation.js";
 export type { TerminalTitlePresentation } from "./shared/terminalTitlePresentation.js";
+export { PI_WEB_HOST_SESSION_STATE_CAPABILITY, type PluginSessionStateV1, type PluginSessionStateOptions } from "./shared/pluginSessionStateTypes.js";
+export { PI_WEB_HOST_PROJECT_TRUST_CAPABILITY, type PluginProjectTrustV1 } from "./shared/pluginProjectTrustTypes.js";
+export { SESSION_STATE_CUSTOM_TYPE, SESSION_STATE_RESET_CUSTOM_TYPE, SESSION_STATE_MAX_BYTES, createSessionStateData, parseSessionStateEntry, latestSessionStateEntries, readSessionState, type SessionStateData, type SessionStateEntry, type SessionStateSnapshot, type SessionStateWrite, } from "./shared/sessionState.js";
 import type { PluginBackend, JsonObject, JsonPrimitive, JsonValue, PluginCapability, PluginCapabilityProvision, WorkspaceProviderMetadata, WorkspaceRemovalPresentation } from "./shared/pluginApiTypes.js";
 export type { JsonObject, JsonPrimitive, JsonValue, PluginCapability, PluginCapabilityProvision, WorkspaceProviderMetadata, WorkspaceRemovalPresentation, };
 export { PI_WEB_HOST_CATALOG_CAPABILITY, type PluginCatalogProject, type PluginCatalogWorkspace, type PluginSessionSnapshot, type PluginWorkspaceSelection, type PluginSessionSelection, type PluginCatalogReadOptions, type PluginCatalogV1, } from "./shared/pluginCatalogTypes.js";
-export { PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY, type PluginSessionLifecycleV1, type PluginSessionLifecycleState, type PluginSessionLifecycleOptions, } from "./shared/pluginSessionLifecycleTypes.js";
+export { PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY, PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY, type PluginSessionLifecycleV1, type PluginSessionLifecycleV2, type PluginSessionLifecycleState, type PluginSessionLifecycleOptions, } from "./shared/pluginSessionLifecycleTypes.js";
 /** Discover this package's local v5 backend on a hosted pi.events bus.
  * Throws synchronously outside PI WEB or when the paired backend is unavailable.
  * Extensions are trusted in-process code, not a sandbox.
@@ -60,6 +63,8 @@ export interface ServerPluginActivationContextV5 {
     /**
      * Execute an argv-based command through host-owned output and time bounds.
      * The caller must forward the signal for its current bounded operation.
+     * Cancellation requests termination of the process group on POSIX and the direct
+     * child on Windows. Rejection does not guarantee that descendants have exited.
      */
     readonly execFile: (request: ServerPluginExecFileRequest) => Promise<ServerPluginExecFileResult>;
     /**

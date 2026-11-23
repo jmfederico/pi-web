@@ -7,7 +7,7 @@ import type { Machine, MachineHealth, MachineStatus } from "../api";
 import { rollUpStatusFlags, type MachineStatusSnapshot } from "../../../shared/machineStatus";
 import { browserGatewayDisplayUrl, machineIconUrl } from "../instanceIdentity";
 import { AnchoredPopupController } from "./anchoredPopup";
-import { hasStatusUnread, renderActivityIndicator, statusActivityKind } from "./activityBadge";
+import { hasStatusUnread, renderActivityIndicator, statusActivityKind, statusWorkKind } from "./activityBadge";
 import { canRemoveMachine } from "./MachineList";
 import type { KeyboardNavigableSection } from "./navigationFocus";
 import { uiButtonStyles, uiMenuStyles } from "./ui/controlStyles";
@@ -171,7 +171,8 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
     // state (stale-but-present still counts), so only the work dot is gated.
     const kind = status === "offline" || status === "error" ? undefined : statusActivityKind(flags);
     const unreadLabel = hasStatusUnread(flags) ? messages.t("unread") : undefined;
-    return renderActivityIndicator(kind, kind === "terminal" ? messages.t("terminal") : messages.t("active"), unreadLabel);
+    const workKind = kind === undefined ? undefined : statusWorkKind(flags);
+    return renderActivityIndicator(kind, workKind === "terminal" ? messages.t("terminal") : messages.t("active"), unreadLabel, workKind);
   }
 
   private renderOtherMachinesActivity(selected: Machine): TemplateResult | undefined {
@@ -183,9 +184,10 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
       .map((machine) => this.statusSnapshots[machine.id]?.machine ?? {}));
     const unread = others.some((machine) => hasStatusUnread(this.statusSnapshots[machine.id]?.machine));
     const kind = statusActivityKind(activeFlags);
+    const workKind = statusWorkKind(activeFlags);
     const indicator = renderActivityIndicator(kind,
-      kind === "terminal" ? messages.t("otherTerminal") : messages.t("otherActive"),
-      unread ? messages.t("otherUnread") : undefined);
+      workKind === "terminal" ? messages.t("otherTerminal") : messages.t("otherActive"),
+      unread ? messages.t("otherUnread") : undefined, workKind);
     return indicator === undefined ? undefined : html`<span class="other-machines-activity">${indicator}</span>`;
   }
 

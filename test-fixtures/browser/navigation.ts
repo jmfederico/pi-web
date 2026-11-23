@@ -3,7 +3,7 @@ import { pluginStyles } from "../../src/client/src/plugins/styles";
 import { ProjectList } from "../../src/client/src/components/ProjectList";
 import { WorkspaceList } from "../../src/client/src/components/WorkspaceList";
 import { SessionList } from "../../src/client/src/components/SessionList";
-import { trustApi, type SessionInfo } from "../../src/client/src/api";
+import { trustApi, workspacesApi, type SessionInfo } from "../../src/client/src/api";
 import type { MachineStatusSnapshot } from "../../src/shared/machineStatus";
 
 // Real components and deterministic local data; no app runtime or session daemon.
@@ -30,6 +30,10 @@ projects.projects = [
   { id: "p1", name: longName, path: "/repo/very-long-project-path", createdAt: "2026-10-01" },
   { id: "p2", name: "Second project", path: "/repo/second", createdAt: "2026-10-01" },
 ];
+workspacesApi.workspaces = (projectId) => Promise.resolve(projects.projects
+  .filter((project) => project.id === projectId)
+  .map((project) => ({ id: `${projectId}-root`, projectId, path: project.path, label: "Root", isMain: true, effectiveConfig: {} })));
+trustApi.setWorkspaceTrust = (_projectId, _workspaceId, trusted) => Promise.resolve({ path: "/repo", decision: trusted, trusted });
 const selectedProject = projects.projects[0];
 if (selectedProject === undefined) throw new Error("Missing project fixture");
 projects.selected = selectedProject;

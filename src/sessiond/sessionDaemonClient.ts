@@ -6,6 +6,7 @@ import { isHostAbsoluteAgentDir } from "../config.js";
 import type { ActiveAgentProfileDescriptor } from "../shared/apiTypes.js";
 import { parsePiWebRuntimeComponent } from "../shared/piWebStatusParsing.js";
 import { sessiondHttpUrl, sessiondSocketPath } from "./config.js";
+import { daemonRequestIdHeaders } from "./gatewayRequestContext.js";
 
 export type SessionDaemonAgentProfileResult =
   | { status: "available"; profile: ActiveAgentProfileDescriptor }
@@ -57,7 +58,7 @@ export class SessionDaemonClient {
   ): Promise<{ statusCode: number; headers: Record<string, string>; body: string }> {
     const payload = body === undefined ? undefined : JSON.stringify(body);
     if (this.baseUrl !== undefined && this.baseUrl !== "") {
-      return this.requestUrl(method, path, payload, options.signal);
+      return this.requestUrl(method, daemonUrl(path, this.baseUrl), payload, options.signal);
     }
     return this.requestSocket(method, path, payload, options.signal);
   }
@@ -77,15 +78,15 @@ export class SessionDaemonClient {
       };
       const requestOptions: http.RequestOptions = {
         method: "GET",
-        headers: { "accept-encoding": "identity", ...(options.headers?.range === undefined ? {} : { range: options.headers.range }) },
+        headers: { ...daemonRequestIdHeaders(), "accept-encoding": "identity", ...(range === undefined ? {} : { range }) },
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       };
-      const url = this.baseUrl === undefined || this.baseUrl === "" ? undefined : new URL(path, this.baseUrl);
+      const url = this.baseUrl === undefined || this.baseUrl === "" ? undefined : daemonUrl(path, this.baseUrl);
       const request = url === undefined
         ? http.request({ ...requestOptions, socketPath: this.socketPath, path }, onResponse)
         : (url.protocol === "https:" ? https : http).request(url, requestOptions, onResponse);
       request.on("error", (error) => { clearTimeout(headerTimeout); reject(error); });
-      const headerTimeout = setTimeout(() => { request.destroy(new Error("Session daemon resource headers timed out")); }, options.timeoutMs ?? 30_000);
+      const headerTimeout = setTimeout(() => { request.destroy(new DOMException("Session daemon resource headers timed out", "TimeoutError")); }, options.timeoutMs ?? 30_000);
       headerTimeout.unref();
       request.end();
     });
@@ -96,21 +97,33 @@ export class SessionDaemonClient {
   }
 
   connectWebSocket(path: string, options: { maxPayload?: number } = {}): WebSocket {
+    const wsOptions = {
+      ...(options.maxPayload === undefined ? {} : { maxPayload: options.maxPayload }),
+      headers: daemonRequestIdHeaders(),
+    };
     if (this.baseUrl !== undefined && this.baseUrl !== "") {
-      const url = new URL(path, this.baseUrl);
+      const url = daemonUrl(path, this.baseUrl);
       url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-      return new WebSocket(url, options);
+      return new WebSocket(url, wsOptions);
     }
-    return new WebSocket(`ws+unix:${this.socketPath}:${path}`, options);
+    // Resolve path segments separately so they cannot change the socket portion of a ws+unix URL.
+    const url = daemonUrl(path, "http://localhost");
+    return new WebSocket(`ws+unix:${this.socketPath}:${url.pathname}${url.search}`, wsOptions);
   }
 
-  private async requestUrl(method: string, path: string, payload?: string, signal?: AbortSignal) {
+  private async requestUrl(method: string, url: URL, payload?: string, signal?: AbortSignal) {
+    const headers = daemonRequestIdHeaders();
     const init: RequestInit = { method, ...(signal === undefined ? {} : { signal }) };
+    // Fetch preserves custom headers across redirects. Never send the ID to a second hop.
+    if (headers !== undefined) {
+      init.headers = headers;
+      init.redirect = "manual";
+    }
     if (payload !== undefined && payload !== "") {
-      init.headers = { "content-type": "application/json" };
+      init.headers = { ...headers, "content-type": "application/json" };
       init.body = payload;
     }
-    const response = await fetch(new URL(path, this.baseUrl), init);
+    const response = await fetch(url, init);
     return {
       statusCode: response.status,
       headers: Object.fromEntries(response.headers.entries()),
@@ -126,12 +139,14 @@ export class SessionDaemonClient {
           path,
           method,
           ...(signal === undefined ? {} : { signal }),
-          headers: payload !== undefined && payload !== ""
-            ? { "content-type": "application/json", "content-length": Buffer.byteLength(payload) }
-            : undefined,
+          headers: {
+            ...daemonRequestIdHeaders(),
+            ...(payload === undefined || payload === "" ? {} : { "content-type": "application/json", "content-length": Buffer.byteLength(payload) }),
+          },
         },
         (response) => {
           const chunks: Uint8Array[] = [];
+          response.on("error", reject);
           response.on("data", (chunk: Buffer | string) => {
             chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
           });
@@ -149,6 +164,15 @@ export class SessionDaemonClient {
       request.end();
     });
   }
+}
+
+function daemonUrl(path: string, baseUrl: string): URL {
+  const base = new URL(baseUrl);
+  const url = new URL(path, base);
+  if ((url.protocol !== "http:" && url.protocol !== "https:") || url.origin !== base.origin) {
+    throw new Error("Session daemon path must resolve to the configured daemon origin");
+  }
+  return url;
 }
 
 export async function getSessionDaemonActiveAgentProfile(client: SessionDaemonRequestClient): Promise<SessionDaemonAgentProfileResult> {

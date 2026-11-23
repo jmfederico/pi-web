@@ -1,8 +1,12 @@
 // @vitest-environment happy-dom
 import { afterEach, expect, it, vi } from "vitest";
 import { html } from "lit";
-import type { TranscriptToolRenderer, TranscriptToolRendererInput, TranscriptMessageRendererInput } from "../../../plugin-api";
+import type { TranscriptToolRenderer, TranscriptToolRendererInput, TranscriptToolRendererResolver, TranscriptMessageRendererInput } from "../../../plugin-api";
+import type { ChatLine, ToolExecutionPart } from "../chatTypes";
 import type { RegisteredTranscriptRenderer } from "../plugins/transcriptRenderers";
+import { PluginRegistry } from "../plugins/registry";
+import { adaptPublicPlugin } from "../plugins/publicContext";
+import * as backendTransport from "../api/pluginBackends";
 import { TranscriptRendererHost } from "./TranscriptRendererHost";
 import { ChatView } from "./ChatView";
 import { normalizeMessages } from "../chatMessages";
@@ -56,6 +60,36 @@ it("lets the reader switch to the host view, cancels work, and retains that choi
   expect(host.shadowRoot?.querySelector("strong")?.textContent).toBe("success");
   host.remove();
   expect(inputs[1]?.signal.aborted).toBe(true);
+});
+
+it("cancels paired backend work on entry changes, default view and unmount", async () => {
+  const requestBackend = vi.spyOn(backendTransport, "requestPairedPluginBackend").mockResolvedValue(null);
+  const inputs: TranscriptToolRendererInput[] = [];
+  const registry = new PluginRegistry();
+  await registry.register({ id: "paired", backendRevision: "r1", pairedRequestVersion: 1,
+    plugin: adaptPublicPlugin({ apiVersion: 5, name: "Paired", activate: () => ({ contributions: { transcriptRenderers: [{ id: "tool", target: "tool",
+      resolve: () => ({ render: (input) => { inputs.push(input); return html`paired`; } }),
+    }] } }) }) });
+  const host = mount(() => undefined);
+  const request = required(host.request);
+  if (request.kind !== "tool") throw new Error("Expected tool");
+  host.request = { ...request, renderers: registry.getTranscriptRenderers(scope.machineId) };
+  await host.updateComplete;
+  const verifyCancellation = async (cancel: () => void) => {
+    const backend = required(inputs.at(-1)?.backend);
+    const peer = backend.forScope({ kind: "machine" });
+    await peer.request?.("status", null);
+    const signal = required(requestBackend.mock.calls.at(-1)?.[3]?.signal);
+    expect(signal.aborted).toBe(false);
+    cancel(); await host.updateComplete;
+    expect(signal.aborted).toBe(true);
+    expect(() => peer.request?.("status", null)).toThrow();
+  };
+  await verifyCancellation(() => { host.request = { ...request, renderers: registry.getTranscriptRenderers(scope.machineId), entry: { ...request.entry, status: "success" } }; });
+  await verifyCancellation(() => { button(host).click(); });
+  button(host).click(); await host.updateComplete;
+  await verifyCancellation(() => { host.remove(); });
+  await registry.dispose();
 });
 
 it("retires old failure callbacks and renders each new snapshot without remounting unrelated state", async () => {
@@ -155,6 +189,119 @@ it("composes tool callbacks in discovery order and falls back for a downstream f
   inputs.at(-1)?.fail(new Error("Inner renderer failed")); await host.updateComplete;
   expect(host.shadowRoot?.querySelector("section")).toBeNull();
   expect(host.shadowRoot?.querySelector("slot")).not.toBeNull();
+  expect(warn).toHaveBeenCalledOnce();
+});
+
+it("shares placement selection with the mounted host, keeps default/failure views standalone, and retires scoped work", async () => {
+  vi.stubGlobal("requestAnimationFrame", () => 1);
+  vi.stubGlobal("cancelAnimationFrame", () => undefined);
+  const inputs: TranscriptToolRendererInput[] = [];
+  const resolve = vi.fn<TranscriptToolRendererResolver>((name, next) => name === "plugin_tool"
+    ? { placement: "standalone", render: (input) => { inputs.push(input); return html`<strong>${input.entry.status}</strong>`; } }
+    : next());
+  const registry = new PluginRegistry();
+  await registry.register({ id: "plugin", plugin: adaptPublicPlugin({ apiVersion: 5, name: "Test", activate: () => ({
+    contributions: { transcriptRenderers: [{ id: "tool", target: "tool", resolve }] },
+  }) }) });
+  const view = new ChatView();
+  view.machineId = scope.machineId; view.sessionId = scope.sessionId;
+  view.behaviors = { ...view.behaviors, followTail: false, rememberPosition: false };
+  view.quietMode = true; view.isSendingPrompt = true;
+  const execution: ToolExecutionPart = { type: "toolExecution", toolName: "plugin_tool", toolCallId: "call", summary: "", status: "running" };
+  const line: ChatLine = { role: "tool", entryId: "entry", parts: [execution] };
+  view.messages = [
+    { role: "assistant", parts: [{ type: "thinking", text: "before" }] }, line,
+    { role: "tool", parts: [{ ...execution, toolName: "ordinary_tool", toolCallId: "ordinary" }] },
+  ];
+  view.transcriptRenderers = registry.getTranscriptRenderers(scope.machineId);
+  document.body.append(view); await view.updateComplete;
+  const host = required(view.shadowRoot?.querySelector<TranscriptRendererHost>("pi-web-transcript-renderer"));
+  await host.updateComplete;
+  const groups = [...view.renderRoot.querySelectorAll<HTMLDetailsElement>(".event-group")];
+  expect(groups).toHaveLength(2);
+  expect(groups.every((group) => !group.open)).toBe(true);
+  expect(host.closest("details")).toBeNull();
+  expect(host.shadowRoot?.querySelector("strong")?.textContent).toBe("running");
+  expect(resolve.mock.calls.map(([name]) => name)).toEqual(["plugin_tool", "ordinary_tool"]);
+  expect(inputs[0]?.scope).toMatchObject({ machineId: scope.machineId, sessionId: scope.sessionId });
+
+  button(host).click(); await host.updateComplete;
+  expect(inputs[0]?.signal.aborted).toBe(true);
+  view.messages = view.messages.map((message) => message === line ? { ...line, parts: [{ ...execution, status: "success" }] } : message);
+  await view.updateComplete; await host.updateComplete;
+  expect(view.shadowRoot?.querySelector("pi-web-transcript-renderer")).toBe(host);
+  expect(host.shadowRoot?.querySelector("slot")).not.toBeNull();
+  expect(inputs).toHaveLength(1);
+  expect(resolve).toHaveBeenCalledTimes(3);
+  button(host).click(); await host.updateComplete;
+  expect(host.shadowRoot?.querySelector("strong")?.textContent).toBe("success");
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  inputs.at(-1)?.fail(new Error("failed presentation")); await host.updateComplete;
+  view.requestUpdate(); await view.updateComplete; await host.updateComplete;
+  expect(host.closest("details")).toBeNull();
+  expect(host.shadowRoot?.querySelector("slot")).not.toBeNull();
+  expect(warn).toHaveBeenCalledOnce();
+  expect(resolve).toHaveBeenCalledTimes(3);
+
+  view.machineId = "other"; await view.updateComplete;
+  const otherHost = required(view.shadowRoot?.querySelector<TranscriptRendererHost>("pi-web-transcript-renderer"));
+  await otherHost.updateComplete;
+  expect(inputs.at(-1)?.scope.machineId).toBe("other");
+  expect(resolve).toHaveBeenCalledTimes(5);
+  view.transcriptRenderers = [];
+  await view.updateComplete;
+  expect(inputs.at(-1)?.signal.aborted).toBe(true);
+  expect(view.shadowRoot?.querySelector("pi-web-transcript-renderer")).toBeNull();
+  expect(view.renderRoot.querySelectorAll(".event-group")).toHaveLength(1);
+  await registry.dispose();
+});
+
+it.each(["decline", "throw"] as const)("keeps a standalone %s fallback mounted outside quiet activity without retrying selection", async (failure) => {
+  vi.stubGlobal("requestAnimationFrame", () => 1);
+  vi.stubGlobal("cancelAnimationFrame", () => undefined);
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const resolve = vi.fn<TranscriptToolRendererResolver>(() => ({ placement: "standalone", render: () => {
+    if (failure === "throw") throw new Error("broken body");
+    return undefined;
+  } }));
+  const later = vi.fn<TranscriptToolRendererResolver>(() => ({ render: () => html`later` }));
+  const view = new ChatView();
+  view.behaviors = { ...view.behaviors, followTail: false, rememberPosition: false };
+  view.quietMode = true;
+  view.messages = [{ role: "tool", parts: [{ type: "toolExecution", toolName: "any_tool", summary: "", status: "success" }] }];
+  view.transcriptRenderers = [resolve, later].map((callback, index) => ({ id: `plugin:${String(index)}`, pluginId: "plugin", localId: String(index), target: "tool", resolve: callback }));
+  document.body.append(view); await view.updateComplete;
+  const host = required(view.shadowRoot?.querySelector<TranscriptRendererHost>("pi-web-transcript-renderer"));
+  await host.updateComplete;
+  view.requestUpdate(); await view.updateComplete; await host.updateComplete;
+  expect(host.closest("details")).toBeNull();
+  expect(host.shadowRoot?.querySelector("slot")).not.toBeNull();
+  expect(host.querySelector("tool-execution-view")).not.toBeNull();
+  expect(host.shadowRoot?.querySelector("button")).toBeNull();
+  expect(resolve).toHaveBeenCalledOnce();
+  expect(later).not.toHaveBeenCalled();
+  expect(warn).toHaveBeenCalledTimes(failure === "throw" ? 1 : 0);
+});
+
+it("contains resolver failures during grouping and reports them once when activity mounts", async () => {
+  vi.stubGlobal("requestAnimationFrame", () => 1);
+  vi.stubGlobal("cancelAnimationFrame", () => undefined);
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const resolve = vi.fn<TranscriptToolRendererResolver>(() => { throw new Error("broken resolver"); });
+  const view = new ChatView();
+  view.behaviors = { ...view.behaviors, followTail: false, rememberPosition: false };
+  view.messages = [{ role: "tool", parts: [{ type: "toolExecution", toolName: "any_tool", summary: "", status: "success" }] }];
+  view.transcriptRenderers = [{ id: "plugin:tool", pluginId: "plugin", localId: "tool", target: "tool", resolve }];
+  document.body.append(view); await view.updateComplete;
+  expect(resolve).toHaveBeenCalledOnce();
+  expect(warn).not.toHaveBeenCalled();
+  const group = required(view.renderRoot.querySelector<HTMLDetailsElement>(".event-group"));
+  group.open = true; group.dispatchEvent(new Event("toggle")); await view.updateComplete;
+  const host = required(view.shadowRoot?.querySelector<TranscriptRendererHost>("pi-web-transcript-renderer"));
+  await host.updateComplete;
+  view.requestUpdate(); await view.updateComplete; await host.updateComplete;
+  expect(host.shadowRoot?.querySelector("slot")).not.toBeNull();
+  expect(resolve).toHaveBeenCalledOnce();
   expect(warn).toHaveBeenCalledOnce();
 });
 

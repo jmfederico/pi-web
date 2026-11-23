@@ -11,6 +11,7 @@ import { SessionList, sessionRowActivityKind, sessionRowsForCurrentTree, session
 afterEach(() => {
   document.body.replaceChildren();
   localStorage.clear();
+  vi.restoreAllMocks();
 });
 
 describe("sessionRowActivityKind", () => {
@@ -364,6 +365,117 @@ it("orders archived rows by activity immediately after archiving while preservin
   await list.updateComplete;
   expect([...root.querySelectorAll<HTMLElement>(".action-row.archived")].map((row) => row.title)).toEqual([newer.path, old.path, child.path]);
 });
+
+describe("pinned session drag ordering", () => {
+  it("does not swallow a fresh click on an unpinned session after cancellation", async () => {
+    const recent = session("recent");
+    const list = sessionList([session("a"), session("b"), recent], new Set());
+    list.pinnedRootIds = ["a", "b"];
+    list.onReorderPin = vi.fn();
+    list.onSelect = vi.fn();
+    document.body.append(list);
+    await list.updateComplete;
+    stubSessionDragGeometry(list);
+    const row = sessionDragRow(list, "b");
+    sessionPointer(row, "pointerdown", 75);
+    sessionPointer(row, "pointermove", 10);
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    sessionPointer(document.body, "pointerup", 10);
+    const target = sessionDragRow(list, "recent");
+    sessionPointer(target, "pointerdown", 125);
+    sessionPointer(target, "pointerup", 125);
+    target.click();
+    expect(list.onReorderPin).not.toHaveBeenCalled();
+    expect(list.onSelect).toHaveBeenCalledExactlyOnceWith(recent);
+  });
+
+  it("reorders only pinned roots and carries their descendants with the acknowledged order", async () => {
+    const first = session("a");
+    const child = session("child", { parentSessionPath: first.path });
+    const second = session("b");
+    const recent = session("recent");
+    const orphan = session("orphan", { parentSessionPath: "/missing.jsonl" });
+    const archived = session("archived", { archived: true });
+    const list = sessionList([first, child, second, recent, orphan, archived], new Set());
+    list.pinnedRootIds = ["a", "b", "orphan", "archived"];
+    list.onReorderPin = vi.fn();
+    list.onSelect = vi.fn();
+    document.body.append(list);
+    await list.updateComplete;
+    const root = list.shadowRoot;
+    if (root === null) throw new Error("Missing session root");
+    expect([...root.querySelectorAll<HTMLElement>("[data-reorder-id]")].map((row) => row.dataset["reorderId"])).toEqual(["a", "b"]);
+    expect(sessionDragRow(list, "child").dataset["reorderGroupId"]).toBe("a");
+    stubSessionDragGeometry(list);
+    const row = sessionDragRow(list, "b");
+    sessionPointer(row, "pointerdown", 125);
+    // The target midpoint includes its child: y=40 is before the group,
+    // although it would be after the root row alone.
+    sessionPointer(row, "pointermove", 40);
+    await list.updateComplete;
+    sessionPointer(row, "pointerup", 40);
+    row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(list.onReorderPin).toHaveBeenCalledExactlyOnceWith(second, first, "before");
+    expect(list.onSelect).not.toHaveBeenCalled();
+    list.pinnedRootIds = ["b", "a", "orphan", "archived"];
+    await list.updateComplete;
+    expect([...root.querySelectorAll<HTMLElement>("[data-session-id]")].map((item) => item.dataset["sessionId"])).toEqual(["b", "a", "child", "recent", "orphan"]);
+  });
+
+  it("cancels on scope and selection-mode changes, but not status-only session refreshes", async () => {
+    const list = sessionList([session("a"), session("b")], new Set());
+    list.pinnedRootIds = ["a", "b"];
+    list.onReorderPin = vi.fn();
+    document.body.append(list);
+    await list.updateComplete;
+    stubSessionDragGeometry(list);
+    const row = sessionDragRow(list, "b");
+    sessionPointer(row, "pointerdown", 75);
+    sessionPointer(row, "pointermove", 10);
+    list.sessions = list.sessions.map((item) => ({ ...item, messageCount: 2 }));
+    await list.updateComplete;
+    expect(list.shadowRoot?.querySelector(".list-drag-preview")).not.toBeNull();
+    list.workspaceId = "other-workspace";
+    await list.updateComplete;
+    expect(list.shadowRoot?.querySelector(".list-drag-preview")).toBeNull();
+    sessionPointer(row, "pointerup", 10);
+    expect(list.onReorderPin).not.toHaveBeenCalled();
+
+    sessionPointer(row, "pointerdown", 75);
+    sessionPointer(row, "pointermove", 10);
+    const selection = list.shadowRoot?.querySelector<HTMLButtonElement>(".bulk-select-entry");
+    if (!selection) throw new Error("Missing selection control");
+    selection.click();
+    await list.updateComplete;
+    expect(list.shadowRoot?.querySelector(".list-drag-preview")).toBeNull();
+    expect(list.shadowRoot?.querySelector("[data-reorder-id]")).toBeNull();
+    sessionPointer(row, "pointerup", 10);
+    expect(list.onReorderPin).not.toHaveBeenCalled();
+    selection.click();
+    list.onReorderPin = undefined;
+    await list.updateComplete;
+    expect(list.shadowRoot?.querySelector("[data-reorder-id]")).toBeNull();
+  });
+});
+
+function sessionDragRow(list: SessionList, id: string): HTMLElement {
+  const row = [...(list.shadowRoot?.querySelectorAll<HTMLElement>("[data-session-id]") ?? [])].find((item) => item.dataset["sessionId"] === id);
+  if (row === undefined) throw new Error(`Missing session ${id}`);
+  return row;
+}
+
+function stubSessionDragGeometry(list: SessionList): void {
+  const body = list.shadowRoot?.querySelector(".list-body");
+  if (body === null || body === undefined) throw new Error("Missing session scroll body");
+  vi.spyOn(body, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 200, 300));
+  list.shadowRoot?.querySelectorAll("[data-session-id]").forEach((row, index) => {
+    vi.spyOn(row, "getBoundingClientRect").mockReturnValue(new DOMRect(0, index * 50, 200, 50));
+  });
+}
+
+function sessionPointer(target: Element, type: string, clientY: number): void {
+  target.dispatchEvent(new PointerEvent(type, { pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0, clientX: 40, clientY, bubbles: true, composed: true }));
+}
 
 function rowSummaries(rows: ReturnType<typeof sessionRowsForCurrentTree>) {
   return rows.map((row) => ({ id: row.session.id, depth: row.depth, hasMissingParent: row.hasMissingParent }));

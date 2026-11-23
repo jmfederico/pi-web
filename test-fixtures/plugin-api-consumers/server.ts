@@ -3,6 +3,9 @@ import {
   PI_WEB_HOST_PI_SESSIONS_CAPABILITY,
   PI_WEB_HOST_CATALOG_CAPABILITY,
   PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY,
+  PI_WEB_HOST_SESSION_STATE_CAPABILITY,
+  PI_WEB_HOST_PROJECT_TRUST_CAPABILITY,
+  PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY,
   PI_WEB_HOST_WORKSPACES_CAPABILITY,
 } from "@jmfederico/pi-web/server-plugin-api";
 import type {
@@ -42,6 +45,9 @@ const plugin: PiWebServerPlugin = {
     fixtureDependency,
     PI_WEB_HOST_CATALOG_CAPABILITY,
     PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY,
+    PI_WEB_HOST_SESSION_STATE_CAPABILITY,
+    PI_WEB_HOST_PROJECT_TRUST_CAPABILITY,
+    PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY,
     PI_WEB_HOST_WORKSPACES_CAPABILITY,
     PI_WEB_HOST_PI_SESSIONS_CAPABILITY,
   ],
@@ -62,12 +68,22 @@ const plugin: PiWebServerPlugin = {
         await catalog.projects.list({ signal });
         const lifecycle = capabilities.resolve(PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY);
         const selected = { projectId: "fixture-project", workspaceId: "fixture-workspace", sessionId: "fixture-session" };
+        const sessionState = capabilities.resolve(PI_WEB_HOST_SESSION_STATE_CAPABILITY);
+        const snapshot = await sessionState.read(selected, "fixture.preferences", { signal });
+        await sessionState.write(selected, "fixture.preferences", { value: { enabled: true }, inherit: true, revision: snapshot.revision }, { signal });
+        const trust = capabilities.resolve(PI_WEB_HOST_PROJECT_TRUST_CAPABILITY);
+        context.logger.info(`Trusted: ${String(await trust.get({ projectId: selected.projectId, workspaceId: selected.workspaceId }))}`);
         await lifecycle.get(selected, { signal });
         await lifecycle.pin(selected, { signal });
         await lifecycle.unpin(selected, { signal });
         await lifecycle.archive(selected, { signal });
         await lifecycle.restore(selected, { signal });
         await lifecycle.delete(selected, { signal });
+        // Existing v1 consumers still resolve independently of v2 requirements.
+        const lifecycleV2 = capabilities.resolve(PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY);
+        await lifecycleV2.abort(selected, { signal });
+        await lifecycleV2.close(selected, { signal });
+        await lifecycleV2.get(selected, { signal });
         const workspaces: PiWebHostWorkspacesV1 = capabilities.resolve(PI_WEB_HOST_WORKSPACES_CAPABILITY);
         const authority = await workspaces.resolve({
           projectId: "fixture-project",

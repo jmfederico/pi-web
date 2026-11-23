@@ -197,6 +197,17 @@ describe("SessionMediaIndex", () => {
     expect(block).toEqual({ ...image(), data });
   });
 
+  it("projects large image sources without overflowing the validation stack or decoding", () => {
+    const decode = vi.fn(decodeBase64);
+    const index = new SessionMediaIndex({ decode });
+    // Matches the resized phone-photo payload length reported in #422.
+    // --execArgv=--no-regexp-optimization reproduces the old validator's overflow.
+    const data = "A".repeat(4_354_892);
+    const reference = referenceOf(index, { ...image(), data });
+    expect(reference.byteSize).toBe(3_266_169);
+    expect(decode).not.toHaveBeenCalled();
+  });
+
   it.each(["AQ==", "AQ", "AQI=", "AQI", "AQID", "/w==", "/w", "//8=", "//8"])("computes standard base64 size without decoding (%s)", (data) => {
     const decode = vi.fn(decodeBase64);
     const index = new SessionMediaIndex({ decode });
@@ -213,7 +224,7 @@ describe("SessionMediaIndex", () => {
     { ...image(), mimeType: "text/html" },
     { ...image(), mimeType: "IMAGE/PNG" },
     { ...image(), mimeType: "image/png\r\nX-Test: bad" },
-    ...["invalid!!", "", "A", "AAAAA", "AQID==", "AQ=", "AQI==", "AQ===", "=AQ=", "AQ==x", "AQ\n==", "AQ-_", "AR==", "AR", "AQJ=", "AQJ", "//9=", "//9"].map((data) => ({ ...image(), data })),
+    ...["invalid!!", "", "A", "AAAAA", "AQID==", "AQ=", "AQI==", "AQ===", "=AQ=", "AA=A", "AAAAAA=A", "=", "==", "AQ==x", "AQ\n==", "AQID\n", "AQ-_", "AQĀA", "AR==", "AR", "AQJ=", "AQJ", "//9=", "//9"].map((data) => ({ ...image(), data })),
     { ...image(), data: 1 },
     { ...image(), type: "text" },
   ])("consistently rejects malformed content in projection and lookup: %j", (block) => {

@@ -65,10 +65,17 @@ async function buildAll() {
       await buildFilesBrowserPackage(codeHighlightSourceDir, codeHighlightOutputDir);
     } else {
       for (const [packageName, config] of [
+        ["relays", "vite.config.mjs"],
         ["workflows", "vite.config.mjs"],
+        ["private-input", "vite.config.mjs"],
+        ["private-input", "vite.companion.config.mjs"],
+        ["private-input", "vite.browser.config.mjs"],
         ["scheduled-tasks", "vite.config.mjs"],
         ["scheduled-tasks", "vite.companion.config.mjs"],
         ["scheduled-tasks", "vite.browser.config.mjs"],
+        ["mcp-manager", "vite.config.mjs"],
+        ["mcp-manager", "vite.companion.config.mjs"],
+        ["mcp-manager", "vite.browser.config.mjs"],
       ]) await viteBuild({
         configFile: resolve(target.rootDir, packageName, config),
         logLevel: "silent",

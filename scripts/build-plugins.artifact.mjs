@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -77,7 +77,7 @@ describe("plugin delivery artifacts", () => {
     expect(distFiles.filter(isTestArtifact)).toEqual([]);
     expect(packagedFiles.filter(isTestArtifact)).toEqual([]);
     expect(packagedFiles).toEqual(expect.arrayContaining([
-      "docs/scheduled-tasks.md",
+      "docs/private-input.md", "docs/scheduled-tasks.md",
       "dist/cli.js", "dist/server/app.js", "dist/server/index.js", "dist/server/sessiond.js",
       "dist/bin/pi-web.sh", "dist/bin/pi-web-server.sh", "dist/bin/pi-web-sessiond.sh", "dist/runtimePreflight.js",
       "dist/plugin-api.d.ts", "dist/server-plugin-api.d.ts", "dist/server-plugin-api.js",
@@ -110,6 +110,9 @@ describe("plugin delivery artifacts", () => {
     const builtPackageFiles = (await recursiveFiles(builtPackagesRoot)).map((path) => `dist/pi-packages/${path}`).sort();
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/package.json");
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/pi-web-plugin.js");
+    // A remote Relays viewer cannot resolve the host's node_modules or private URLs.
+    expect(moduleSpecifiers(await readFile(join(builtPackagesRoot, "relays/markdownDocument.js"), "utf8"))).toEqual([]);
+    expect(await readFile(join(builtPackagesRoot, "relays/markdownDocument.licenses.md"), "utf8")).toContain("MarkedJS");
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/prompts/relay.md");
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/prompts/relay-worktree.md");
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/skills/relay/SKILL.md");
@@ -117,6 +120,10 @@ describe("plugin delivery artifacts", () => {
     expect(builtPackageFiles).toEqual(expect.arrayContaining([
       "dist/pi-packages/session-naming/package.json",
       "dist/pi-packages/session-naming/extensions/index.js",
+      "dist/pi-packages/mcp-manager/package.json",
+      "dist/pi-packages/mcp-manager/extensions/index.ts",
+      "dist/pi-packages/mcp-manager/server-plugin.js",
+      "dist/pi-packages/mcp-manager/browser/pi-web-plugin.js",
       "dist/pi-packages/scheduled-tasks/package.json",
       "dist/pi-packages/scheduled-tasks/server-plugin.js",
       "dist/pi-packages/scheduled-tasks/browser/pi-web-plugin.js",
@@ -156,6 +163,92 @@ describe("plugin delivery artifacts", () => {
     expect(loader.getExtensions().extensions).toHaveLength(0);
   });
 
+  it("ships a standalone MCP loader and an independently disableable management plugin", async () => {
+    const source = join(repoRoot, "dist", "pi-packages", "mcp-manager");
+    const standalone = join(tempDir, "mcp-manager");
+    await mkdir(join(standalone, "extensions"), { recursive: true });
+    for (const path of ["package.json", "extensions/index.ts", "server-plugin.js"]) await cp(join(source, path), join(standalone, path));
+    const extensionImports = moduleSpecifiers(await readFile(join(standalone, "extensions/index.ts"), "utf8"));
+    expect(extensionImports.every((specifier) => specifier.startsWith("node:") || specifier === "@earendil-works/pi-coding-agent")).toBe(true);
+    const loader = new DefaultResourceLoader({
+      cwd: tempDir, agentDir: tempDir,
+      settingsManager: SettingsManager.inMemory({ packages: [standalone] }),
+      noThemes: true, noPromptTemplates: true,
+    });
+    await loader.reload();
+    expect(loader.getExtensions().errors).toEqual([]);
+    expect(loader.getExtensions().extensions).toHaveLength(1);
+    const extension = loader.getExtensions().extensions[0];
+    expect(extension.handlers.has("session_start")).toBe(true);
+    expect(extension.commands.size).toBe(0);
+    expect(extension.tools.size).toBe(0);
+    const browserEntry = await readFile(join(source, "browser", "pi-web-plugin.js"), "utf8");
+    expect(moduleSpecifiers(browserEntry)).toEqual([]);
+    expect(Buffer.byteLength(browserEntry)).toBeLessThan(PI_WEB_PLUGIN_ARTIFACT_MAX_BYTES);
+    const catalog = new PiWebPluginCatalog({ roots: [],
+      packageProvider: { listPackages: () => [{ source, installedPath: source, scope: "user" }], getInstalledPath: () => source },
+      configProvider: () => ({ plugins: { "mcp-manager": { enabled: false } } }),
+    });
+    expect((await catalog.snapshot()).plugins).toContainEqual(expect.objectContaining({ id: "mcp-manager", enabled: false, defaultEnabled: true }));
+    await loader.reload();
+    expect(loader.getExtensions().extensions).toHaveLength(1);
+    // The backend imports outside this checkout too; no host internals or SDK copy.
+    const probe = join(standalone, "probe.mjs");
+    await writeFile(probe, `
+      import { mkdirSync, writeFileSync } from "node:fs";
+      import { join } from "node:path";
+      import plugin from "./server-plugin.js";
+      process.env.PI_CODING_AGENT_DIR = join(process.cwd(), "agent");
+      delete process.env.PI_MCP_MANAGER;
+      mkdirSync(join(process.env.PI_CODING_AGENT_DIR, "mcp-manager"), { recursive: true });
+      writeFileSync(join(process.env.PI_CODING_AGENT_DIR, "mcp-manager/config.json"), JSON.stringify({
+        servers: { docs: { url: "https://private.example", headers: { Authorization: "secret-token" } } }, enabledServers: ["docs"],
+      }));
+      const activation = plugin.activate({});
+      await activation.start({ capabilities: { resolve() { return { version: 1 }; } } });
+      const view = await activation.peer.request({ scope: { kind: "machine" }, operation: "view", input: {}, signal: new AbortController().signal });
+      if (!view.servers[0]?.effectiveEnabled || JSON.stringify(view).includes("secret-token")) throw new Error("Invalid standalone MCP view");
+      console.log("standalone MCP manager passed");
+      await activation.dispose();
+    `);
+    expect(await execUtf8(process.execPath, [probe], standalone, 10_000)).toContain("standalone MCP manager passed");
+  });
+
+  it("ships private-input with an isolated browser bundle, standalone backend and model-only companion", async () => {
+    const source = join(repoRoot, "dist", "pi-packages", "private-input");
+    const metadata = JSON.parse(await readFile(join(source, "package.json"), "utf8"));
+    expect(metadata.piWeb.plugins).toEqual([{ id: "private-input", defaultEnabled: false, machineSpecific: true,
+      serverModule: "server-plugin.js", browserRoot: "browser", module: "browser/pi-web-plugin.js" }]);
+    const browserEntry = await readFile(join(source, "browser", "pi-web-plugin.js"), "utf8");
+    expect(moduleSpecifiers(browserEntry)).toEqual([]);
+    expect(await readdir(join(source, "browser"))).toEqual(["pi-web-plugin.js"]);
+    const standalone = join(tempDir, "private-input");
+    await mkdir(join(standalone, "extensions"), { recursive: true });
+    for (const path of ["package.json", "extensions/index.js", "server-plugin.js"]) await cp(join(source, path), join(standalone, path));
+    const loader = new DefaultResourceLoader({
+      cwd: tempDir, agentDir: tempDir,
+      settingsManager: SettingsManager.inMemory({ packages: [standalone] }),
+      noThemes: true, noPromptTemplates: true,
+    });
+    await loader.reload();
+    expect(loader.getExtensions().errors).toEqual([]);
+    const tools = loader.getExtensions().extensions.flatMap((extension) => [...extension.tools.values()]);
+    expect(loader.getExtensions().warnings ?? []).toEqual([]);
+    expect(tools.map((tool) => tool.definition.name)).toEqual(["request_private_input"]);
+    expect(tools[0].definition.exposure).toBe("model-only");
+    const probe = join(standalone, "probe.mjs");
+    await writeFile(probe, `
+      import plugin from "./server-plugin.js";
+      const signal = new AbortController().signal;
+      const activation = plugin.activate({ lifetimeSignal: signal });
+      activation.start({ capabilities: { resolve() { return { version: 1 }; } } });
+      const result = await activation.peer.request({ scope: { kind: "machine" }, operation: "available", input: null, signal });
+      if (result.available !== true) throw new Error("Private input backend unavailable");
+      console.log("standalone private input passed");
+    `);
+    expect(await execUtf8(process.execPath, [probe], standalone, 10_000)).toContain("standalone private input passed");
+  });
+
   it("ships an optional disabled scheduler with standalone SQLite and cron dispatch", async () => {
     const source = join(repoRoot, "dist", "pi-packages", "scheduled-tasks");
     const metadata = JSON.parse(await readFile(join(source, "package.json"), "utf8"));
@@ -175,9 +268,15 @@ describe("plugin delivery artifacts", () => {
     const tools = loader.getExtensions().extensions.flatMap((extension) => [...extension.tools.values()]);
     expect(tools.map((tool) => tool.definition.name)).toContain("scheduled_tasks_report");
     expect(tools.every((tool) => tool.definition.exposure === "deferred")).toBe(true);
-    // Execute outside PI WEB's dependency tree: the server bundle must carry cron and public host API values.
+    expect(moduleSpecifiers(await readFile(join(source, "extensions/index.js"), "utf8"))).toContain("typebox");
+    // Run outside PI WEB's tree with just the declared runtime dependency installed.
+    // Link the real package (and its transitive resolution) without a registry request.
     const standalone = join(tempDir, "scheduler");
-    await mkdir(standalone);
+    await mkdir(join(standalone, "node_modules"), { recursive: true });
+    expect(metadata.dependencies["cron-parser"]).toEqual(expect.any(String));
+    expect(moduleSpecifiers(await readFile(join(source, "server-plugin.js"), "utf8"))).toContain("cron-parser");
+    const cronRoot = dirname(fileURLToPath(import.meta.resolve("cron-parser/package.json")));
+    await symlink(cronRoot, join(standalone, "node_modules/cron-parser"), "junction");
     await cp(join(source, "server-plugin.js"), join(standalone, "server-plugin.mjs"));
     const probe = join(standalone, "probe.mjs");
     await writeFile(probe, `

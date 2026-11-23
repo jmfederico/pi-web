@@ -28,7 +28,7 @@ describe("archive_self hosted SDK lifecycle", () => {
       const modelRuntime = await createTestModelRuntime();
       await modelRuntime.setRuntimeApiKey("anthropic", "isolated-test-key");
       const archiveStore = new SessionArchiveStore(join(directory, "archives.json"), join(directory, "archive"));
-      const archive = vi.spyOn(archiveStore, "archive");
+      const archive = vi.spyOn(archiveStore, "archiveMany");
       const executeSibling = vi.fn(() => Promise.resolve({ content: [{ type: "text" as const, text: "Done" }], details: {} }));
       const sibling = defineTool({
         name: "sentinel",
@@ -50,7 +50,10 @@ describe("archive_self hosted SDK lifecycle", () => {
         const { session } = await createAgentSession({
           cwd: directory, agentDir, sessionManager: options.sessionManager, settingsManager, resourceLoader,
           modelRuntime, model: testModel(), noTools: "builtin",
-          customTools: [createArchiveSelfToolDefinition(), sibling],
+          customTools: [createArchiveSelfToolDefinition(async (sessionId) => {
+            if (service === undefined) throw new Error("Expected the hosted session service");
+            await service.checkSelfArchive(sessionId);
+          }), sibling],
         });
         nativeSession = session;
         session.setSessionName("Archive lifecycle test");

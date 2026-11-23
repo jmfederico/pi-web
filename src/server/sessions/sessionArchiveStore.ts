@@ -6,6 +6,7 @@ import { piWebDataDir } from "../../config.js";
 import { canonicalizeStoredCwd } from "../workingDirectory.js";
 import type { SessionUiMetadata } from "../../shared/pluginApiTypes.js";
 import { requireSessionUiMetadata } from "./sessionMetadata.js";
+import { readSessionHeaderSummary } from "./sessionFileHeader.js";
 
 export interface ArchiveSessionInput {
   sessionId: string;
@@ -77,13 +78,17 @@ export class SessionArchiveStore {
         const existingIndex = data.sessions.findIndex((record) => record.sessionId === session.sessionId);
         const existing = existingIndex === -1 ? undefined : data.sessions[existingIndex];
         const archivePath = existing?.archivePath ?? this.archivePathFor(session);
+        const owner = data.sessions.find((record) => record.archivePath === archivePath && record.sessionId !== session.sessionId);
+        if (owner !== undefined) {
+          throw new Error(`Cannot archive session ${session.sessionId} from ${session.path}: destination ${archivePath} belongs to session ${owner.sessionId}`);
+        }
         const record = archiveRecordFromInput(session, {
           archivedAt: existing?.archivedAt ?? new Date().toISOString(),
           originalPath: existing?.originalPath ?? session.path,
           archivePath,
         });
 
-        await copySessionFileToArchive(session.path, archivePath);
+        await copySessionFileToArchive(session, archivePath, existing !== undefined);
 
         if (existingIndex === -1) data.sessions.push(record);
         else data.sessions[existingIndex] = record;
@@ -197,10 +202,30 @@ function archiveRecordFromInput(session: ArchiveSessionInput, archive: { archive
   };
 }
 
-async function copySessionFileToArchive(source: string, archivePath: string): Promise<void> {
+async function copySessionFileToArchive(session: ArchiveSessionInput, archivePath: string, committed: boolean): Promise<void> {
+  const source = session.path;
   if (source === archivePath) return;
   await mkdir(dirname(archivePath), { recursive: true });
-  if (await pathExists(archivePath)) return;
+  if (!await pathExists(archivePath)) {
+    // Do not overwrite a destination that appeared after the existence check.
+    await copyFile(source, archivePath, constants.COPYFILE_EXCL);
+    return;
+  }
+
+  const conflict = (reason: string): Error => new Error(`Cannot archive session ${session.sessionId} from ${source}: destination ${archivePath} conflicts (${reason}); both files were preserved`);
+  const [sourceHeader, archiveHeader] = await Promise.all([
+    readSessionHeaderSummary(source), readSessionHeaderSummary(archivePath),
+  ]);
+  if (sourceHeader?.id !== session.sessionId || archiveHeader?.id !== session.sessionId) {
+    throw conflict(`source session ${sourceHeader?.id ?? "unknown"}, destination session ${archiveHeader?.id ?? "unknown"}`);
+  }
+  const [sourceContent, archiveContent] = await Promise.all([readFile(source), readFile(archivePath)]);
+  if (sourceContent.equals(archiveContent)) return;
+  // A failed batch can leave an uncommitted copy. Refresh only an older prefix
+  // of this session, never a divergent transcript or a committed archive.
+  if (committed || !sourceContent.subarray(0, archiveContent.length).equals(archiveContent)) {
+    throw conflict("transcript contents differ");
+  }
   await copyFile(source, archivePath);
 }
 

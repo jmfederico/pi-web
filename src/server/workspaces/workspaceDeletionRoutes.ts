@@ -5,6 +5,7 @@ import {
 } from "../../shared/workspaceRemovalProtocol.js";
 import { SessionDaemonClient } from "../../sessiond/sessionDaemonClient.js";
 import { requestCancellation } from "../requestCancellation.js";
+import { logDaemonRequestFailure, logInvalidDaemonResponse } from "../sessiond/daemonProxyDiagnostics.js";
 import type { SessionProxyDaemon } from "../sessiond/sessionProxyRoutes.js";
 
 /** Browser-facing adapter; sessiond owns all workspace removal decisions and effects. */
@@ -34,6 +35,7 @@ export function registerWorkspaceDeletionRoutes(
         );
         return await proxyJsonResponse(reply, upstream);
       } catch (error) {
+        logDaemonRequestFailure(request, error, cancellation.signal);
         return await reply.code(502).send({
           error: `Session daemon unavailable: ${errorMessage(error)}`,
         });
@@ -56,6 +58,7 @@ function proxyJsonResponse(
     const value: unknown = JSON.parse(upstream.body);
     return value;
   } catch (error) {
+    logInvalidDaemonResponse(reply.request);
     return reply.code(502).send({
       error: `Invalid session daemon workspace removal response: ${errorMessage(error)}`,
     });

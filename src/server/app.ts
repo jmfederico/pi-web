@@ -4,11 +4,13 @@ import { parsePiWebEnvBoolean } from "../shared/configResolution.js";
 import { requireHostAccess } from "../shared/hostAccess.js";
 import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import Fastify, { type FastifyInstance, type FastifyReply, type FastifyServerOptions } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyServerOptions } from "fastify";
+import { createHttpServer } from "./httpServer.js";
 import fastifyCompress from "@fastify/compress";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import { ProjectStore } from "./storage/projectStore.js";
+import { registerInstalledClientAssetRoutes } from "./installedClientAssetRoutes.js";
 import { registerBrowserRequestGuard } from "./browserRequestGuard.js";
 import { NavigationPreferenceStore } from "./storage/navigationPreferenceStore.js";
 import { registerNavigationPreferenceRoutes } from "./navigationPreferenceRoutes.js";
@@ -54,7 +56,7 @@ import { registerPairedPluginBackendProxyRoutes } from "./plugins/pluginBackendP
 import { proxyMachinePluginAsset, registerMachinePluginProxyRoutes } from "./machines/machinePluginProxyRoutes.js";
 import type { Project, WorkspaceEffectiveConfig, WorkspaceProviderResolution } from "./types.js";
 
-export interface AppDependencies {
+export interface AppDependencies extends Pick<FastifyServerOptions, "bodyLimit" | "logger"> {
   projects?: ProjectService;
   navigationPreferences?: Pick<NavigationPreferenceStore, "get" | "put">;
   workspaceCatalog?: WorkspaceCatalog;
@@ -69,9 +71,6 @@ export interface AppDependencies {
   clientDist?: string | false;
   /** Overrides deployment-flavor detection (dev/stable asset identity) in tests. */
   deploymentFlavor?: () => Promise<PiWebDeploymentFlavor>;
-  logger?: FastifyServerOptions["logger"];
-  /** Maximum accepted HTTP request body size in bytes. */
-  bodyLimit?: number;
 }
 
 interface LocalProjectRouteOptions {
@@ -169,7 +168,10 @@ async function withProfileDependency<T>(reply: FastifyReply, operation: () => Pr
 }
 
 export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInstance> {
-  const app = Fastify({ logger: deps.logger ?? true, ...(deps.bodyLimit === undefined ? {} : { bodyLimit: deps.bodyLimit }) });
+  const configService = deps.config ?? createFilePiWebConfigService();
+  const readConfig = () => readEffectiveConfig(configService);
+  const startupConfig = await readConfig();
+  const app = createHttpServer("web", startupConfig, deps);
   // Vite proxies development API requests here, while production and machine-scoped
   // API requests already terminate here, so this is the shared browser HTTP edge.
   await app.register(fastifyCompress, {
@@ -181,9 +183,6 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
   installPluginBackendChannelWebSocketPayloadLimit(app.websocketServer);
 
   const projects = deps.projects ?? new ProjectService(new ProjectStore());
-  const configService = deps.config ?? createFilePiWebConfigService();
-  const readConfig = () => readEffectiveConfig(configService);
-  const startupConfig = await readConfig();
   const activeHostAccess = startupConfig.hostAccess === undefined ? null : requireHostAccess(startupConfig.hostAccess);
   registerBrowserRequestGuard(app, activeHostAccess ?? undefined);
   if (activeHostAccess === null) {
@@ -226,6 +225,7 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
     agentDirProvider: async () => effectiveAgentConfig(process.env, await readConfig()).dir,
   }));
   registerThemeCatalogRoutes(app, themeCatalog, configService);
+  await registerInstalledClientAssetRoutes(app);
 
   app.get("/pi-web-plugins/manifest.json", async (_request, reply) => withProfileDependency(reply, () => piWebPlugins.manifest()));
 

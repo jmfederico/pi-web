@@ -39,6 +39,7 @@ async function recordEntry(page: Page) {
   const samples = await page.evaluate(() => window.codeScrollFixture.stopRecording());
   const after = samples.at(-1);
   if (after === undefined) throw new Error("No scroll geometry recorded");
+  expect(after.highlighted).toBe(true);
   return { before, after, samples };
 }
 

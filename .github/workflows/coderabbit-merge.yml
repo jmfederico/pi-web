@@ -1,0 +1,54 @@
+name: CodeRabbit merge
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coderabbit-merge
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    if: >-
+      vars.CODERABBIT_MERGE_ENABLED == 'true' &&
+      github.repository == 'jmfederico/pi-web' &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Only the controller's trusted revision is loaded. Never use a PR ref,
+      # workflow_run.head_sha, PR artifacts, caches, or installed dependencies.
+      - name: Checkout trusted controller
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts/coderabbit-merge.cjs
+          sparse-checkout-cone-mode: false
+
+      - name: Create repository-scoped merge token
+        id: app-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ vars.CODERABBIT_MERGE_APP_ID }}
+          private-key: ${{ secrets.CODERABBIT_MERGE_PRIVATE_KEY }}
+          owner: jmfederico
+          repositories: pi-web
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Reconcile eligible pull requests
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const reconcile = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/coderabbit-merge.cjs`);
+            await reconcile({ github, core });

@@ -46,7 +46,7 @@ describe("workspace upload helpers", () => {
     const xhr = xhrs.only();
     expect(xhr.method).toBe("PUT");
     expect(xhr.url).toBe("https://pi.example.test/api/machines/remote%20a/projects/p%201/workspaces/w%2F1/file?path=manual%2Fhello.txt&overwrite=false");
-    expect(xhr.headers.get("content-type")).toBe("text/plain");
+    expect(xhr.headers.get("content-type")).toBe("application/octet-stream");
     expect(xhr.body).toBe(file);
 
     xhr.emitUploadProgress(2, 5);
@@ -57,6 +57,19 @@ describe("workspace upload helpers", () => {
       { loaded: 2, total: 5, percent: 0.4, lengthComputable: true },
       { loaded: 5, total: 5, percent: 1, lengthComputable: true },
     ]);
+  });
+
+  it("sends JSON files as raw bytes rather than API JSON payloads", async () => {
+    const xhrs = new FakeXhrQueue();
+    const contents = '{\n  "count": 9007199254740993\n}\n';
+    const file = new File([contents], "data.json", { type: "application/json" });
+    const task = uploadWorkspaceFile("p1", "w1", { path: "uploads/data.json", file }, { xhrFactory: xhrs.factory });
+
+    const xhr = xhrs.only();
+    expect(xhr.headers.get("content-type")).toBe("application/octet-stream");
+    expect(xhr.body).toBe(file);
+    xhr.respondJson(200, { path: "uploads/data.json", size: file.size, modifiedAt: "2026-06-25T00:00:00.000Z", created: true });
+    await expect(task.promise).resolves.toMatchObject({ path: "uploads/data.json", size: file.size });
   });
 
   it("cancels an in-flight workspace file upload", async () => {

@@ -1,15 +1,14 @@
 # Agent Notes
 
-This project is expected to run locally using split systemd user services:
+## Runtime and development environment
 
-- `pi-web-sessiond.service` runs `npm run start:sessiond` in non-autoreload, non-auto-restart mode.
-- `pi-web-ui-dev.service` runs the web/API and Vite UI in dev autoreload mode with `npm run dev:web` and `npm run dev:client`.
+Development may run through Docker, systemd, macOS native services, or directly launched processes. Do not assume the operating system, process manager, service names, or autoreload behavior from the checkout or a previous session. Inspect the current environment and running processes before recommending commands, starting services, or changing runtime state. Distinguish the current container, host, and any remote target.
 
-When working on this project, assume the session runtime owner is long-lived and separate from the autoreloading UI/API process. Browser disconnects and UI/API restarts should not stop active Pi sessions.
+The session daemon owns active Pi sessions separately from the web/API/UI. Browser disconnects and web/API/UI restarts should not stop active Pi sessions. Check which processes an operation affects; a grouped restart may include the daemon.
 
-If you make changes that affect `src/server/sessiond.ts`, session runtime ownership, the session daemon protocol, or any code path only loaded by the session daemon, inform the user that a manual restart of the session daemon is needed.
+If you make changes that affect `src/server/sessiond.ts`, session runtime ownership, the session daemon protocol, or any code path only loaded by the session daemon, inform the user that the target daemon must reload the changed code. Determine whether that setup watches those files or requires a manual restart; do not assume either behavior. Do not restart or stop the daemon hosting this session without explicit user authorization, and warn that doing so interrupts active sessions and terminals.
 
-Changes to the web/API/UI side generally only require the `pi-web-ui-dev.service` autoreload/restart path.
+Web/API/UI-only changes generally need only that layer's reload, rebuild, or restart, depending on the actual setup. Use the commands and activation guidance in [development checks](docs/development-checks.md#development-startup); do not restart the session daemon unnecessarily.
 
 ## Human-facing communication
 
@@ -37,6 +36,14 @@ Put installation variants, troubleshooting, configuration details, operational b
 
 Use `.agents/skills/documentation-guide/SKILL.md` whenever writing, modifying, reviewing, or planning user-facing documentation.
 
+For website design and styling, follow `.interface-design/system.md` and use `docs/design-system.html` as the working reference. Shared website foundations belong in `docs/styles.css`; page-specific homepage composition belongs in `docs/home.css`.
+
+Website copy leads with capabilities: what people can do, why it helps, and their next useful action. Keep requirements, limitations, trust boundaries, and disruptive consequences visible. Put API contracts and implementation instructions in canonical Markdown references and code; link to them rather than duplicating them in capability pages. Setup and troubleshooting pages may retain precise procedures, with advanced alternatives disclosed on demand. Agents and humans must both be able to reach the details.
+
+## Architecture and feature placement
+
+Follow `.agents/skills/code-quality-architecture/SKILL.md` for implementation and review. New feature-specific behavior belongs in plugins or Pi packages by default. Extend core only for genuinely generic host capabilities or behavior that cannot reasonably live in a plugin; explain the boundary in the PR. Bundled plugins must use the same supported public contracts as external plugins.
+
 ## Testing guidance
 
 Read and follow [testing policy](docs/testing.md) whenever adding, changing, planning, reviewing, or reassessing tests, triaging failures, or creating test helpers.
@@ -44,6 +51,10 @@ Read and follow [testing policy](docs/testing.md) whenever adding, changing, pla
 Use [test harnesses](docs/testing-harnesses.md) for implementation mechanics and [development and delivery checks](docs/development-checks.md) for verification commands and scope. Keep policy and detailed conventions in those documents rather than duplicating them here.
 
 The project Pi prompt `/reassess-tests` lives in [`.pi/prompts/reassess-tests.md`](.pi/prompts/reassess-tests.md).
+
+## CodeRabbit and automatic merging
+
+Follow `docs/coderabbit.md` when managing CodeRabbit reviews or automatic merging. Use actual current-head GitHub reviews as approval evidence, not summary comments or a green CodeRabbit check. Do not use blanket approval/resolution commands or administrator bypass to clear a blocked PR.
 
 ## Verification reporting
 

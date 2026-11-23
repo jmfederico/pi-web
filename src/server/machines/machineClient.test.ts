@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { describe, expect, it, vi } from "vitest";
+import { withGatewayRequestId } from "../../sessiond/gatewayRequestContext.js";
 import { RemoteMachineClient } from "./machineClient.js";
 
 describe("RemoteMachineClient", () => {
@@ -8,12 +10,13 @@ describe("RemoteMachineClient", () => {
     const client = new RemoteMachineClient({ baseUrl: "https://remote.example.test/" }, fetchImpl);
     const payload = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
 
-    await client.request("PUT", "/api/projects/p1/workspaces/w1/file?path=image.png", payload, { contentType: "image/png" });
+    await withGatewayRequestId(randomUUID(), () => client.request("PUT", "/api/projects/p1/workspaces/w1/file?path=image.png", payload, { contentType: "image/png" }));
 
     const { input, init } = onlyFetchCall(fetchImpl);
     expect(fetchInputUrl(input)).toBe("https://remote.example.test/api/projects/p1/workspaces/w1/file?path=image.png");
     expect(init.method).toBe("PUT");
     expect(new Headers(init.headers).get("content-type")).toBe("image/png");
+    expect(new Headers(init.headers).has("x-request-id")).toBe(false);
     if (!(init.body instanceof ArrayBuffer)) throw new Error("Expected binary request body");
     expect(Array.from(new Uint8Array(init.body))).toEqual([0x89, 0x50, 0x4e, 0x47]);
   });

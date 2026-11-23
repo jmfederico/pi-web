@@ -30,6 +30,7 @@ export class SettingsSessiondPanel extends LitElement {
   @property({ type: Boolean }) saving = false;
   @property() error = "";
   @property() savedMessage = "";
+  @property({ attribute: false }) restartAction: TemplateResult | undefined;
   @property() targetLabel = "";
   @property({ attribute: false }) onReload?: () => void | Promise<void>;
   @property({ attribute: false }) onReset?: ResetSettings;
@@ -121,6 +122,7 @@ export class SettingsSessiondPanel extends LitElement {
               <div><dt>${sessiondMessages.t("askUserSummary")}</dt><dd>${effectiveAskUser ? sessiondMessages.t("enabled") : html`<span class="muted">${sessiondMessages.t("disabled")}</span>`}</dd></div>
             </dl>
           </section>
+          ${this.restartAction}
         `}
         </section>
       </settings-panel-frame>

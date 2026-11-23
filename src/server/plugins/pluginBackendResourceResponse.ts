@@ -63,8 +63,8 @@ export async function sendPluginResourceResponse(reply: FastifyReply, upstream: 
     }
     applyPluginResourcePolicy(reply, headers["content-type"]);
     for (const [key, value] of Object.entries(headers)) if (key !== "content-type") reply.header(key, value);
-    const abort = (): void => { body.destroy(new Error("Resource request cancelled")); };
-    const timer = setTimeout(abort, PLUGIN_RESOURCE_STREAM_DEADLINE_MS);
+    const abort = (): void => { body.destroy(new DOMException("Resource request cancelled", "AbortError")); };
+    const timer = setTimeout(() => { body.destroy(new DOMException("Resource stream timed out", "TimeoutError")); }, PLUGIN_RESOURCE_STREAM_DEADLINE_MS);
     timer.unref();
     body.once("close", () => { clearTimeout(timer); signal.removeEventListener("abort", abort); });
     signal.addEventListener("abort", abort, { once: true });

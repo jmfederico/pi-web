@@ -6,18 +6,24 @@
 [![Bun*](https://img.shields.io/badge/Bun*-fbf0df?logo=bun&logoColor=black)](https://pi-web.dev/install#bun)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**PI WEB is a web UI for [Pi Coding Agent](https://github.com/earendil-works/pi/tree/main/packages/coding-agent) that keeps agent sessions running in real workspaces on your machine or server.**
+**PI WEB is a remote-first runtime for AI coding agents, with a web interface for managing their work.**
 
-Run agents where your code, tools, credentials, and build caches live. Supervise multiple sessions from any browser, even after disconnecting.
-
-![The same PI WEB workspace in PI WEB Dark, PI WEB Light, Paper, and Graphite themes](docs/assets/pi-web-themes.gif)
+Built for [Pi Coding Agent](https://github.com/earendil-works/pi/tree/main/packages/coding-agent), it keeps sessions running in real workspaces on your computer or server. Give instructions, inspect files, and review progress from any browser. Agents keep running when you disconnect.
 
 <p align="center">
-  <img src="docs/assets/pi-web-tablet-pi-web-dark.png" alt="PI WEB on tablet, with sessions beside chat" width="400" />
-  <img src="docs/assets/pi-web-mobile-pi-web-dark.png" alt="PI WEB on phone, with chat and message controls" width="139" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/pi-web-desktop-pi-web-dark.png" />
+    <img src="docs/assets/pi-web-desktop-pi-web-light.png" alt="PI WEB on desktop, with projects and sessions beside chat and a source-code preview" width="560" />
+  </picture>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/pi-web-mobile-pi-web-dark.png" />
+    <img src="docs/assets/pi-web-mobile-pi-web-light.png" alt="The same example session on a phone, with chat and message controls" width="162" />
+  </picture>
 </p>
 
-[Explore devices and themes](https://pi-web.dev/)
+*Example session shown on desktop and phone.*
+
+[See the desktop and phone interfaces](https://pi-web.dev/#interface)
 
 ## Quick start
 

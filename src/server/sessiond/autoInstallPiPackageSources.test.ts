@@ -2,9 +2,10 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SettingsManager, type PackageSource } from "../../piSdk.js";
+import { DefaultPackageManager, SettingsManager, type PackageSource } from "../../piSdk.js";
 import { KNOWN_AUTO_INSTALLABLE_PI_PACKAGES, resolveShippedPiPackagePath } from "../knownAutoInstallPiPackages.js";
 import { DefaultPiPackageProvider } from "../piWebPluginCatalog.js";
+import { PiPackageProvisioningStore } from "../storage/piPackageProvisioningStore.js";
 import { createAutoInstallPiPackageProfile } from "./autoInstallPiPackageSources.js";
 import { reconcileAutoInstallablePiPackages } from "./autoInstallPiPackages.js";
 
@@ -51,7 +52,8 @@ function reconcile(knownPackages = [relays], dismissed = false) {
     run: () => reconcileAutoInstallablePiPackages({
       profileDir: profile,
       ...createAutoInstallPiPackageProfile(profile),
-      dismissalChecker: { isDismissed: () => Promise.resolve(dismissed) },
+      dismissalStore: { list: () => Promise.resolve(dismissed ? [{ profileDir: profile, packageId: relays.id, dismissedAt: "2026-10-01T10:00:00.000Z" }] : []) },
+      provisioningStore: new PiPackageProvisioningStore(join(root, "provisioning.json")),
       packageRoot,
       knownPackages,
       logger: { warn },
@@ -188,6 +190,37 @@ describe("managed bundled package source migration", () => {
     expect(new DefaultPiPackageProvider(cwd, profile).listPackages().map(({ installedPath }) => installedPath)).toEqual([
       current, resolveShippedPiPackagePath(workflows, packageRoot),
     ]);
+  });
+
+  it.each(["Pi package manager", "manual settings edit"])("keeps removal through %s across startup and explicit reinstall cycles", async (method) => {
+    await configure([]);
+    await reconcile().run();
+    expect(packages()).toEqual([current]);
+    const ledgerPath = join(root, "provisioning.json");
+    const ledger = await readFile(ledgerPath, "utf8");
+    if (method === "Pi package manager") {
+      const settingsManager = SettingsManager.create(cwd, profile);
+      const manager = new DefaultPackageManager({ cwd, agentDir: profile, settingsManager });
+      // This is the same package-manager operation used by `pi remove`.
+      expect(await manager.removeAndPersist(current)).toBe(true);
+      await settingsManager.flush();
+    } else {
+      await configure([]);
+    }
+    await reconcile().run();
+    expect(packages()).toEqual([]);
+
+    // An explicit reinstall still follows bundled source updates; it never
+    // resets the original provisioning decision or resource filters.
+    const old = join(root, "explicit-reinstall");
+    await writePackage(old, relays.id);
+    await configure([{ source: old, prompts: [] }]);
+    await reconcile().run();
+    expect(packages()).toEqual([{ source: current, prompts: [] }]);
+    await configure([]);
+    await reconcile().run();
+    expect(packages()).toEqual([]);
+    expect(await readFile(ledgerPath, "utf8")).toBe(ledger);
   });
 
   it("reads fresh profile settings when applying a previously planned source replacement", async () => {

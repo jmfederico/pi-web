@@ -4,6 +4,8 @@ import definitions from "./askUser.messages";
 import { LitElement, css, html, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { ifDefined } from "lit/directives/if-defined.js";
+import { ref } from "lit/directives/ref.js";
+import { questionActionStyles, type QuestionActionsCallback } from "./questionActions";
 import { uiButtonStyles } from "./ui/controlStyles";
 import { uiTranscriptStyles } from "./ui/transcriptStyles";
 import { uiTranscriptCardStyles } from "./ui/transcriptCardStyles";
@@ -71,6 +73,15 @@ export class AskUserCard extends LitElement {
   /** Machine-scoped session cache key used by the ask draft store. */
   @property({ attribute: false }) draftSessionId = "";
   @property({ attribute: false }) onSubmit: AskUserSubmitCallback | undefined;
+  @property({ attribute: false }) onActionsChange: QuestionActionsCallback | undefined;
+  private editVersion = 0;
+  private focusPartialAction = false;
+  private readonly focusConfirmation = (element: Element | undefined): void => {
+    if (this.focusPartialAction && element instanceof HTMLElement) {
+      this.focusPartialAction = false;
+      queueMicrotask(() => { if (element.isConnected) element.focus(); });
+    }
+  };
 
   @state() private answers: AskDraftAnswers = {};
   @state() private confirmingPartialSubmit = false;
@@ -84,7 +95,19 @@ export class AskUserCard extends LitElement {
     this.modelIdentity = identity;
     this.answers = this.loadCurrentDraft();
     this.confirmingPartialSubmit = false;
+    this.focusPartialAction = false;
     this.submitting = false;
+  }
+
+  protected override updated(): void {
+    if (this.open && this.ask !== undefined && this.onSubmit !== undefined) {
+      this.onActionsChange?.({
+        key: JSON.stringify([this.draftSessionId, this.ask.askId]),
+        editVersion: this.editVersion,
+        content: this.renderActions(this.ask),
+        focus: () => { this.focusQuestion(0); },
+      });
+    }
   }
 
   override render(): TemplateResult | null {
@@ -96,7 +119,6 @@ export class AskUserCard extends LitElement {
 
   private renderOpenAsk(ask: AskUserRequest): TemplateResult {
     const count = answeredCount(ask.questions, this.answers);
-    const unanswered = unansweredQuestions(ask.questions, this.answers);
     return html`
       <article class="ui-transcript-surface card open-card" aria-labelledby="ask-user-heading">
         <header class="ui-transcript-card-header card-header">
@@ -109,19 +131,23 @@ export class AskUserCard extends LitElement {
           <div class="questions">
             ${ask.questions.map((question, index) => this.renderQuestion(ask, question, index))}
           </div>
-          <footer class="form-footer">
-            <button class="ui-button ui-button--compact secondary-action skip-questions" type="button" ?disabled=${this.submitting}
-              @click=${() => { this.submitAnswers(ask, { answers: [] }); }}>${askUserMessages.t("skip")}</button>
-            ${this.confirmingPartialSubmit && unanswered.length > 0
-              ? this.renderPartialSubmitConfirmation(ask, unanswered)
-              : html`
-                  <button class="ui-button ui-button--primary primary-action" type="submit" ?disabled=${this.submitting}>
-                    ${askUserMessages.t(this.submitting ? "sending" : "send")}
-                  </button>
-                `}
-          </footer>
+          ${this.onActionsChange === undefined ? this.renderActions(ask) : null}
         </form>
       </article>
+    `;
+  }
+
+  private renderActions(ask: AskUserRequest): TemplateResult {
+    const unanswered = unansweredQuestions(ask.questions, this.answers);
+    return html`
+      <footer class="form-footer">
+        <button class="ui-button ui-button--compact secondary-action skip-questions" type="button" ?disabled=${this.submitting}
+          @click=${() => { this.submitAnswers(ask, { answers: [] }); }}>${askUserMessages.t(this.onActionsChange === undefined ? "skip" : "discard")}</button>
+        ${this.confirmingPartialSubmit && unanswered.length > 0
+          ? this.renderPartialSubmitConfirmation(ask, unanswered)
+          : html`<button class="ui-button ui-button--action ui-button--primary primary-action" type=${this.onActionsChange === undefined ? "submit" : "button"} ?disabled=${this.submitting}
+              @click=${this.onActionsChange === undefined ? undefined : () => { this.requestSubmit(ask); }}>${askUserMessages.t(this.submitting ? "sending" : "send")}</button>`}
+      </footer>
     `;
   }
 
@@ -220,7 +246,7 @@ export class AskUserCard extends LitElement {
         </div>
         <div class="confirmation-actions">
           <button class="ui-button ui-button--compact secondary-action" type="button" @click=${() => { this.keepEditing(ask, unanswered); }}>${askUserMessages.t("keepEditing")}</button>
-          <button class="ui-button ui-button--primary primary-action send-anyway" type="button" ?disabled=${this.submitting} @click=${() => { this.submitAnswers(ask); }}>
+          <button ${ref(this.focusConfirmation)} class="ui-button ui-button--action ui-button--primary primary-action send-anyway" type="button" ?disabled=${this.submitting} @click=${() => { this.submitAnswers(ask); }}>
             ${askUserMessages.t(this.submitting ? "sending" : "sendAnyway")}
           </button>
         </div>
@@ -373,22 +399,28 @@ export class AskUserCard extends LitElement {
     const answer: AskDraftAnswer = { values: [], ...this.answers[question.id], ...patch };
     const next: AskDraftAnswers = { ...this.answers, [question.id]: answer };
     this.answers = next;
+    this.editVersion++;
     this.confirmingPartialSubmit = false;
     if (this.ask !== undefined && this.draftSessionId !== "") saveAskDraft(this.draftSessionId, this.ask.askId, next);
   }
 
   private handleSubmit(event: SubmitEvent, ask: AskUserRequest): void {
     event.preventDefault();
-    if (this.submitting) return;
+    this.requestSubmit(ask);
+  }
+
+  private requestSubmit(ask: AskUserRequest): void {
+    if (this.submitting || !this.open || this.ask !== ask || !this.isConnected) return;
     if (unansweredQuestions(ask.questions, this.answers).length > 0) {
-      void this.showPartialSubmitConfirmation();
+      this.focusPartialAction = true;
+      this.confirmingPartialSubmit = true;
       return;
     }
     this.submitAnswers(ask);
   }
 
   private submitAnswers(ask: AskUserRequest, submission = toSubmission(ask.questions, this.answers)): void {
-    if (this.submitting || !this.open) return;
+    if (this.submitting || !this.open || this.ask !== ask || !this.isConnected) return;
     this.submitting = true;
     const callback = this.onSubmit;
     if (callback === undefined) {
@@ -405,12 +437,6 @@ export class AskUserCard extends LitElement {
       .finally(() => {
         if (this.ask?.askId === askId) this.submitting = false;
       });
-  }
-
-  private async showPartialSubmitConfirmation(): Promise<void> {
-    this.confirmingPartialSubmit = true;
-    await this.updateComplete;
-    this.renderRoot.querySelector<HTMLElement>(".send-anyway")?.focus();
   }
 
   private keepEditing(ask: AskUserRequest, unanswered: AskUserQuestion[]): void {
@@ -493,7 +519,7 @@ export class AskUserCard extends LitElement {
     return `ask-user-record-question-${String(index)}`;
   }
 
-  static override styles = [uiButtonStyles, uiFormStyles, uiTranscriptStyles, uiTranscriptCardStyles, css`
+  static override styles = [uiButtonStyles, uiFormStyles, uiTranscriptStyles, uiTranscriptCardStyles, questionActionStyles, css`
     :host {
       display: block;
       box-sizing: border-box;
@@ -578,32 +604,6 @@ export class AskUserCard extends LitElement {
     .answer-text:only-child { padding-inline: 0; }
     .answer-text-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     textarea { min-height: 52px; resize: vertical; }
-    .form-footer {
-      display: flex;
-      align-items: center;
-      justify-content: flex-end;
-      gap: 12px;
-      border-top: 1px solid var(--pi-border-muted);
-      padding: 12px 16px;
-    }
-    .partial-confirmation { min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
-    .partial-prompt { min-width: 0; color: var(--pi-warning); font-size: 12px; line-height: 1.4; }
-    .partial-prompt p { margin: 0; }
-    .partial-prompt ul { margin: 4px 0 0; padding-inline-start: 18px; }
-    .partial-prompt li { overflow-wrap: anywhere; }
-    .question-jump {
-      display: inline;
-      border: 0;
-      border-radius: 3px;
-      background: transparent;
-      color: inherit;
-      padding: 0;
-      font: inherit;
-      cursor: pointer;
-      text-decoration: underline;
-      text-underline-offset: 2px;
-    }
-    .confirmation-actions { display: flex; flex-wrap: wrap; align-items: stretch; justify-content: flex-end; gap: 0; }
     .card-header { flex-wrap: wrap; }
     .card-header h2, .header-status { overflow-wrap: anywhere; min-width: 0; }
     legend > span:last-child, .option-label, .record-question h3 > span:last-child { overflow-wrap: anywhere; }
@@ -624,9 +624,6 @@ export class AskUserCard extends LitElement {
       fieldset.question { padding: 0 12px 14px; }
       .record-question { padding: 14px 12px; }
       .record-summary { padding-inline: 12px; }
-      .form-footer { align-items: stretch; flex-direction: column; padding: 12px; }
-      .partial-confirmation { align-items: stretch; flex-direction: column; }
-      .confirmation-actions { justify-content: flex-end; }
     }
   `];
 }

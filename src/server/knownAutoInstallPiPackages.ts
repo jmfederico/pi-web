@@ -26,6 +26,12 @@ export interface KnownAutoInstallablePiPackage {
 
 export const KNOWN_AUTO_INSTALLABLE_PI_PACKAGES: readonly KnownAutoInstallablePiPackage[] = [
   {
+    id: "@jmfederico/pi-mcp-manager",
+    label: "MCP servers",
+    description: "Load configured MCP servers in Pi, with management controls in PI WEB.",
+    shippedPathSegments: ["dist", "pi-packages", "mcp-manager"],
+  },
+  {
     id: "@jmfederico/pi-session-naming",
     label: "Session naming",
     description: "Automatically name new conversations from their first prompt. Remove this package to use another naming extension.",

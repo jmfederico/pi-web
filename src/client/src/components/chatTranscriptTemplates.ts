@@ -1,5 +1,6 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { resolveAppUrl } from "../appUrl";
+import { stripTerminalFormatting } from "../formatting/terminalText";
 import { sessionMessagePresentation } from "../chatSessionMessages";
 import { localizedArgumentSummary, localizedChatText } from "../localizedChatPresentation";
 import { chatTranscriptMessages as messages } from "../chatTranscriptMessages";
@@ -13,14 +14,15 @@ import { interventionRequestText } from "../chatInterventions";
 import { chatMessageHasHeader, summarizeChatGroup, type ChatDisplayGroup, type ChatGroup } from "../chatGroups";
 import type { ChatBehaviors } from "../chatBehaviors";
 import type { AskUserSubmission, SessionRef } from "../api";
+import type { QuestionActionsCallback } from "./questionActions";
 import type { AskUserOutcome } from "../../../shared/apiTypes";
 import type { ChatContentRendering } from "../formatting/contentRendering";
 import type { MarkdownWorkspaceContext } from "../formatting/workspaceLinks";
 import type { ChatLine, ChatPart } from "../chatTypes";
 import type { ImageOpenDetail } from "./ImagePresentation";
 import type { ChatMessageActionController } from "./ChatMessageActionController";
-import type { RegisteredTranscriptRenderer } from "../plugins/transcriptRenderers";
-import type { TranscriptRendererScope } from "../../../plugin-api";
+import type { RegisteredTranscriptRenderer, TranscriptToolRendererSelection } from "../plugins/transcriptRenderers";
+import type { TranscriptRendererScope, TranscriptToolEntry } from "../../../plugin-api";
 
 export interface TranscriptGroupDisclosure {
   open: boolean;
@@ -38,6 +40,7 @@ export interface TranscriptRenderContext {
   behaviors: ChatBehaviors;
   contentRendering: ChatContentRendering | undefined;
   transcriptRenderers: readonly RegisteredTranscriptRenderer[];
+  toolRendererSelection: (entry: TranscriptToolEntry) => TranscriptToolRendererSelection;
   rendererScope: TranscriptRendererScope;
   workspaceContext: MarkdownWorkspaceContext | undefined;
   anchors: {
@@ -58,6 +61,7 @@ export interface TranscriptRenderContext {
   questionOutcomes: ReadonlyMap<string, AskUserOutcome[]>;
   questionIds: ReadonlySet<string>;
   askDraftSessionId: string;
+  onQuestionActionsChange?: QuestionActionsCallback | undefined;
   onSubmitAsk: ((askId: string, submission: AskUserSubmission) => void | Promise<void>) | undefined;
   openImageGallery: (images: readonly { part: Extract<ChatPart, { type: "image" }>; description: () => string }[], selectedIndex: number) => void;
 }
@@ -281,6 +285,7 @@ export function renderPart(context: TranscriptRenderContext, part: ChatPart, mes
         .outcomes=${context.questionOutcomes.get(part.ask.askId) ?? []}
         .draftSessionId=${context.askDraftSessionId}
         .onSubmit=${open ? context.onSubmitAsk : undefined}
+        .onActionsChange=${open ? context.onQuestionActionsChange : undefined}
       ></ask-user-card>`;
     }
     if (part.type === "askUserRecord") return html`
@@ -307,7 +312,7 @@ export function renderPart(context: TranscriptRenderContext, part: ChatPart, mes
       const fallback = html`<tool-execution-view class="part" .execution=${part}></tool-execution-view>`;
       if (!context.transcriptRenderers.some((candidate) => candidate.target === "tool")) return fallback;
       return html`<pi-web-transcript-renderer class="part" .itemKey=${intentKey} .scope=${context.rendererScope}
-        .request=${{ kind: "tool", renderers: context.transcriptRenderers, entry: part }}>${fallback}</pi-web-transcript-renderer>`;
+        .request=${{ kind: "tool", renderers: context.transcriptRenderers, entry: part, selection: context.toolRendererSelection(part) }}>${fallback}</pi-web-transcript-renderer>`;
     }
     if (part.type === "toolResult") {
       const key = `tool-result:${intentKey}`;
@@ -315,7 +320,7 @@ export function renderPart(context: TranscriptRenderContext, part: ChatPart, mes
       return html`
       <details class=${`part tool-result ui-transcript-surface ui-transcript-activity ui-transcript-tool${part.isError ? " error" : ""}`} ?open=${live(open)} @toggle=${(event: Event) => { context.disclosure.toggle(key, event, part.isError); }}>
         <summary class="ui-transcript-disclosure ui-transcript-heading">${part.isError ? "✖" : "✓"} ${messages.t("toolResult", { name: part.toolName, failed: part.isError ? "yes" : "no" })}</summary>
-        ${open ? html`<formatted-text .imagesEnabled=${context.behaviors.loadImages} .codeBlocks=${context.behaviors.codeBlocks} .intentKey=${intentKey} .contentRendering=${context.contentRendering} .machineId=${context.machineId} .workspaceContext=${context.workspaceContext} .text=${part.text}></formatted-text>` : nothing}
+        ${open ? html`<formatted-text .imagesEnabled=${context.behaviors.loadImages} .codeBlocks=${context.behaviors.codeBlocks} .intentKey=${intentKey} .contentRendering=${context.contentRendering} .machineId=${context.machineId} .workspaceContext=${context.workspaceContext} .text=${stripTerminalFormatting(part.text)}></formatted-text>` : nothing}
       </details>
     `;
     }

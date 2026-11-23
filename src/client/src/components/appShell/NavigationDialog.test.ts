@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { NavigationDialog } from "./NavigationDialog";
 import type { ModalSurface } from "../ModalSurface";
 import { deepActiveElement } from "../modalLayerRegistry";
+import { orderedNavigationTabs } from "../../navigationPreferences";
 
 afterEach(() => {
   document.body.replaceChildren();
@@ -124,12 +125,96 @@ it("offers unpinned destinations and closes after navigating without modifying p
   const pin = dialog.shadowRoot?.querySelector<HTMLButtonElement>('button[aria-label="Pin Files"]');
   expect(pin?.getAttribute("aria-pressed")).toBe("false");
   expect(pin?.querySelector("svg")).not.toBeNull();
-  const files = dialog.shadowRoot?.querySelector<HTMLButtonElement>('.destination > button:first-child[aria-pressed="true"]');
+  const files = dialog.shadowRoot?.querySelector<HTMLButtonElement>('.destination-button[aria-pressed="true"]');
   expect(files?.textContent).toBe("Files");
   files?.click();
   expect(dialog.onSelect).toHaveBeenCalledWith("tools:files");
   expect(dialog.onClose).toHaveBeenCalledOnce();
   expect(dialog.onPreferencesChange).not.toHaveBeenCalled();
+});
+
+it("moves destinations without navigating or changing pins, and keeps keyboard focus on the moved item", async () => {
+  const dialog = new NavigationDialog();
+  dialog.tabs = [{ id: "chat", label: "Chat" }, { id: "tools:files", label: "Files" }, { id: "tools:find", label: "Find" }];
+  dialog.pinUniverse = ["navigation", "chat", "tools:files", "tools:find"];
+  dialog.preferences = { pinnedIds: ["chat"], mobileCollapsed: false };
+  dialog.selectedTab = "chat";
+  dialog.onSelect = vi.fn();
+  dialog.onClose = vi.fn();
+  dialog.onPreferencesChange = (preferences) => { dialog.preferences = preferences; };
+  document.body.append(dialog);
+  await dialog.updateComplete;
+  const button = (name: string) => {
+    const target = [...dialog.shadowRoot?.querySelectorAll<HTMLButtonElement>("button") ?? []].find((element) => element.getAttribute("aria-label") === name);
+    if (target === undefined) throw new Error(`Missing button ${name}`);
+    return target;
+  };
+  button("Move Files up").focus();
+  button("Move Files up").click();
+  await dialog.updateComplete;
+  expect(dialog.preferences).toEqual({ pinnedIds: ["chat"], mobileCollapsed: false, orderedIds: ["navigation", "tools:files", "chat", "tools:find"] });
+  expect([...dialog.shadowRoot?.querySelectorAll(".destination-button") ?? []].map((element) => element.textContent)).toEqual(["Files", "Chat", "Find"]);
+  expect(deepActiveElement(document)).toBe(button("Reorder Files"));
+  expect(button("Move Files up").disabled).toBe(true);
+  button("Reorder Files").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, composed: true, cancelable: true }));
+  await dialog.updateComplete;
+  expect(dialog.preferences.orderedIds).toEqual(["navigation", "chat", "tools:files", "tools:find"]);
+  expect(deepActiveElement(document)).toBe(button("Reorder Files"));
+  expect(dialog.shadowRoot?.querySelector('.destination-button[aria-current="page"]')?.textContent).toBe("Chat");
+  expect(dialog.onSelect).not.toHaveBeenCalled();
+  expect(dialog.onClose).not.toHaveBeenCalled();
+  const input = dialog.shadowRoot?.querySelector("input");
+  if (input == null) throw new Error("Missing search");
+  input.value = "Fi";
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  await dialog.updateComplete;
+  expect(button("Move Files down").disabled).toBe(true);
+  expect(button("Reorder Files").disabled).toBe(true);
+  const before = dialog.preferences;
+  button("Reorder Files").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, composed: true, cancelable: true }));
+  button("Move Files down").click();
+  expect(dialog.preferences).toBe(before);
+});
+
+it.each(["", "a", "chat"])("keeps the highlighted destination after resetting the whole order during search %j", async (query) => {
+  const dialog = new NavigationDialog();
+  const defaults = [{ id: "chat", label: "Chat" }, { id: "tools:files", label: "File manager" }, { id: "tools:find", label: "Find" }] as const;
+  dialog.preferences = { pinnedIds: ["chat"], mobileCollapsed: true, orderedIds: ["tools:files", "chat", "tools:find"] };
+  dialog.tabs = orderedNavigationTabs(defaults, dialog.preferences.orderedIds);
+  dialog.selectedTab = "chat";
+  dialog.onSelect = vi.fn();
+  // Like the app, the owner publishes preferences together with ordered tabs.
+  dialog.onPreferencesChange = (preferences) => {
+    queueMicrotask(() => {
+      dialog.preferences = preferences;
+      dialog.tabs = orderedNavigationTabs(defaults, preferences.orderedIds);
+    });
+  };
+  document.body.append(dialog);
+  await dialog.updateComplete;
+  const input = dialog.shadowRoot?.querySelector("input");
+  if (input == null) throw new Error("Missing search");
+  if (query !== "") {
+    input.value = query;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await dialog.updateComplete;
+  }
+  if (query === "a") {
+    expect(dialog.shadowRoot?.querySelectorAll(".destination-button")).toHaveLength(2);
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, composed: true }));
+    await dialog.updateComplete;
+  }
+  expect(dialog.shadowRoot?.querySelector(".destination-button.selected")?.textContent).toBe("Chat");
+  const reset = [...dialog.shadowRoot?.querySelectorAll<HTMLButtonElement>("footer button") ?? []].find((button) => button.textContent === "Reset order");
+  if (reset === undefined) throw new Error("Missing reset button");
+  expect(reset.disabled).toBe(false);
+  reset.click();
+  await dialog.updateComplete;
+  await dialog.updateComplete;
+  expect(dialog.preferences).toEqual({ pinnedIds: ["chat"], mobileCollapsed: true });
+  expect(dialog.shadowRoot?.querySelector(".destination-button.selected")?.textContent).toBe("Chat");
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, composed: true }));
+  expect(dialog.onSelect).toHaveBeenCalledWith("chat");
 });
 
 it("toggles icon pins and mobile layout independently, resets tabs, and uses shared Escape handling", async () => {

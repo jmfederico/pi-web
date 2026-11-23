@@ -27,6 +27,7 @@ export function groupChatMessages(
   messages: ChatLine[],
   indexOffset = 0,
   preserveCustomMessage: (customType: string) => boolean = () => false,
+  standaloneTool: (part: Extract<ChatPart, { type: "toolExecution" }>) => boolean = () => false,
 ): ChatGroup[] {
   const groups: ChatGroup[] = [];
   let eventMessages: Extract<ChatGroup, { kind: "group" }>["messages"] = [];
@@ -48,8 +49,11 @@ export function groupChatMessages(
     const visibleParts = parts.filter((part) => part.type !== "toolResultBoundary" && part.type !== "empty");
     // Ordering markers affect the conversation tail, not visual grouping.
     if (visibleParts.length === 0) return;
-    const readableParts = visibleParts.filter((part) => isReadablePart(message, part));
-    const technicalParts = visibleParts.filter((part) => !isReadablePart(message, part));
+    const readableParts: ChatPart[] = [];
+    const technicalParts: ChatPart[] = [];
+    for (const part of visibleParts) {
+      (isReadablePart(message, part) || (part.type === "toolExecution" && standaloneTool(part)) ? readableParts : technicalParts).push(part);
+    }
 
     const absoluteIndex = indexOffset + index;
     const metadata = { ...(message.entryId === undefined ? {} : { entryId: message.entryId }), ...(message.source === undefined ? {} : { source: message.source }), ...(message.meta === undefined ? {} : { meta: message.meta }) };

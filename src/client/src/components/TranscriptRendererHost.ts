@@ -1,7 +1,7 @@
 import { LitElement, css, html, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { TranscriptMessageEntry, TranscriptRendererScope, TranscriptToolEntry, TranscriptToolRenderer } from "../../../plugin-api";
-import { resolveTranscriptToolRenderer, type RegisteredTranscriptRenderer } from "../plugins/transcriptRenderers";
+import type { TranscriptMessageEntry, TranscriptRendererScope, TranscriptToolEntry } from "../../../plugin-api";
+import { defaultTranscriptToolRenderer, selectTranscriptToolRenderer, type RegisteredTranscriptRenderer, type TranscriptToolRendererSelection } from "../plugins/transcriptRenderers";
 import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { localization, LocalizationController } from "../localization/browser";
 import definitions from "./transcriptRenderer.messages";
@@ -10,7 +10,7 @@ const messages = localization.registerMessages("core.transcript-renderer", defin
 
 type MessageRenderer = Extract<RegisteredTranscriptRenderer, { target: "custom-message" }>;
 export type TranscriptRenderRequest =
-  | { kind: "tool"; renderers: readonly RegisteredTranscriptRenderer[]; entry: TranscriptToolEntry }
+  | { kind: "tool"; renderers: readonly RegisteredTranscriptRenderer[]; entry: TranscriptToolEntry; selection?: TranscriptToolRendererSelection }
   | { kind: "custom-message"; renderer: MessageRenderer; entry: TranscriptMessageEntry };
 
 /** Plugin presentation is replaceable; the slotted default remains host-owned. */
@@ -48,7 +48,8 @@ export class TranscriptRendererHost extends LitElement {
     const previous = changes.get("request");
     const selectionChanged = rendererSelection(previous) !== rendererSelection(this.request);
     const requestChanged = changes.has("request") && (selectionChanged
-      || previous?.entry !== this.request?.entry || previous?.kind !== this.request?.kind);
+      || previous?.entry !== this.request?.entry || previous?.kind !== this.request?.kind
+      || (previous?.kind === "tool" && this.request?.kind === "tool" && previous.selection !== this.request.selection));
     if (requestChanged || changes.has("scope") || changes.has("itemKey") || changes.has("entryId")) {
       this.cancel();
       if (selectionChanged || changes.has("itemKey")) this.defaultView = false;
@@ -82,10 +83,11 @@ export class TranscriptRendererHost extends LitElement {
       let preview: unknown;
       if (request.kind === "tool") {
         const { toolCallId, toolName, args, status, content, details, resultText } = request.entry;
-        const coreDefault: TranscriptToolRenderer = Object.freeze({ render: () => html`<slot></slot>` });
-        const renderer = resolveTranscriptToolRenderer(toolName, request.renderers, () => coreDefault);
+        const selection = request.selection ?? selectTranscriptToolRenderer(toolName, request.renderers);
+        if ("error" in selection) throw selection.error;
+        const { renderer } = selection;
         // Unchanged delegation is still the ordinary view, not a custom presentation.
-        preview = renderer === coreDefault ? undefined : renderer?.render({ ...input, entry: Object.freeze({ toolName, args, status, content, details,
+        preview = renderer === defaultTranscriptToolRenderer ? undefined : renderer?.render({ ...input, entry: Object.freeze({ toolName, args, status, content, details,
           ...(toolCallId === undefined ? {} : { toolCallId }), ...(resultText === undefined ? {} : { resultText }) }) });
       } else {
         const { customType, content, details } = request.entry;

@@ -81,6 +81,12 @@ Application-panel command helpers keep their execution scope explicit. `context.
 
 Older hosts may omit application tabs or maintenance commands; update PI WEB to use them.
 
+### Restart services on a machine
+
+Browser v5 action and application-panel contexts optionally expose `context.lifecycle`. Its `requestRestart()` opens the host's restart dialog on the context's captured machine. Pass `{ services: "web" | "sessiond" | "both" }` to preselect services. For a direct user-facing button, pass an explicit service choice and `confirm: false`; identify the machine and services and show the interruption warning beside that control.
+
+The host resolves commands from that machine's status API and launches its maintenance terminal. Missing targeted commands never fall back to restarting both services or to another machine. Retained contexts reject requests after machine selection changes. The promise returns `"cancelled"` when confirmation is dismissed or `"launched"` when the terminal accepts the command. Neither reports restart completion or service health. Direct-launch failures are displayed by the host and reject; confirmation errors remain in the dialog for retry or cancellation. Removing a dialog during launch does not cancel that launch: its promise still reports acceptance or rejects. Feature-detect the capability on older hosts rather than bypassing it with a raw restart command. Update installation planning and confirmation remain with the update CLI.
+
 ### Follow selection while a tab is closed
 
 Plugins can follow the selected machine, project, workspace, and session even while their tab is closed. This provides basic selection information, not the transcript or private session-file path. Older hosts may lack selection observation; update PI WEB when a plugin needs it.
@@ -90,6 +96,14 @@ Plugins can follow the selected machine, project, workspace, and session even wh
 Plugins can publish namespaced session metadata to identify workflows and link to saved context. It is browser-public data saved with the conversation, available after reopening without a live Pi connection. Missing metadata is not inferred from titles or conversation text.
 
 Only deliberately published session metadata is exposed, not arbitrary Pi custom entries. Keep secrets and private extension state out of it. Namespaces organize data rather than enforce ownership or authorization, and plugins must validate their own schema and render values as untrusted input. Browser API v4 remains unchanged; older hosts omit the field.
+
+### MCP manager
+
+The bundled `@jmfederico/pi-mcp-manager` package (`pi-packages/mcp-manager`) provides the **MCP** tab through plugin ID `mcp-manager`. It is enabled by default and follows the selected machine. Its thin Pi extension loads configured servers in standalone Pi TUI sessions and PI WEB without a web runtime dependency. Management controls exist only in the web plugin; the package adds no TUI management commands.
+
+The package follows [one-time provisioning](#one-time-package-provisioning). Remove it through **Settings → Pi packages** and reload idle sessions to stop loading its servers; reinstall from **Available packages** to restore it. Disabling only the PI WEB plugin hides management while the installed extension continues loading servers. Native Pi MCP configuration and authentication remain Pi-owned.
+
+See [managed MCP configuration](config.md#managed-mcp) for package-owned global/project files, environment enforcement, trust, and manual migration.
 
 ### Automatic session naming
 
@@ -159,6 +173,10 @@ Each contribution has a unique local `id`. Declare the host capability `pi-web/t
 
 `next()` returns renderer callbacks, not HTML. Treat the returned renderer as read-only; return a new renderer object to replace or wrap it. The web transcript supplies its core default renderer at the end of the chain, so wrappers can decorate the normal tool card as well as another plugin's renderer. Delegating unchanged all the way to that default keeps the normal view without a custom-view toggle. The resolver type still permits `undefined` for contexts without a supplied default. Returning `undefined` from a resolver ends selection; the host does not automatically try later resolvers and instead shows the core fallback. Returning `undefined` from a selected renderer's `render` also shows that fallback without restarting selection.
 
+A resolved tool renderer may set `placement: "activity" | "standalone"`. Omission means `"activity"`, retaining normal grouping. `"standalone"` keeps the tool entry outside collapsed activity, including quiet mode, its default view, and fallback after a declined or failed render. Placement belongs to the returned renderer, not the contribution: unchanged delegation preserves downstream placement; a wrapper chooses its own placement or copies the downstream renderer's property. Older hosts ignore placement, so update PI WEB before relying on standalone visibility; `transcript-rendering@1` alone does not detect this addition.
+
+The host resolves tools before grouping, including entries in collapsed activity, and reuses that selection when rendering the same entry snapshot. Keep resolvers side-effect-free and repeatable; do not rely on a resolver running on every render or view toggle. Selection can repeat when entry snapshots, eligible contributions, or transcript scope change. A resolver failure uses normal grouping and the core fallback; a render failure retains the selected placement.
+
 **Custom messages** contribute `{ id, target: "custom-message", customType, render }`. The first eligible contribution in discovery order with an exact, case-sensitive `customType` wins, like TUI custom-message rendering. Messages have no `next` callback. Declining or failing does not try a later matching message renderer.
 
 The [standalone example](https://github.com/jmfederico/pi-web/tree/main/examples/transcript-renderer-plugin) demonstrates actual tool chaining: a wrapper resolver precedes the checks renderer in the same contribution array. Its core pattern is:
@@ -172,6 +190,7 @@ The [standalone example](https://github.com/jmfederico/pi-web/tree/main/examples
     const downstream = next();
     if (!downstream) return undefined;
     return {
+      ...downstream, // Preserve placement when wrapping.
       render(input) {
         const body = downstream.render(input);
         return body === undefined ? undefined : html`
@@ -185,7 +204,9 @@ The [standalone example](https://github.com/jmfederico/pi-web/tree/main/examples
 
 `scope` contains `machineId` and `sessionId`, with optional `projectId` and `workspaceId`. A tool `entry` contains `toolName`, `status` (`pending`, `running`, `success`, or `error`), and optional `toolCallId`, `args`, `content`, `details`, and `resultText`. A custom-message `entry` contains `customType`, `content`, and optional `entryId` and `details`. Treat opaque `args`, `content`, and `details` as untrusted data: validate your own schema before using them.
 
-Both tool and message `render` callbacks receive `{ scope, entry, signal, fail }`. Rendering is synchronous and returns a Lit `TemplateResult` or `undefined`; returning a Promise is unsupported. Unlike resolver delegation through `next()`, returning `undefined` from `render` declines the current body and retains the existing view without restarting selection. An empty template deliberately renders an empty body. A thrown error or `fail(error)` restores the existing view. The host's default-view control also lets the user bypass the custom body.
+Both tool and message `render` callbacks receive `{ scope, entry, signal, fail }` and, when available, their own paired `backend`. The backend uses the [scoped backend interface](#read-only-catalogs-and-scoped-backends-v5) on `scope.machineId`, not the currently selected machine. Each renderer in a tool wrapper chain receives its own package's backend, even when a wrapper forwards its input downstream. Browser-only plugins have no backend; older hosts may also omit it, so check availability before offering backend-dependent actions. Requests and channels are cancelled with the render's `signal`, and retained backend handles cannot start new work after cancellation.
+
+Rendering is synchronous and returns a Lit `TemplateResult` or `undefined`; returning a Promise is unsupported. Unlike resolver delegation through `next()`, returning `undefined` from `render` declines the current body and retains the existing view without restarting selection. An empty template deliberately renders an empty body. A thrown error or `fail(error)` restores the existing view. The host's default-view control also lets the user bypass the custom body.
 
 Rendering may repeat as inputs change. Keep it repeatable and do not execute tools or session operations as a side effect of rendering. Honor `signal` for asynchronous work and release resources: it aborts when inputs change, the entry unmounts, the plugin is disabled, or the user selects the default view. Report asynchronous failures through `fail`; obsolete calls are ignored.
 
@@ -415,6 +436,23 @@ The host PI sessions capability's `run()` accepts optional `model` (an exact `pr
 
 A messaging connection targets a session already hosted on that machine; it does not open saved sessions automatically. Sending a message is not proof that a companion is installed or that its work succeeded. Integrations must report their own progress and results. Connections have no startup-message replay, and closing a connection does not stop agent work.
 
+### Private session state
+
+Server plugins can keep namespaced JSON state with a conversation through `PI_WEB_HOST_SESSION_STATE_CAPABILITY` (`pi-web.host/session-state`, version 1), exported by `@jmfederico/pi-web/server-plugin-api`. Declare it in `requires` and resolve it in `start({ capabilities })`. Normal capability authority checks and revocation apply; namespaces organize data, not permissions. These private custom entries are separate from browser-public session metadata.
+
+- `read({ projectId, workspaceId, sessionId }, namespace, { signal? })` returns `{ value?: JsonValue, revision: string }`. An absent namespace has no value and revision `""`. Reading hosts a saved session on the owning daemon, making `events.connect` available afterward.
+- `write(selection, namespace, { value, inherit, revision }, { signal? })` returns the new snapshot. Pass the revision from `read`; stale writes fail with code `SESSION_STATE_CONFLICT`. Archived sessions reject writes. State is bounded to **64 KiB UTF-8** and **64 levels** of JSON nesting.
+
+Set `inherit: true` to copy the latest state into forks and agent-spawned sessions before their first prompt. `inherit: false` excludes active state from that copy; it does **not** erase history or make inherited transcript content secret. Physical transcript history follows Pi's native fork semantics. Extensions reading entries directly should use the exported `readSessionState(entries, namespace)` helper with entries in native append order; it honors the fork reset marker rather than reviving historical state.
+
+Saved-session writes are durable through Pi's persistence APIs. A blank, unprompted session follows Pi's native persistence lifecycle; a successful state write does not independently guarantee a session file exists. Do not handcraft session JSONL to bypass that lifecycle.
+
+### Explicit project trust
+
+`PI_WEB_HOST_PROJECT_TRUST_CAPABILITY` (`pi-web.host/project-trust`, version 1), from the same server API export, provides `get({ projectId, workspaceId }): Promise<boolean>`. It reports explicit saved/default Pi trust, not the automatic trust Pi grants an empty workspace. Use it when loading plugin-owned project resources that Pi does not recognize itself. Declare and resolve it like other capabilities; normal authority checks and revocation apply.
+
+Both capabilities are generic, not MCP-specific. Older hosts may lack them. Reload the target session daemon to activate newly installed capability code; restarting interrupts active sessions and terminals.
+
 ### Companion tools calling a v5 backend
 
 Companion Pi extensions can call the same v5 `peer` handlers as a plugin's browser entry. Import `createCompanionBackend` from `@jmfederico/pi-web/server-plugin-api`; no additional server handler, HTTP listener, or browser panel is needed.
@@ -449,7 +487,7 @@ Outside a supporting PI WEB host, discovery throws rather than falling back to H
 
 ### Storage and background work
 
-Server plugins receive a persistent `dataDirectory`, separate from installed package code. The directory is shared across that plugin's projects on the machine. Plugins own their data format, migrations, and cleanup; there is no host storage API to learn.
+Server plugins receive a persistent `dataDirectory`, separate from installed package code. The directory is shared across that plugin's projects on the machine. Plugins own that directory's data format, migrations, and cleanup. Use [private session state](#private-session-state) instead for values that should follow a conversation.
 
 Requests and channels are bounded and can fail, time out, or disconnect. A successful send does not guarantee delivery, and the host does not automatically retry uncertain work. Long-running jobs should maintain their own state and let the UI reconnect without accidentally starting the job twice.
 
@@ -475,7 +513,21 @@ pi-web workspaces notify --project ID --plugin git
 
 Use **Settings → Pi packages** to install, update, or remove a package. Enter its npm, git/URL, or local package source. Use **Settings → PI WEB plugins** to enable or disable its web integration and see whether it is active or needs a restart.
 
-Relays, Workflows, and Session naming ship and update with PI WEB. At session-daemon startup, PI WEB updates their configured sources in the active agent profile to the running installation while preserving resource filters. Remove them through **Settings → Pi packages** for persistent removal. A package removed only with `pi remove` may be installed again at daemon startup.
+Relays, Workflows, Session naming, and MCP manager ship with PI WEB and are automatically provisioned once per agent profile. At session-daemon startup, configured copies follow the running PI WEB installation while preserving resource filters. Once provisioning is recorded, removing a package through **Settings → Pi packages**, `pi remove`, or manual removal from Pi's package settings keeps it absent across daemon restarts. Reinstall explicitly from **Available packages** if you change your mind; reinstalling does not reset the provisioning record.
+
+### One-time package provisioning
+
+PI WEB keeps a persistent ledger at `$PI_WEB_DATA_DIR/pi-package-provisioning.json`, with `profileDir`, `packageId`, and `provisionedAt` for each record. The timestamp means automatic provisioning was considered complete, not necessarily that the package was installed on that date. At session-daemon startup, for each automatically provisioned package without a record:
+
+- An existing dismissal is migrated, using its original `dismissedAt` timestamp as `provisionedAt`.
+- Otherwise, an already configured package is recorded with the current timestamp.
+- Otherwise, PI WEB installs the package and records successful provisioning. Failed installs remain unrecorded and retry on a later startup.
+
+After a record exists, PI WEB never automatically recreates an absent package for that profile. Configured copies still receive the source updates described above. The existing `$PI_WEB_DATA_DIR/pi-package-dismissals.json` file remains honored.
+
+**Upgrade caveat:** a package removed only with `pi remove` or manual settings edits before provisioning was recorded can be installed one last time during rollout. Remove it again after that successful install; the new record then prevents future automatic reinstalls. Existing Settings dismissals migrate without reinstalling.
+
+### Activate package changes
 
 | Change | What to do next |
 | --- | --- |
@@ -540,9 +592,10 @@ Keep gateways and targets compatible. During this plugin API transition, upgrade
 - **Mermaid** uses the default manual mode: choose **Render** to preview `mermaid` fences and `.mmd`/`.mermaid` text files. Its bundled engine runs locally in an opaque-origin sandbox with network access blocked; no diagram service receives your source. Interactive links and external resources are intentionally unavailable. Disable Mermaid in plugin Settings to keep plain code rendering. Only a browser reload is needed after changing this browser-only plugin.
 - **Code highlighting** colours completed chat code fences in common languages automatically, including JavaScript/TypeScript, Python, shell, HTML/CSS, JSON, Go, Rust, SQL, and diff. Choose **Raw** to view plain source or **Preview** to restore colours; Copy always copies the source. Unsupported, unlabelled, incomplete, and oversized blocks stay plain. Highlighting runs locally without executing code. Disable Code highlighting in plugin Settings to keep plain code rendering; reload the browser after changing this browser-only plugin.
 - **Info** displays machine and PI WEB status without requiring a workspace, adds workspace details when selected, and provides copyable diagnostics.
-- **Updates** shows update/restart guidance when relevant and offers a manual update check. Run uses the selected machine's maintenance terminal in `$PI_WEB_DATA_DIR/maintenance` (default `~/.pi-web/maintenance`), whether or not a workspace is selected. It requires an available Terminal provider on that machine; guidance and Copy remain available without one.
+- **Updates** shows update/restart guidance when relevant and offers a manual update check. Run uses the selected machine's maintenance terminal in `$PI_WEB_DATA_DIR/maintenance` (default `~/.pi-web/maintenance`), whether or not a workspace is selected. Restart buttons use the core machine-lifecycle capability and launch directly, without another dialog; the panel shows their machine, services, and interruption warnings. While preparing the command and opening its terminal, restart buttons on that machine are disabled. Pending feedback ends at terminal acceptance, without tracking the restart itself. Update commands retain the update CLI's confirmation. Execution requires an available Terminal provider on that machine; guidance and Copy remain available without one. See [restarting from PI WEB](config.md#restarting-from-pi-web).
 - **Workspace Tasks** turns project commands into runnable buttons.
 - **Scheduled agent tasks (beta)** is an optional, disabled-by-default package for agent-managed schedules and a read-only **Scheduled tasks** dashboard. See [installation, timezone settings, and execution behavior](scheduled-tasks.md).
+- **Private input** is an optional, disabled-by-default package that lets an agent request a secret through an inline form and save it to a new file without including its value in the conversation. See [installation, use, recovery, and privacy boundaries](private-input.md).
 - **Spanish / Español** and **Swedish / Svenska** are optional interface language packs, included but disabled by default. See [Language packs](#language-packs) to enable them.
 
 ### Language packs
@@ -594,7 +647,7 @@ You can also use `/worktree` directly in a conversation with the free-form hint 
 
 The prompt asks the agent to create a worktree named for your purpose, using the requested base or the current worktree's HEAD. If you give no purpose or description, the agent asks for one.
 
-PI WEB installs Workflows automatically for the active agent profile at session-daemon startup. Its web plugin is enabled by default. After installing or updating its server-backed web plugin, restart the target session daemon when safe and reload the browser. Disable **Workflows** in **Settings → PI WEB plugins** and restart the target daemon when safe to hide the shortcut while keeping `/worktree`. To remove its prompts as well, remove the package in **Settings → Pi packages** and run `/reload` in each idle conversation. Removal is remembered across daemon restarts; reinstall from **Available packages** if you change your mind, then reload idle conversations and the browser.
+Workflows follows the [one-time package provisioning](#one-time-package-provisioning) rules for the active agent profile. Its web plugin is enabled by default. After installing or updating its server-backed web plugin, restart the target session daemon when safe and reload the browser. Disable **Workflows** in **Settings → PI WEB plugins** and restart the target daemon when safe to hide the shortcut while keeping `/worktree`. To remove its prompts as well, remove the package in **Settings → Pi packages** and run `/reload` in each idle conversation. Removal is remembered across daemon restarts; reinstall from **Available packages** if you change your mind, then reload idle conversations and the browser.
 
 ### Relays
 
@@ -602,7 +655,7 @@ The shipped Relay package adds `/relay` for the current checkout and `/relay-wor
 
 The read-only **Relays** tab lists saved packets under `.pi-web/relays/` and shows their goal, current baton, history, and any recorded decisions. It does not start or edit a relay. A session-list indicator opens the associated packet on that conversation's machine and workspace, including custom packet locations inside the workspace. Older sessions without public Relay metadata have no indicator.
 
-PI WEB installs Relay automatically for the active agent profile if it is not configured. Removing it through **Settings → Pi packages** is remembered; it will not be silently reinstalled. Reinstall from **Available packages** if you change your mind. Disabling just the Relays plugin hides its tab and row indicators but leaves its agent resources available.
+Relay follows the [one-time package provisioning](#one-time-package-provisioning) rules for the active agent profile. Once recorded, removal through **Settings → Pi packages**, `pi remove`, or manual package-settings edits persists across daemon restarts. Reinstall from **Available packages** if you change your mind. Disabling just the Relays plugin hides its tab and row indicators but leaves its agent resources available.
 
 ## Pi extension dialogs
 
@@ -1041,7 +1094,7 @@ A few design boundaries matter before implementation:
 
 Plugins can manage a saved session by its full `{ projectId, workspaceId, sessionId }` identity, without selecting it in the browser or opening its runtime. The host resolves the workspace; plugins do not supply session file paths.
 
-Browser v5 invocation contexts expose optional `context.sessions`, bound to that context's machine. Check for its presence on older hosts. Server plugins declare `PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY` from `@jmfederico/pi-web/server-plugin-api` in `requires`, then resolve it in `start({ capabilities })`. The capability is local to that daemon and becomes available after workspace providers have settled; workspace providers must not depend on it.
+Browser v5 invocation contexts expose optional `context.sessions`, bound to that context's machine. Check for its presence on older hosts. Server plugins declare `PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY` from `@jmfederico/pi-web/server-plugin-api` in `requires`, then resolve it in `start({ capabilities })`. Plugins that need runtime control instead declare and resolve `PI_WEB_HOST_SESSION_LIFECYCLE_V2_CAPABILITY`: v2 includes all v1 methods plus `abort` and `close`. Both exact versions remain available. The capability is local to that daemon and becomes available after workspace providers have settled; workspace providers must not depend on it.
 
 | Method | Effect |
 | --- | --- |
@@ -1051,6 +1104,8 @@ Browser v5 invocation contexts expose optional `context.sessions`, bound to that
 | `archive(target)` | Archive that session, without implicitly archiving descendants. |
 | `restore(target)` | Restore an archived session without starting its runtime. |
 | `delete(target)` | Permanently delete an already-archived session. |
+| `abort(target)` | Interrupt current work and clear queued prompts, leaving the runtime open. Server capability v2; optional on the browser helper. |
+| `close(target)` | Stop work and unload the runtime, preserving any saved conversation. Server capability v2; optional on the browser helper. |
 
 ```ts
 // In a browser plugin's event handler, using IDs returned by context.catalog:
@@ -1064,6 +1119,34 @@ const state = await sessions.get(target);
 **Pins protect cleanup, not explicit plugin commands.** A plugin can explicitly archive a pinned session or delete it once archived; it does not need to unpin first. Native busy-session and archived-only deletion safeguards still apply. Plugins are trusted code and must decide when to request confirmation for destructive actions. Cleanup previews remain estimates: cleanup rechecks eligibility and pins when it runs, rather than freezing a session list.
 
 Calls accept an optional `{ signal }`. Cancellation or plugin disposal prevents new work; it does not undo a mutation already admitted by the host. Call mutations from event handlers or background work, not render or availability callbacks. Errors are reported to the caller; do not automatically retry a destructive operation after an ambiguous transport failure without checking the current state.
+
+### Interrupting current work
+
+Use the existing `catalog.sessions.list({ projectId, workspaceId })` to discover sessions and their `runtime` status (`not-hosted`, `idle`, or `busy`). Pass a selected session's full identity to `abort`; no separate listing or browser selection is needed.
+
+```ts
+// In a browser plugin's event handler:
+const sessions = context.sessions;
+if (sessions?.abort === undefined) throw new Error("This host does not support session interruption");
+await sessions.abort({ projectId, workspaceId, sessionId });
+```
+
+The browser helper keeps its v1 shape and exposes `abort` and `close` as optional methods for compatibility. Check each method before use. Method presence detects browser support, not the target daemon's version: an older remote daemon can reject the request. Report that error rather than falling back to another lifecycle operation.
+
+Aborting preserves the conversation and uses the same interruption behavior as the native Stop action. It targets current work only: it does not open a saved session, cancel pending startup, stop descendants, or persistently pause the session. Valid sessions without a hosted runtime are a no-op; missing or mismatched identities reject. Later messages and child lifecycle notices can start another run, including reopening a parent. A loop over sessions is therefore not a guaranteed bulk pause. Interrupted tools may have partial effects; abort does not roll those effects back.
+
+### Closing a runtime
+
+Use `close(target)` to discard a newly created, unused session that exists only in memory. It stops current work, clears queued prompts, and disposes the runtime; a hosted-only session then disappears from the catalog. If a transcript was already persisted, the saved conversation remains discoverable and can be reopened. Closing is therefore not a substitute for archiving or permanently deleting saved sessions.
+
+```ts
+// Discard a session created for a workflow that was cancelled before use:
+const sessions = context.sessions;
+if (sessions?.close === undefined) throw new Error("This host does not support closing session runtimes");
+await sessions.close({ projectId, workspaceId, sessionId });
+```
+
+Closing one session does not close its descendants or prevent later reopening. A child runtime's teardown suppresses its own new completion notice, but already-pending notices and other messages can still reopen a parent. Calls validate current catalog membership: after discarding a hosted-only session, another call with its now-missing identity rejects. Closing a saved session without a runtime does not open it.
 
 ### Pin-storage upgrade
 

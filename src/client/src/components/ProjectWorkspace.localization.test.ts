@@ -5,7 +5,7 @@ import { installPopoverFake } from "./anchoredPopup.testSupport";
 installPopoverFake();
 
 import { afterEach, expect, it, vi } from "vitest";
-import { api, trustApi, type Project, type Workspace } from "../api";
+import { api, trustApi, workspacesApi, type Project, type Workspace } from "../api";
 import { localization } from "../localization/browser";
 import { projectWorkspaceMessages as messages } from "../projectWorkspaceMessages";
 import { ProjectDialog } from "./ProjectDialog";
@@ -89,8 +89,9 @@ it("reformats existing lookup failures live, preserves backend diagnostics and r
 });
 
 it("updates project lists and confirmations while preserving row identity, focus and actions", async () => {
+  vi.spyOn(workspacesApi, "workspaces").mockResolvedValue([]);
   release = localization.registerCatalog({ id: "project-test", namespace: "core.projectWorkspace", locale: "de", load: () => Promise.resolve({
-    projects: "Projekte", actionsFor: "Aktionen für {name}", close: "Schließen", confirmClose: "{name} schließen? Der Ordner bleibt unverändert.",
+    projects: "Projekte", actionsFor: "Aktionen für {name}", closeProject: "Projekt schließen", confirmClose: "{name} schließen? Der Ordner bleibt unverändert.",
   }) });
   const list = new ProjectList();
   list.projects = [project];
@@ -116,7 +117,7 @@ it("updates project lists and confirmations while preserving row identity, focus
     expect(row.querySelector("b")).toBeNull();
     expect(row.querySelector("bdi[dir=ltr]")?.textContent).toBe(project.path);
     expect(row.querySelector(".action-menu-toggle")?.getAttribute("aria-label")).toBe(messages.t("actionsFor", { name: project.name }));
-    expect(close.textContent).toBe(messages.t("close"));
+    expect(close.textContent).toBe(messages.t("closeProject"));
     expect(deepActiveElement()).toBe(close);
     expect(list.onSelect).not.toHaveBeenCalled();
     expect(list.onClose).not.toHaveBeenCalled();

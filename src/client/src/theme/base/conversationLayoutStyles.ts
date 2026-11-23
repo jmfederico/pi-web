@@ -6,7 +6,11 @@ export const conversationLayoutStyles = css`
     :host([hidden]) { display: none; }
     .transcript { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; min-width: 0; isolation: isolate; }
     ::slotted(chat-view) { flex: 1 1 auto; min-height: 0; min-width: 0; }
-    .composer-boundary { position: relative; flex: 0 0 auto; min-width: 0; }
+    .composer-boundary { position: relative; flex: 0 0 auto; min-width: 0; container-type: inline-size; }
+    .chat-composer[hidden], .question-actions[hidden] { display: none; }
+    .question-mode { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; padding: 8px 12px; border-top: 1px solid var(--pi-border); background: var(--pi-surface); color: var(--pi-text); font: 13px var(--pi-font, system-ui, sans-serif); }
+    .question-mode span { min-width: 0; overflow-wrap: anywhere; }
+    .question-actions { color: var(--pi-text); font: 14px var(--pi-font, system-ui, sans-serif); }
     ::slotted([slot="composer"]) { isolation: isolate; }
     ::slotted([slot="status"]) { flex: 0 0 auto; }
     /* Only this decoration crosses the boundary, never the whole transcript. */

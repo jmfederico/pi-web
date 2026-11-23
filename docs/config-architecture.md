@@ -1,6 +1,6 @@
 # Configuration architecture
 
-Target architecture for implementation agents. This is an agreed design, not a statement that all current configuration paths implement it. See [config.md](config.md) for current supported behavior and [config-audit.md](config-audit.md) for the setting inventory and migration assessment.
+Target architecture for implementation agents. This is an agreed design, not a statement that all current configuration paths implement it. See [config.md](config.md) for current supported behavior.
 
 ## Sources and precedence
 
@@ -87,6 +87,8 @@ Server plugins use host-supplied `context.settings` and optional `context.resolv
 Keep feature-specific composition explicit. Do not introduce generic deep merging, reflection-driven forms, or a second plugin-owned config reader.
 
 ## Boundaries and migration
+
+Managed MCP belongs to `@jmfederico/pi-mcp-manager` under `pi-packages/mcp-manager`, not the core config schema or generic config API. Its thin Pi extension loads servers in standalone TUI and web sessions without depending on PI WEB at runtime; only the `mcp-manager` web plugin supplies management controls. Disabling the plugin does not disable the installed extension. The package reads `<Pi agent dir>/mcp-manager/config.json` and trusted `<workspace>/.pi/mcp-manager.json`, both with root `{servers, enabledServers}`. All project definitions and enablement require saved Pi trust approval or global `defaultProjectTrust: "always"`, plus current runtime trust. Read that policy from global Pi settings only; project settings, native resource presence, and empty-workspace auto-trust cannot supply approval. `PI_MCP_MANAGER` enforces only supplied atomic fields: `servers` excludes project additions, while `enabledServers` replaces the union of global/project/session grants without erasing saved choices. Duplicate names or normalized namespaces are errors. Native Pi MCP entries remain authoritative. Migration is manual; see [managed MCP configuration](config.md#managed-mcp).
 
 Application state (sessions and registries) is not configuration. Keep credentials protected and Pi-owned configuration under Pi's supported mechanisms. Config-file selection and process startup wiring require explicit bootstrap handling rather than circular resolution through the selected files. `serverPlugins.safeStart` remains separately loaded offline recovery state: it must work before plugin discovery and preserve fail-closed repair of malformed recovery values.
 
