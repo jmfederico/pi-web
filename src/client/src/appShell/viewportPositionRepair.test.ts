@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { VIEWPORT_POSITION_REPAIR_DELAY_MS, ViewportPositionRepairer, type ViewportPositionRepairScheduler } from "./viewportPositionRepair";
 
 class FakeViewportScheduler implements ViewportPositionRepairScheduler {
+  viewportScale = 1;
   documentElement = { scrollTop: 12 };
   body = { scrollTop: 34 };
   scrollCalls: [number, number][] = [];
@@ -101,6 +102,21 @@ describe("ViewportPositionRepairer", () => {
     expect(scheduler.scrollCalls).toEqual([[0, 0], [0, 0], [0, 0], [0, 0]]);
     expect(scheduler.documentElement.scrollTop).toBe(0);
     expect(scheduler.body.scrollTop).toBe(0);
+  });
+
+  it("does not fight pinch zoom even when resume retries are pending", () => {
+    const scheduler = new FakeViewportScheduler();
+    const repairer = new ViewportPositionRepairer(scheduler);
+    repairer.repair(true);
+    scheduler.viewportScale = 2;
+    scheduler.runAnimationFrame(firstMapKey(scheduler.animationFrames));
+    scheduler.runAnimationFrame(firstMapKey(scheduler.animationFrames));
+    scheduler.runTimer(firstMapKey(scheduler.timers));
+    repairer.repairNow();
+    expect(scheduler.scrollCalls).toEqual([[0, 0]]);
+    scheduler.viewportScale = 1;
+    repairer.repairNow();
+    expect(scheduler.scrollCalls).toEqual([[0, 0], [0, 0]]);
   });
 
   it("replaces pending scheduled repairs", () => {

@@ -76,4 +76,7 @@ export default {
   noWorkspaces: message("No workspaces found", "Workspace tools empty state heading"),
   noWorkspacesHint: message<{ project: string }>("{project} does not have any available workspaces. Try selecting the project again or re-adding it.", "Workspace tools empty state guidance"),
   chooseProjectWorkspace: message<{ project: string }>("Choose a workspace in {project} to use its tools.", "Workspace tools empty state guidance"),
+  shortcutsBarReserved: message("Space kept clear for the iPad Shortcuts bar", "Note in the empty strip reserved at the bottom of the app so the iPad hardware-keyboard Shortcuts bar does not cover controls"),
+  removeShortcutsBarReserve: message("Remove", "Button in the reserved iPad Shortcuts-bar strip; frees the space until the bar appears again"),
+  removeShortcutsBarReserveLabel: message("Remove the space kept for the Shortcuts bar", "Accessible name of the button that frees the reserved iPad Shortcuts-bar strip"),
 };

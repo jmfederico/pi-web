@@ -13,6 +13,7 @@ export default defineConfig({
     chunkSizeWarningLimit: Infinity,
     rollupOptions: {
       input: {
+        shellViewport: fileURLToPath(new URL("shell-viewport.html", import.meta.url)),
         overlays: fileURLToPath(new URL("overlays.html", import.meta.url)),
         imageGallery: fileURLToPath(new URL("image-gallery.html", import.meta.url)),
         modelPicker: fileURLToPath(new URL("model-picker.html", import.meta.url)),

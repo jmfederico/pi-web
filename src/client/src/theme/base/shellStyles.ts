@@ -12,7 +12,10 @@ export const scrollBoundaryShadow = css`0 8px 18px -8px var(--pi-shadow-soft)`;
 export const appStyles = css`
   @layer pi-web-base {
   /* Mobile browsers already subtract browser controls from 100dvh; reserve bottom safe area only in standalone PWA modes. */
-  :host { --pi-app-safe-area-bottom: 0px; position: fixed; top: 0; right: 0; left: 0; display: block; height: 100dvh; box-sizing: border-box; overflow: hidden; padding: env(safe-area-inset-top) env(safe-area-inset-right) var(--pi-app-safe-area-bottom) env(safe-area-inset-left); color: var(--pi-text); background: var(--pi-bg); font: 14px var(--pi-font, system-ui, sans-serif); }
+  :host { --pi-app-safe-area-bottom: 0px; position: fixed; top: 0; right: 0; left: 0; display: block; height: 100dvh; box-sizing: border-box; overflow: hidden; padding: env(safe-area-inset-top) env(safe-area-inset-right) var(--pi-app-bottom-inset) env(safe-area-inset-left); color: var(--pi-text); background: var(--pi-bg); font: 14px var(--pi-font, system-ui, sans-serif); }
+  /* A learned iPad Shortcuts-bar height stays reserved so the bar never covers or moves the shell. */
+  :host { --pi-app-bottom-inset: max(var(--pi-app-safe-area-bottom), var(--pi-app-shortcuts-bar-reserve, 0px)); }
+  .shortcuts-bar-reserve { position: absolute; right: 0; bottom: 0; left: 0; height: var(--pi-app-bottom-inset); }
   :host([pwa-display-mode]) { --pi-app-safe-area-bottom: env(safe-area-inset-bottom); }
   @media (display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui) {
     :host { --pi-app-safe-area-bottom: env(safe-area-inset-bottom); }
@@ -208,8 +211,9 @@ export const listStyles = css`
 export const statusBarStyles = css`
   @layer pi-web-base {
   /* Only this non-interactive footer consumes the shell's reserved bottom inset. */
-  :host { display: block; margin-block-end: calc(0px - var(--pi-app-safe-area-bottom, 0px)); color: var(--pi-muted); font: 12px var(--pi-font, system-ui, sans-serif); }
-  .bar { box-sizing: border-box; display: flex; justify-content: flex-end; gap: 12px; align-items: center; min-width: 0; min-height: max(32px, var(--pi-app-safe-area-bottom, 0px)); padding: 7px 12px; border-top: 1px solid var(--pi-border); background: var(--pi-bg); white-space: nowrap; overflow: hidden; }
+  /* Its text stays above a reserved Shortcuts-bar strip; only its background fills that strip. */
+  :host { display: block; margin-block-end: calc(0px - var(--pi-app-bottom-inset, var(--pi-app-safe-area-bottom, 0px))); color: var(--pi-muted); font: 12px var(--pi-font, system-ui, sans-serif); }
+  .bar { box-sizing: border-box; display: flex; justify-content: flex-end; gap: 12px; align-items: center; min-width: 0; min-height: max(32px, var(--pi-app-safe-area-bottom, 0px)); padding: 7px 12px calc(7px + var(--pi-app-shortcuts-bar-reserve, 0px)); border-top: 1px solid var(--pi-border); background: var(--pi-bg); white-space: nowrap; overflow: hidden; }
   span { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .activity { display: inline-flex; align-items: center; gap: 6px; color: var(--pi-muted); }
   .activity.active { color: var(--pi-success); }
