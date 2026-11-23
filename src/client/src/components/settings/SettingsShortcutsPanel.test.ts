@@ -38,8 +38,7 @@ describe("settings-shortcuts-panel layout", () => {
     expect(panel.renderRoot.querySelector(".config-path-card")?.textContent).toContain("/tmp/pi-web/config.json");
     expect([...panel.renderRoot.querySelectorAll("h3")].map((heading) => heading.textContent)).toContain("Chat composer");
     expect(row(panel, COMPOSER_SEND_DESKTOP).textContent).toContain("Send message — desktop");
-    expect(row(panel, COMPOSER_SEND_MOBILE).textContent).toContain("Send message — touch or narrow screen");
-    expect(panel.renderRoot.textContent).toContain("Touch or narrow screen applies when the primary pointer is coarse or the viewport is at most 760px wide. Desktop applies otherwise.");
+    expect(row(panel, COMPOSER_SEND_MOBILE).textContent).toContain("Send message — touch");
     expect(panel.renderRoot.querySelectorAll("article")).toHaveLength(2);
     expect(panel.renderRoot.querySelector('input[type="radio"]')).toBeNull();
     expect(panel.renderRoot.textContent).not.toContain("No actions registered.");

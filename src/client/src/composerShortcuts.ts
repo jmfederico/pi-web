@@ -15,7 +15,7 @@ export function composerShortcutActions(
 ): AppAction[] {
   return [false, true].map((mobile) => ({
     id: mobile ? COMPOSER_SEND_MOBILE : COMPOSER_SEND_DESKTOP,
-    title: `Send message — ${mobile ? "touch or narrow screen" : "desktop"}`,
+    title: `Send message — ${mobile ? "touch" : "desktop"}`,
     description: "One key combination, active only in the message editor. Overrides global shortcuts there.",
     ...present?.(mobile),
     group: "Chat composer",

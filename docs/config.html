@@ -314,14 +314,14 @@
 <th scope="row">Desktop send key<br><code>shortcuts.composer.send.desktop</code></th>
 <td>Gateway</td>
 <td><code>Enter</code></td>
-<td>One key combination for sending from the composer at viewport widths above 760px when the primary pointer is not coarse.</td>
+<td>One key combination for sending from the composer when the browser does not report a coarse primary pointer, regardless of window width.</td>
 <td>Settings save / config refresh</td>
 </tr>
 <tr>
-<th scope="row">Touch or narrow-screen send key<br><code>shortcuts.composer.send.mobile</code></th>
+<th scope="row">Touch send key<br><code>shortcuts.composer.send.mobile</code></th>
 <td>Gateway</td>
 <td><code>Shift+Enter</code></td>
-<td>Send key when the primary pointer is coarse or the viewport is ≤760px. Enter inserts a newline by default; Shift+Enter requires an explicit Shift keydown to avoid mistaking touch autocapitalization for Shift. This keyboard exception does not affect control sizing.</td>
+<td>Send key when the primary pointer is coarse (typically a touchscreen), regardless of window width. Enter inserts a newline by default; Shift+Enter requires an explicit Shift keydown to avoid mistaking touch autocapitalization for Shift.</td>
 <td>Settings save / config refresh</td>
 </tr>
 </tbody></table></div>

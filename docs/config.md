@@ -826,7 +826,7 @@ Prefer Settings → Keyboard for editing, recording, disabling, or resetting sho
 
 App shortcuts support single keys or sequences. Avoid conflicting bindings and browser-reserved combinations. Unmodified and Shift-only shortcuts do not start while editing text.
 
-Composer send bindings accept one key combination, not sequences. Desktop defaults to Enter; touch or narrow screens default to Shift+Enter. The touch or narrow-screen binding (`composer.send.mobile`) applies when the primary pointer is coarse or the viewport is at most 760px wide; desktop applies otherwise. This keyboard-specific exception does not affect control sizing. Touch keyboards can report autocapitalization as Shift, so this context requires an explicit Shift keydown for Shift+Enter; plain Enter inserts a newline by default. Unassigned Enter/Shift+Enter insert newlines; Enter accepts a selected completion first. `null` disables keyboard submission, not the send button.
+Composer send bindings accept one key combination, not sequences. When the browser reports a coarse primary pointer (typically a touchscreen), the composer uses `composer.send.mobile`, which defaults to Shift+Enter. Otherwise it uses `composer.send.desktop`, which defaults to Enter. Resizing the window does not switch bindings. Touch keyboards can report autocapitalization as Shift, so this context requires an explicit Shift keydown for Shift+Enter; plain Enter inserts a newline by default. Unassigned Enter/Shift+Enter insert newlines; Enter accepts a selected completion first. `null` disables keyboard submission, not the send button.
 
 Existing browser-local Enter preferences remain the fallback until a composer binding is configured. Reset restores that fallback. New bindings are saved in gateway config.
 

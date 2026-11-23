@@ -82,16 +82,25 @@ test("configured defaults follow live queue/steer changes without losing editor 
   await expect(page.locator("body")).toHaveAttribute("data-last-send", "followUp");
 });
 
-test("media changes refresh the configured default without an unrelated component update", async ({ page }) => {
-  const root = page.locator('prompt-editor [data-ui-context="composer"]');
-  await setState(page, { shortcuts: { "composer.send.desktop": null, "composer.send.mobile": "mod+enter" } });
+test("resizing to a narrow window keeps the same send shortcut", async ({ page }) => {
+  const editor = page.locator("prompt-editor");
+  const root = editor.locator('[data-ui-context="composer"]');
+  // Leave the desktop binding at its default and make the touch override distinct.
+  await setState(page, { shortcuts: { "composer.send.mobile": null } });
   await page.setViewportSize({ width: 1200, height: 800 });
   const coarse = await page.evaluate(() => matchMedia("(pointer: coarse)").matches);
-  await expect(root).toHaveAttribute("data-default-action", coarse ? "send" : "none");
+  const expectedAction = coarse ? "none" : "send";
+  await expect(root).toHaveAttribute("data-default-action", expectedAction);
   await page.setViewportSize({ width: 700, height: 800 });
-  await expect(root).toHaveAttribute("data-default-action", "send");
-  await page.setViewportSize({ width: 1200, height: 800 });
-  await expect(root).toHaveAttribute("data-default-action", coarse ? "send" : "none");
+  await expect(root).toHaveAttribute("data-default-action", expectedAction);
+  const input = editor.locator(".cm-content");
+  await input.press("Enter");
+  if (coarse) {
+    await expect(input.locator(".cm-line")).toHaveCount(2);
+    await expect(page.locator("body")).not.toHaveAttribute("data-last-send");
+  } else {
+    await expect(page.locator("body")).toHaveAttribute("data-last-send", "send");
+  }
 });
 
 test("Playground's default cue follows eligibility and can be removed without changing geometry", async ({ page }) => {
