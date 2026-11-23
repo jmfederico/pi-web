@@ -55,6 +55,8 @@
       }
       html, body { margin: 0; height: 100%; overflow: hidden; background: var(--pi-bg); color: var(--pi-text); }
       body { min-height: 100dvh; }
+      /* Set once an iPad Shortcuts-bar reserve exists: stop page bounce without scripted scroll repair. */
+      html[data-pi-web-shortcuts-reserved], html[data-pi-web-shortcuts-reserved] body { overscroll-behavior: none; }
       html[data-pi-web-loading] pi-web-app { visibility: hidden; }
       #pi-web-startup { --pi-startup-default-logo: #00f0d8; position: fixed; inset: 0; display: grid; place-content: center; justify-items: center; color-scheme: var(--pi-startup-scheme, light dark); background: var(--pi-startup-background, Canvas); color: var(--pi-startup-foreground, CanvasText); font: 16px system-ui, sans-serif; }
       /* Keep the mark steady; only the small activity line moves. */

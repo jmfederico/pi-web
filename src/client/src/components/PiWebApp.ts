@@ -103,6 +103,7 @@ import type { ChatView } from "./ChatView";
 import "./PromptEditor";
 import type { PromptEditor } from "./PromptEditor";
 import "./StatusBar";
+import "./appShell/ShortcutsBarReserve";
 import "./CommandPicker";
 import "./ModelPicker";
 import "./ActionPalette";
@@ -185,8 +186,10 @@ export class PiWebApp extends LitElement {
     super();
     new LocalizationController(this, localization, () => { this.invalidateWorkspaceSurface(); });
     stylesheetIntegrationCapability.createController(this);
-    new ShellViewportController(this);
+    this.shellViewport = new ShellViewportController(this);
   }
+
+  private readonly shellViewport: ShellViewportController;
 
   /** Page-scoped injection seam for independently composing chat behavior. */
   @property({ attribute: false }) chatBehaviors: ChatBehaviors = DEFAULT_CHAT_BEHAVIORS;
@@ -4621,6 +4624,10 @@ export class PiWebApp extends LitElement {
     return visibleBrowserErrors(state.browserErrors, browserErrorContextForRoute(state, readRoute()));
   }
 
+  private readonly removeShortcutsBarReserve = (): void => {
+    this.shellViewport.removeReserve();
+  };
+
   private dismissBrowserError(error: BrowserError): void {
     if (this.state.browserErrors[browserErrorScopeKey(error.scope)] !== error) return;
     const browserErrors = clearBrowserError(this.state.browserErrors, error.scope, error.message);
@@ -4695,6 +4702,7 @@ export class PiWebApp extends LitElement {
           this.closeSettings();
         }} .section=${this.settingsSection} .target=${this.settingsTarget} .mcpContext=${state.selectedSession !== undefined && state.selectedSession.archived !== true ? { session: { id: state.selectedSession.id, cwd: state.selectedSession.cwd }, machineId: selectedMachineId(state) } : undefined} .onMcpAuth=${(mode: "login" | "logout", serverName: string, context: { session: { id: string; cwd: string }; machineId: string }) => { this.closeSettings(); void this.auth.openMcpAuth(mode, serverName, context); }} .machine=${state.selectedMachine} .machineRuntime=${this.selectedMachineRuntime()} .machines=${state.machines} .machineStatuses=${state.machineStatuses} .machineRuntimes=${state.machineRuntimes} .actions=${this.getDefaultActions()} .themes=${this.plugins.getThemes()} .onThemeCatalogLoaded=${(catalog: BrowserThemeCatalog) => { this.registerThemeCatalog(catalog); }} .fileIconThemes=${this.plugins.getFileIconThemes()} .fileIconPreference=${this.fileIconPreference} .onSelectFileIconTheme=${(id: string) => { this.selectFileIconTheme(id); }} .onResetFileIconTheme=${() => { this.selectFileIconTheme(undefined); }} .themePreference=${this.themePreference} .activeThemeId=${this.activeThemeId} .hasLocalThemeOverride=${this.localThemePreference !== undefined} .onUseLocalTheme=${(preference: ThemePreference) => { this.pickTheme(preference); }} .onUseDefaultTheme=${() => { this.useDefaultTheme(); }} .onNavigate=${(section: SettingsSection) => { this.navigateSettings(section); }} .onClose=${() => { this.closeSettings(); }} .onMachineConfigSaved=${(machineId: string) => { void this.machines.refreshMachineIdentity(machineId); }} .onGatewayConfigLoaded=${(response: PiWebConfigResponse) => { this.acceptSettingsGatewayConfig(response); }} .onGatewayConfigInvalidated=${() => { this.refreshGatewayConfig(); }} .onConfigSaved=${(config: PiWebConfigValues) => { this.applyClientConfig(config); }} .onRefreshMachineRuntime=${async (machineId: string) => { await this.machines.refreshMachineRuntime(machineId); }}></settings-dialog>` : null}
       </div>
+      ${this.shellViewport.reserve === undefined ? null : html`<shortcuts-bar-reserve class="shortcuts-bar-reserve" .onRemove=${this.removeShortcutsBarReserve}></shortcuts-bar-reserve>`}
     `;
   }
 
