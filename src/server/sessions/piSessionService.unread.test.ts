@@ -806,7 +806,7 @@ describe("PiSessionService daemon-owned unread state", () => {
       createAgentRuntime: runtimeCreator(fake.runtime),
       sessionManager: {
         create: () => fakeSessionManager(),
-        list: () => Promise.resolve([root, directChild, archivedChild, grandchild]),
+        list: () => Promise.resolve([root, directChild, grandchild]),
         listAll: () => Promise.resolve([]),
         invalidateSessionFile: () => undefined,
         resolveSessionFile: resolveSessionFileFromList(() => Promise.resolve([root, directChild, archivedChild, grandchild])),

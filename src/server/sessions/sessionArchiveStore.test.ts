@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, appendFile, chmod, mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -260,6 +260,107 @@ describe("SessionArchiveStore", () => {
     expect(await exists(input.path)).toBe(false);
     await expect(readFile(join(root, "archive", "a.jsonl"), "utf8")).resolves.toBe(content);
     await expect(store.list()).resolves.toEqual([record]);
+  });
+
+  it.each([
+    { name: "includes a message appended", change: "append", archived: transcript("a", "original", "appended") },
+    { name: "leaves unarchived an original rewritten", change: "rewrite", archived: undefined },
+  ] as const)("$name after the copy but before the index commit", async ({ change, archived }) => {
+    const root = await mkdtemp(join(tmpdir(), "pi-web-archive-source-change-"));
+    tempRoots.push(root);
+    const store = new SessionArchiveStore(join(root, "index.json"), join(root, "archive"));
+    const input = archiveInput("a", join(root, "a.jsonl"));
+    const archivePath = join(root, "archive", "a.jsonl");
+    await writeFile(input.path, transcript("a", "original"));
+    const rewritten = transcript("a", "rewritten");
+    // Change the original between the archive copy and the index commit.
+    const writeIndex: unknown = Reflect.get(store, "write");
+    if (typeof writeIndex !== "function") throw new Error("Expected the archive index writer");
+    Reflect.set(store, "write", async (data: unknown) => {
+      await expect(readFile(archivePath, "utf8")).resolves.toBe(transcript("a", "original"));
+      if (change === "append") await appendFile(input.path, `${JSON.stringify({ type: "message", message: { role: "user", content: "appended" } })}\n`);
+      else await writeFile(input.path, rewritten);
+      const written: unknown = Reflect.apply(writeIndex, store, [data]);
+      await written;
+    });
+
+    const attempt = store.archive(input);
+    if (archived !== undefined) {
+      await attempt;
+      expect(await exists(input.path)).toBe(false);
+      await expect(readFile(archivePath, "utf8")).resolves.toBe(archived);
+    } else {
+      await expect(attempt).rejects.toThrow(/changed during archival.*left unarchived/);
+      await expect(readFile(input.path, "utf8")).resolves.toBe(rewritten);
+      await expect(store.list()).resolves.toEqual([]);
+      expect(await exists(archivePath)).toBe(false);
+    }
+    expect((await readdir(root)).filter((name) => name.endsWith(".archiving"))).toEqual([]);
+  });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("leaves a session unarchived when its original cannot be moved", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-web-archive-cleanup-"));
+    tempRoots.push(root);
+    const activeDir = join(root, "active");
+    await mkdir(activeDir);
+    const store = new SessionArchiveStore(join(root, "index.json"), join(root, "archive"));
+    const input = archiveInput("a", join(activeDir, "a.jsonl"));
+    const original = transcript("a", "original");
+    await writeFile(input.path, original);
+    await chmod(activeDir, 0o555);
+    try {
+      await expect(store.archive(input)).rejects.toThrow(/original could not be moved.*left unarchived/);
+    } finally {
+      await chmod(activeDir, 0o755);
+    }
+    await expect(store.list()).resolves.toEqual([]);
+    await expect(readFile(input.path, "utf8")).resolves.toBe(original);
+    expect(await exists(join(root, "archive", "a.jsonl"))).toBe(false);
+
+    await store.archive(input);
+    expect(await exists(input.path)).toBe(false);
+  });
+
+  it("keeps newer work in the remaining original of an indexed archive and restores it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-web-archive-remaining-"));
+    tempRoots.push(root);
+    const store = new SessionArchiveStore(join(root, "index.json"), join(root, "archive"));
+    const input = archiveInput("a", join(root, "a.jsonl"));
+    await writeFile(input.path, transcript("a", "original"));
+    const [record] = await store.archiveMany([input]);
+    // Model an index committed before cleanup, followed by more work.
+    const continued = transcript("a", "original", "continued");
+    await writeFile(input.path, continued);
+
+    await expect(store.archive(input)).rejects.toThrow(/conflicts/);
+    await expect(readFile(input.path, "utf8")).resolves.toBe(continued);
+    await expect(store.list()).resolves.toEqual([record]);
+
+    // Restore never replaces either transcript when they have diverged.
+    await writeFile(input.path, transcript("a", "different"));
+    await expect(store.restore("a")).rejects.toThrow(/already exists/);
+    await expect(store.list()).resolves.toEqual([record]);
+
+    await writeFile(input.path, continued);
+    await store.restore("a");
+    await expect(store.list()).resolves.toEqual([]);
+    await expect(readFile(input.path, "utf8")).resolves.toBe(continued);
+    expect(await exists(join(root, "archive", "a.jsonl"))).toBe(false);
+  });
+
+  it("rejects archiving an indexed session from a different original path", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-web-archive-other-original-"));
+    tempRoots.push(root);
+    const store = new SessionArchiveStore(join(root, "index.json"), join(root, "archive"));
+    const first = archiveInput("a", join(root, "a.jsonl"));
+    await writeFile(first.path, transcript("a", "original"));
+    await store.archive(first);
+    const copy = archiveInput("a", join(root, "copy", "a.jsonl"));
+    await mkdir(join(root, "copy"));
+    await writeFile(copy.path, transcript("a", "original"));
+
+    await expect(store.archive(copy)).rejects.toThrow(/archived from/);
+    await expect(readFile(copy.path, "utf8")).resolves.toBe(transcript("a", "original"));
   });
 
   it("refreshes uncommitted copies on retry after a batch fails", async () => {

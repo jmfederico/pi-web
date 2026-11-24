@@ -374,6 +374,8 @@ interface WorkspaceArchiveCandidate extends SessionArchiveTreeCandidate {
   listEntry?: PiSessionListEntry;
   activeSession?: PiAgentSession;
   archivePath?: string;
+  /** Other transcripts listed with this session ID. */
+  conflictingPaths?: string[];
 }
 
 interface BulkSessionRefContext {
@@ -1272,6 +1274,7 @@ export class PiSessionService implements SessionRouteService {
   private readonly selfArchiveScheduled = new WeakSet<PiAgentSession>();
   private readonly archivingSessionIds = new Set<string>();
   private sessionLifecycleRevision = 0;
+  private parentDetachesInFlight = 0;
   private readonly selfArchiveOperations = new Set<Promise<void>>();
   private selfArchiveStopped = false;
   private readonly onSessionArchived: PiSessionServiceDependencies["onSessionArchived"];
@@ -3858,7 +3861,10 @@ export class PiSessionService implements SessionRouteService {
 
     for (const ref of uniqueRefs) {
       const archived = findArchivedRecordForBulkRef(archivedRecords, ref);
-      if (archived !== undefined) {
+      const listed = findListedSessionForBulkRef(sessionContext, ref);
+      // An indexed archive whose original remains listed has not finished
+      // cleanup; the store completes it or reports a conflict.
+      if (archived !== undefined && !archiveCleanupPending(archived, listed)) {
         this.publishNotificationMutations(this.notificationStore.clearSession(archived.sessionId, "archive"));
         alreadyArchivedSessionIds.push(archived.sessionId);
         unreadArchivedIdentities.push(archived);
@@ -3866,7 +3872,6 @@ export class PiSessionService implements SessionRouteService {
       }
 
       const active = this.activeForRef(bulkRefToSessionRef(ref));
-      const listed = findListedSessionForBulkRef(sessionContext, ref);
       const resolvedSessionId = active?.runtime.session.sessionId ?? listed?.id ?? ref.id;
       if (active !== undefined && this.hasActiveWork(active.runtime.session)) {
         failures.push({ sessionId: resolvedSessionId, error: "Stop current session activity before archiving" });
@@ -3875,6 +3880,7 @@ export class PiSessionService implements SessionRouteService {
 
       try {
         if (listed !== undefined) {
+          assertSingleListedTranscript(sessionContext.sessionsByCwd.get(ref.cwd) ?? [], listed, active?.runtime.session);
           planItems.push({ input: archiveInputFromListEntry(listed) });
         } else if (active !== undefined) {
           planItems.push({ input: archiveInputFromActiveSession(active.runtime.session) });
@@ -3919,8 +3925,12 @@ export class PiSessionService implements SessionRouteService {
     const catalog = await this.workspaceArchiveCandidates(session.sessionManager.getCwd());
     this.assertArchiveSelectionCurrent(revision);
     const root = findArchiveCandidateByExactId(catalog, session.sessionId) ?? archiveCandidateFromActiveSession(session, false);
-    if (scope === "all-descendants") return { targets: planSessionArchiveTree(root, catalog).targets, revision };
+    const targets = scope === "all-descendants" ? planSessionArchiveTree(root, catalog).targets : this.trackedArchiveTargets(root, catalog);
+    assertArchiveTargetsUnambiguous(targets);
+    return { targets, revision };
+  }
 
+  private trackedArchiveTargets(root: WorkspaceArchiveCandidate, catalog: readonly WorkspaceArchiveCandidate[]): WorkspaceArchiveCandidate[] {
     // Header ancestry also includes forks. Only exact, parent-authored spawn
     // links grant cascading self-archival, including through archived parents.
     const targets: WorkspaceArchiveCandidate[] = [];
@@ -3933,22 +3943,32 @@ export class PiSessionService implements SessionRouteService {
       // The SDK opens a new empty session when a file has disappeared. Missing
       // or replaced transcripts must not silently turn into empty subtrees.
       if (manager.getSessionId() !== parent.id) throw new Error(`Session changed while preparing archival: ${parent.id}. Retry the request.`);
+      const visitChild = (childId: string, childFile: string | undefined) => {
+        const child = findArchiveCandidateByExactId(catalog, childId);
+        if (child !== undefined && child.path === childFile && child.parentSessionPath === parent.path && child.cwd === root.cwd) visit(child);
+      };
       for (const entry of manager.getEntries?.() ?? manager.getBranch()) {
         const link = parsePersistedParentSubsessionLink(entry);
-        if (link?.spawnedBySessionId !== parent.id) continue;
-        const child = findArchiveCandidateByExactId(catalog, link.spawnedSessionId);
-        if (child !== undefined && child.path === link.spawnedSessionFile && child.parentSessionPath === parent.path && child.cwd === root.cwd) visit(child);
+        if (link?.spawnedBySessionId === parent.id) visitChild(link.spawnedSessionId, link.spawnedSessionFile);
+      }
+      // Persisting a spawn link can fail after the daemon starts tracking the
+      // child. That relationship still counts until the child is detached.
+      for (const childId of this.subsessionChildren.get(parent.id) ?? []) {
+        const link = this.subsessionLinks.get(childId);
+        if (link?.parentSessionId === parent.id && (link.parentSessionFile === undefined || sessionPathsEqual(link.parentSessionFile, parent.path))) {
+          visitChild(childId, link.childSessionFile);
+        }
       }
     };
     visit(root);
-    return { targets, revision };
+    return targets;
   }
 
   private assertArchiveSelectionCurrent(revision: number): void {
     // Discovery reads active and archived catalogs separately. Reject operations
     // already in flight as well as any that start or finish during discovery:
     // a moving session can temporarily be absent from both catalog snapshots.
-    if (this.treeExclusiveSessionOperationCounts.size > 0 || revision !== this.sessionLifecycleRevision) {
+    if (this.treeExclusiveSessionOperationCounts.size > 0 || this.parentDetachesInFlight > 0 || revision !== this.sessionLifecycleRevision) {
       throw new Error("Session lifecycle changed while preparing archival. Retry the request.");
     }
   }
@@ -4104,14 +4124,25 @@ export class PiSessionService implements SessionRouteService {
     const session = await this.getOrOpen(ref);
     const sessionFile = session.sessionFile;
     if (sessionFile === undefined || sessionFile === "") throw new Error("Session is not persisted");
-    await clearParentSession(sessionFile);
-    // The header rewrite keeps the inode, and whenever it leaves the file's
-    // size unchanged it is invisible to the gateway's summary memo, which
-    // cannot detect such rewrites from identity + size alone and would keep
-    // listing the old parent link until restart.
-    this.sessionManager.invalidateSessionFile(sessionFile);
-    clearParentSessionHeader(session.sessionManager);
-    this.unregisterSubsession(session.sessionId);
+    // Tree archival selects children by parent. Refuse while this session is
+    // being archived, and invalidate any selection that overlaps the detach.
+    this.assertSessionArchiveInactive(session.sessionId);
+    if (this.isTreeExclusiveSessionIdentityActive(session.sessionId)) throw new Error("Wait for the current session lifecycle operation to finish before detaching");
+    this.sessionLifecycleRevision += 1;
+    this.parentDetachesInFlight += 1;
+    try {
+      await clearParentSession(sessionFile);
+      // The header rewrite keeps the inode, and whenever it leaves the file's
+      // size unchanged it is invisible to the gateway's summary memo, which
+      // cannot detect such rewrites from identity + size alone and would keep
+      // listing the old parent link until restart.
+      this.sessionManager.invalidateSessionFile(sessionFile);
+      clearParentSessionHeader(session.sessionManager);
+      this.unregisterSubsession(session.sessionId);
+    } finally {
+      this.parentDetachesInFlight -= 1;
+      this.sessionLifecycleRevision += 1;
+    }
     await this.forgetUnreadSessions([{ sessionId: session.sessionId, cwd: session.sessionManager.getCwd() }]);
   }
 
@@ -4393,9 +4424,11 @@ export class PiSessionService implements SessionRouteService {
     const cwd = session.sessionManager.getCwd();
     const sessionFile = session.sessionFile;
     if (sessionFile === undefined || sessionFile === "") throw new Error("Session is not persisted");
-    const listed = (await this.sessionManager.list(cwd)).find((candidate) => candidate.id === session.sessionId);
-    if (listed !== undefined) return archiveInputFromListEntry(listed);
-    return archiveInputFromActiveSession(session);
+    const sessions = await this.sessionManager.list(cwd);
+    const listed = findSessionByExactId(sessions, session.sessionId);
+    if (listed === undefined) return archiveInputFromActiveSession(session);
+    assertSingleListedTranscript(sessions, listed, session);
+    return archiveInputFromListEntry(listed);
   }
 
   private async workspaceArchiveCandidates(cwd: string): Promise<WorkspaceArchiveCandidate[]> {
@@ -4407,12 +4440,22 @@ export class PiSessionService implements SessionRouteService {
       if (record.cwd === cwd) archivedById.set(record.sessionId, record);
     }
 
+    // Sessions are selected by ID, so a same-ID copy at another path makes the
+    // selection ambiguous. Record it and refuse only if that session is selected.
+    const addCandidate = (candidate: WorkspaceArchiveCandidate) => {
+      const existing = candidates.get(candidate.id);
+      if (existing === undefined) candidates.set(candidate.id, candidate);
+      else if (!sessionPathsEqual(existing.path, candidate.path)) {
+        existing.conflictingPaths = uniqueStrings([...existing.conflictingPaths ?? [], candidate.path]);
+      }
+    };
+
     for (const session of sessions) {
       const archived = archivedById.get(session.id);
-      if (archived === undefined) candidates.set(session.id, archiveCandidateFromListEntry(session));
+      if (archived === undefined || archiveCleanupPending(archived, session)) addCandidate(archiveCandidateFromListEntry(session));
       else {
         const candidate = archiveCandidateFromArchivedRecord(archived, session);
-        if (candidate !== undefined) candidates.set(candidate.id, candidate);
+        if (candidate !== undefined) addCandidate(candidate);
       }
     }
 
@@ -4424,9 +4467,18 @@ export class PiSessionService implements SessionRouteService {
 
     for (const active of new Set(this.active.values())) {
       const session = active.runtime.session;
-      if (session.sessionManager.getCwd() !== cwd || archivedById.has(session.sessionId)) continue;
       const existing = candidates.get(session.sessionId);
-      candidates.set(session.sessionId, { ...(existing ?? archiveCandidateFromActiveSession(session, false)), activeSession: session });
+      if (session.sessionManager.getCwd() !== cwd || (existing?.archived ?? archivedById.has(session.sessionId))) continue;
+      const sessionFile = nonEmptyString(session.sessionFile);
+      if (existing === undefined || sessionFile === undefined || sessionPathsEqual(existing.path, sessionFile)) {
+        candidates.set(session.sessionId, { ...(existing ?? archiveCandidateFromActiveSession(session, false)), activeSession: session });
+      } else {
+        // The open runtime defines the session; never pair it with another file.
+        candidates.set(session.sessionId, {
+          ...archiveCandidateFromActiveSession(session, false),
+          conflictingPaths: uniqueStrings([existing.path, ...existing.conflictingPaths ?? []]),
+        });
+      }
     }
 
     return [...candidates.values()];
@@ -6101,6 +6153,32 @@ function archiveCandidateFromActiveSession(session: PiAgentSession, archived: bo
     activeSession: session,
     ...(parentSessionPath === undefined ? {} : { parentSessionPath }),
   };
+}
+
+/** The index has the record, but the original transcript is still listed. */
+function archiveCleanupPending(record: ArchivedSessionRecord, listed: PiSessionListEntry | undefined): listed is PiSessionListEntry {
+  return listed !== undefined && record.archivePath !== undefined && record.originalPath !== undefined
+    && sessionPathsEqual(record.originalPath, listed.path) && !sessionPathsEqual(record.archivePath, record.originalPath);
+}
+
+/** Archive input is selected by ID; refuse when that ID names more than one transcript. */
+function assertSingleListedTranscript(sessions: readonly PiSessionListEntry[], listed: PiSessionListEntry, active: PiAgentSession | undefined): void {
+  const paths = [listed.path];
+  const addPath = (path: string | undefined) => {
+    if (path !== undefined && !paths.some((known) => sessionPathsEqual(known, path))) paths.push(path);
+  };
+  addPath(nonEmptyString(active?.sessionFile));
+  for (const session of sessions) if (session.id === listed.id) addPath(session.path);
+  if (paths.length > 1) throw sameIdSessionCopyError(listed.id, paths);
+}
+
+function assertArchiveTargetsUnambiguous(targets: readonly WorkspaceArchiveCandidate[]): void {
+  const ambiguous = targets.find((target) => (target.conflictingPaths?.length ?? 0) > 0);
+  if (ambiguous !== undefined) throw sameIdSessionCopyError(ambiguous.id, [ambiguous.path, ...ambiguous.conflictingPaths ?? []]);
+}
+
+function sameIdSessionCopyError(sessionId: string, paths: readonly string[]): Error {
+  return new Error(`Cannot archive session ${sessionId}: more than one transcript has this session ID (${paths.join(", ")}). Nothing was archived; resolve the duplicate transcripts, then retry.`);
 }
 
 function archiveInputFromCandidate(candidate: WorkspaceArchiveCandidate): ArchiveSessionInput {
