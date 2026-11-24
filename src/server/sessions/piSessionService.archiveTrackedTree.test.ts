@@ -68,6 +68,11 @@ function fixture(options: { spawned?: boolean; sessionDir?: string } = {}) {
       },
     },
     archiveStore: { ...emptyArchiveStore(), list: () => Promise.resolve([...archived]),
+      archive: async (input) => {
+        const [record] = await archiveMany([input]);
+        if (record === undefined) throw new Error("Missing archived record");
+        return record;
+      },
       get: (id) => Promise.resolve(archived.find((record) => record.sessionId === id)), archiveMany, restore },
     createAgentRuntime: (_factory, options) => Promise.resolve(runtime(options.sessionManager.getSessionId()).runtime),
     notificationStore: notifications, onSessionArchived, heartbeatIntervalMs: 60_000,
@@ -423,6 +428,39 @@ describe("tracked self-archive trees", () => {
         await expect(f.service.archiveTree(sessionRef("root"))).rejects.toThrow("more than one transcript");
       }
       expect(f.archiveMany).not.toHaveBeenCalled();
+    } finally { await f.service.dispose(); }
+  });
+
+  it.each([
+    { source: "tree", runtimeFile: "archive copy" },
+    { source: "bulk", runtimeFile: "archive copy" },
+    { source: "single", runtimeFile: "archive copy" },
+    { source: "tree", runtimeFile: "unrelated" },
+    { source: "bulk", runtimeFile: "unrelated" },
+    { source: "single", runtimeFile: "unrelated" },
+  ] as const)("$source archival of an indexed session with its original listed and a runtime at an $runtimeFile path", async ({ source, runtimeFile }) => {
+    const f = fixture();
+    const original = f.records.find((record) => record.id === "child");
+    if (original === undefined) throw new Error("Missing fixture record");
+    const record = f.toArchived({ ...original, sessionId: "child", created: "", modified: "", messageCount: 0, firstMessage: "" });
+    f.archived.push(record);
+    f.list.mockResolvedValue(f.records);
+    // Indexed sessions open from their archive copy.
+    f.runtime("child").session.sessionFile = runtimeFile === "archive copy" ? record.archivePath : "/sessions/unrelated.jsonl";
+    try {
+      await f.service.status(sessionRef("child"));
+      const attempt = source === "tree" ? f.service.archiveTree(sessionRef("root"))
+        : source === "single" ? f.service.archive(sessionRef("child"))
+        : f.service.archiveMany([sessionRef("child")]).then((result) => {
+          if (result.failures.length > 0) throw new Error(result.failures.map((failure) => failure.error).join("; "));
+        });
+      if (runtimeFile === "unrelated") {
+        await expect(attempt).rejects.toThrow("more than one transcript");
+        expect(f.archiveMany).not.toHaveBeenCalled();
+        return;
+      }
+      await attempt;
+      expect(f.archiveMany).toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({ sessionId: "child", path: f.path("child") })]));
     } finally { await f.service.dispose(); }
   });
 
