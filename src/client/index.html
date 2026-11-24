@@ -74,6 +74,11 @@
         .pi-web-startup-activity::after { background: CanvasText; }
       }
       html:not([data-pi-web-loading]) #pi-web-startup { display: none; }
+      /* iOS/iPadOS 26+ blur the content under the status bar or Safari toolbar unless a full-width fixed element with a background colour
+         sits at the top centre. This strip is always that element: it declares the app background but clips it to its (absent) text, so it
+         paints nothing and lets every tap through. It stays out of layout while the startup screen supplies the edge colour. */
+      #pi-web-top-edge { position: fixed; top: 0; right: 0; left: 0; z-index: 2147483647; height: 12px; pointer-events: none; background-color: var(--pi-bg); -webkit-background-clip: text; background-clip: text; }
+      html[data-pi-web-loading] #pi-web-top-edge { display: none; }
     </style>
     <style id="pi-web-startup-theme"></style>
   </head>
@@ -83,6 +88,7 @@
       <span class="pi-web-startup-activity" aria-hidden="true"></span>
     </div>
     <pi-web-app></pi-web-app>
+    <div id="pi-web-top-edge" aria-hidden="true"></div>
     <script type="module" src="/src/startup.ts"></script>
   </body>
 </html>
