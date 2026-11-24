@@ -1,10 +1,11 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { SlashCommand } from "../api";
+import type { SessionStatus, SlashCommand } from "../api";
 import { api } from "../api";
 import type { PromptEditor as PromptEditorElement } from "./PromptEditor";
 import { PromptEditor } from "./PromptEditor";
 import { installPopoverFake } from "./anchoredPopup.testSupport";
+import { deepActiveElement } from "./modalLayerRegistry";
 installPopoverFake();
 import type { AutocompleteMenu } from "./AutocompleteMenu";
 
@@ -14,6 +15,29 @@ afterEach(() => {
   localStorage.clear();
   vi.restoreAllMocks();
 });
+
+describe("PromptEditor focus readiness", () => {
+  it("applies a deferred focus when the pending update only carries a render-equal status", async () => {
+    const editor = new PromptEditor();
+    editor.status = idleStatus();
+    document.body.append(editor);
+    await editor.updateComplete;
+
+    // Streaming replaces status with equal copies; that update skips rendering.
+    editor.status = idleStatus();
+    editor.focusInput();
+    await editor.updateComplete;
+
+    expect(deepActiveElement(document)).toBe(editor.view?.contentDOM);
+  });
+});
+
+function idleStatus(): SessionStatus {
+  return {
+    sessionId: "session-a", isStreaming: false, isCompacting: false, isBashRunning: false, pendingMessageCount: 0, queuedMessages: [],
+    tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }, cost: 0,
+  };
+}
 
 describe("PromptEditor completion reset lifecycle", () => {
   it.each(["session", "machine"] as const)("synchronizes an empty %s draft without a redundant host update", async (change) => {

@@ -149,6 +149,8 @@ export class PromptEditor extends LitElement {
   }
 
   protected override shouldUpdate(changed: PropertyValues<this>): boolean {
+    // A skipped update never reaches updated(), which applies deferred focus.
+    if (this.focusWhenReady) return true;
     // Status updates churn once per token during streaming and hand us a fresh
     // object reference each time. When nothing else changed, only re-render if a
     // status field the template actually displays differs, so streaming does not
