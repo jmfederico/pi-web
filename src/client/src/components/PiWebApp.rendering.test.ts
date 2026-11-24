@@ -230,7 +230,10 @@ describe("application rendering boundaries", () => {
     expect(deepActiveElement(document)).toBe(editor?.shadowRoot?.querySelector(".cm-content"));
   });
 
-  it("focuses a started session's composer after it first renders in the installed app", async () => {
+  it.each([
+    ["no composer is mounted", undefined],
+    ["the reused composer was disabled", { ...session, archived: true }],
+  ] as const)("focuses a started session's composer in the installed app when %s", async (_case, previous) => {
     const app = new RenderOnlyApp();
     const shell: unknown = Reflect.get(app, "appShell");
     const controller: unknown = Reflect.get(app, "sessions");
@@ -240,10 +243,18 @@ describe("application rendering boundaries", () => {
     shell.isPwaDisplayMode = true;
     const backendStart = new Promise<SessionInfo>(() => undefined);
     if (!Reflect.set(controller, "api", { startSession: () => backendStart })) throw new Error("Could not stub session start API");
-    patchState(app, { selectedWorkspace: workspace, workspaces: [workspace], sessions: [], mainView: "chat" });
+    patchState(app, { selectedWorkspace: workspace, workspaces: [workspace], sessions: previous === undefined ? [] : [previous], selectedSession: previous, mainView: "chat" });
     document.body.append(app);
     await settle(app);
-    expect(app.shadowRoot?.querySelector("prompt-editor")).toBeNull();
+    const previousEditor = app.shadowRoot?.querySelector<PromptEditor>("prompt-editor") ?? undefined;
+    expect(previousEditor?.disabled).toBe(previous === undefined ? undefined : true);
+    // Browsers cannot focus non-editable CodeMirror content; happy-dom can, so
+    // record editability at the moment focus arrives.
+    const editableAtFocus: (string | null)[] = [];
+    app.shadowRoot?.addEventListener("focusin", (event) => {
+      const target = event.composedPath()[0];
+      if (target instanceof HTMLElement && target.classList.contains("cm-content")) editableAtFocus.push(target.getAttribute("contenteditable"));
+    });
 
     const start: unknown = Reflect.get(app, "startSessionAndOpenChat");
     if (typeof start !== "function") throw new Error("Expected session start action");
@@ -252,7 +263,9 @@ describe("application rendering boundaries", () => {
 
     const editor = app.shadowRoot?.querySelector("prompt-editor");
     expect(editor).toBeInstanceOf(PromptEditor);
+    if (previousEditor !== undefined) expect(editor).toBe(previousEditor);
     expect(deepActiveElement(document)).toBe(editor?.shadowRoot?.querySelector(".cm-content"));
+    expect(editableAtFocus).toEqual(["true"]);
   });
 
   it.each(["hide", "disconnect"] as const)("cancels scheduled Chat loading when the shell changes before paint: %s", async (action) => {
