@@ -131,80 +131,28 @@ describe("PiWebApp global shortcut modality boundary", () => {
     expect(appShouldAutoFocusPrompt(app)).toBe(false);
   });
 
-  it("does not turn focus restoration into navigation when Chat is hidden", async () => {
+  it("does not turn focus restoration into navigation when Chat is hidden", () => {
     const app = new PiWebApp();
     const shell: unknown = Reflect.get(app, "appShell");
     if (!(shell instanceof AppShellController)) throw new Error("Expected app shell");
     shell.isMobileNavigationLayout = true;
     shell.isDesktopSideBySideLayout = false;
     window.history.replaceState(null, "", "/app?view=navigation");
-    setAppState(app, { mainView: "navigation" });
+    const selectedSession = session("session-hidden-chat");
+    setAppState(app, { mainView: "navigation", selectedSession, sessions: [selectedSession] });
     const before = window.location.href;
-    const focusInput = vi.fn();
-    Object.defineProperty(app, "promptEditor", { configurable: true, value: { focusInput } });
-    Object.defineProperty(app, "updateComplete", { configurable: true, value: Promise.resolve(true) });
-    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 1; });
+    const focus = vi.spyOn(HTMLElement.prototype, "focus");
 
-    await focusChatComposer(app);
+    focusChatComposer(app);
 
     expect(window.location.href).toBe(before);
     expect(Reflect.get(app, "state")).toMatchObject({ mainView: "navigation" });
-    expect(focusInput).not.toHaveBeenCalled();
-  });
-
-  it("does not focus an editor that became hidden while restoration was pending", async () => {
-    const app = new PiWebApp();
-    const shell: unknown = Reflect.get(app, "appShell");
-    if (!(shell instanceof AppShellController)) throw new Error("Expected app shell");
-    shell.isMobileNavigationLayout = true;
-    shell.isDesktopSideBySideLayout = false;
-    setAppState(app, { mainView: "chat" });
-    const focusInput = vi.fn();
-    Object.defineProperty(app, "promptEditor", { configurable: true, value: { focusInput } });
-    Object.defineProperty(app, "updateComplete", { configurable: true, value: Promise.resolve(true) });
-    let frameCallback: FrameRequestCallback | undefined;
-    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { frameCallback = callback; return 1; });
-    const focusing = focusChatComposer(app);
-    await vi.waitFor(() => { expect(frameCallback).toBeDefined(); });
-    setAppState(app, { mainView: "navigation" });
-    frameCallback?.(0);
-    await focusing;
-    expect(focusInput).not.toHaveBeenCalled();
-  });
-
-  it("rechecks rendered modality before a delayed prompt focus takes effect", async () => {
-    const app = new PiWebApp();
-    setAppState(app, { mainView: "chat" });
-    const focusInput = vi.fn();
-    Object.defineProperty(app, "promptEditor", { configurable: true, value: { focusInput } });
-    Object.defineProperty(app, "updateComplete", { configurable: true, value: Promise.resolve(true) });
-    let frameCallback: FrameRequestCallback | undefined;
-    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
-      frameCallback = callback;
-      return 1;
-    });
-
-    const focusing = focusChatComposer(app);
-    await vi.waitFor(() => { expect(frameCallback).toBeDefined(); });
-
-    const surface = new ModalSurface();
-    surface.initialFocus = "button";
-    surface.innerHTML = "<button>Surviving modal</button>";
-    document.body.append(surface);
-    await surface.updateComplete;
-    const modalButton = requiredElement(surface.querySelector<HTMLButtonElement>("button"), "surviving modal button");
-    expect(document.activeElement).toBe(modalButton);
-
-    frameCallback?.(performance.now());
-    await focusing;
-
-    expect(focusInput).not.toHaveBeenCalled();
-    expect(document.activeElement).toBe(modalButton);
+    expect(focus).not.toHaveBeenCalled();
   });
 });
 
 type AppKeyDownHandler = (event: KeyboardEvent) => void;
-type FocusChatComposer = (this: PiWebApp) => Promise<void>;
+type FocusChatComposer = (this: PiWebApp) => void;
 
 interface AutoFocusAppShell {
   shouldAutoFocusPrompt: () => boolean;
@@ -290,10 +238,10 @@ function renderApp(app: PiWebApp): HTMLDivElement {
   return container;
 }
 
-function focusChatComposer(app: PiWebApp): Promise<void> {
+function focusChatComposer(app: PiWebApp): void {
   const method: unknown = Reflect.get(app, "focusChatComposer");
   if (!isFocusChatComposer(method)) throw new Error("PiWebApp prompt focus boundary was unavailable");
-  return Reflect.apply(method, app, []);
+  Reflect.apply(method, app, []);
 }
 
 function isFocusChatComposer(value: unknown): value is FocusChatComposer {

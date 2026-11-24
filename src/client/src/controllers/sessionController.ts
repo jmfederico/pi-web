@@ -304,8 +304,17 @@ export class SessionController {
   }
 
   async startSession(options?: { updateUrl?: boolean | undefined }) {
+    await this.beginSessionStart(options)?.completion;
+  }
+
+  /**
+   * Select a temporary session immediately and start its backend creation.
+   * Returns the selected temporary identity so callers can target UI that
+   * belongs to it; `completion` settles when the backend start is reconciled.
+   */
+  beginSessionStart(options?: { updateUrl?: boolean | undefined }): { machineId: string; sessionId: string; completion: Promise<void> } | undefined {
     const workspace = this.getState().selectedWorkspace;
-    if (!workspace) return;
+    if (!workspace) return undefined;
     const machineId = selectedMachineId(this.getState());
     const pendingUrlPublished = options?.updateUrl !== false;
     const pending = this.createPendingSessionStart(workspace, machineId, this.navigationSelection(), pendingUrlPublished);
@@ -317,11 +326,15 @@ export class SessionController {
     // publication is part of this operation's setup. The URL guard authorizes
     // published-token handoffs; freshness also protects unpublished starts.
     pending.navigation = this.beginNavigationOperation?.(PENDING_SESSION_START_SCOPE);
+    return { machineId, sessionId: pending.tempId, completion: this.completePendingSessionStart(pending.tempId, workspace.path, machineId) };
+  }
+
+  private async completePendingSessionStart(tempId: string, cwd: string, machineId: string): Promise<void> {
     try {
-      const session = await this.api.startSession(workspace.path, machineId, pending.tempId);
-      await this.resolvePendingSessionStart(pending.tempId, session);
+      const session = await this.api.startSession(cwd, machineId, tempId);
+      await this.resolvePendingSessionStart(tempId, session);
     } catch (error) {
-      this.failPendingSessionStart(pending.tempId, error);
+      this.failPendingSessionStart(tempId, error);
     }
   }
 

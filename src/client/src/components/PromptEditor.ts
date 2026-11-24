@@ -126,6 +126,7 @@ export class PromptEditor extends LitElement {
     ? window.matchMedia(MOBILE_PROMPT_ENTER_MEDIA_QUERY) : undefined;
   private readonly handleShortcutMediaChange = (): void => { this.requestUpdate(); };
   private explicitShiftKeyActive = false;
+  private focusWhenReady = false;
 
   protected override willUpdate(changed: PropertyValues<this>) {
     if (this.busy || changed.has("sessionId") || changed.has("machineId")) this.attachSourceOpen = false;
@@ -148,6 +149,8 @@ export class PromptEditor extends LitElement {
   }
 
   protected override shouldUpdate(changed: PropertyValues<this>): boolean {
+    // A skipped update never reaches updated(), which applies deferred focus.
+    if (this.focusWhenReady) return true;
     // Status updates churn once per token during streaming and hand us a fresh
     // object reference each time. When nothing else changed, only re-render if a
     // status field the template actually displays differs, so streaming does not
@@ -183,11 +186,16 @@ export class PromptEditor extends LitElement {
     }
     if (changed.has("disabled")) this.updateEditorDisabledState();
     if (changed.has("sessionId") || changed.has("machineId")) this.syncEditorDoc();
+    if (this.focusWhenReady && this.editor !== undefined) {
+      this.focusWhenReady = false;
+      if (!this.disabled) this.editor.focus();
+    }
   }
 
   override disconnectedCallback(): void {
     this.mobilePromptEnterMedia?.removeEventListener("change", this.handleShortcutMediaChange);
     this.attachSourceOpen = false;
+    this.focusWhenReady = false;
     this.editor?.destroy();
     this.editor = undefined;
     super.disconnectedCallback();
@@ -238,8 +246,13 @@ export class PromptEditor extends LitElement {
     `;
   }
 
+  /**
+   * Focus the input now, or after the editor mounts and any pending update
+   * applies its editable state. Browsers cannot focus non-editable content.
+   */
   focusInput() {
-    this.editor?.focus();
+    if (this.editor === undefined || this.isUpdatePending) this.focusWhenReady = true;
+    else this.editor.focus();
   }
 
   replaceText(text: string): void {
