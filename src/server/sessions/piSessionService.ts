@@ -376,6 +376,8 @@ interface WorkspaceArchiveCandidate extends SessionArchiveTreeCandidate {
   archivePath?: string;
   /** Other transcripts listed with this session ID. */
   conflictingPaths?: string[];
+  /** Header parents of those other transcripts, which may place them in a tree. */
+  conflictingParentPaths?: string[];
 }
 
 interface BulkSessionRefContext {
@@ -3929,6 +3931,7 @@ export class PiSessionService implements SessionRouteService {
     const root = findArchiveCandidateByExactId(catalog, session.sessionId) ?? archiveCandidateFromActiveSession(session, false);
     const targets = scope === "all-descendants" ? planSessionArchiveTree(root, catalog).targets : this.trackedArchiveTargets(root, catalog);
     assertArchiveTargetsUnambiguous(targets);
+    if (scope === "all-descendants") assertNoAmbiguousCopyInTree(targets, catalog);
     return { targets, revision };
   }
 
@@ -4465,8 +4468,14 @@ export class PiSessionService implements SessionRouteService {
       // the selection ambiguous. Record it and refuse only if it is selected.
       const selected = remainingOriginal ?? listings[0];
       if (selected === undefined) continue;
-      const conflictingPaths = distinctSessionPaths(listings.map((session) => session.path)).filter((path) => !sessionPathsEqual(path, selected.path));
-      candidates.set(sessionId, { ...archiveCandidateFromListEntry(selected), ...conflictingPaths.length === 0 ? {} : { conflictingPaths } });
+      const copies = listings.filter((session) => !sessionPathsEqual(session.path, selected.path));
+      const conflictingPaths = distinctSessionPaths(copies.map((session) => session.path));
+      const conflictingParentPaths = distinctSessionPaths(copies.map((session) => session.parentSessionPath));
+      candidates.set(sessionId, {
+        ...archiveCandidateFromListEntry(selected),
+        ...conflictingPaths.length === 0 ? {} : { conflictingPaths },
+        ...conflictingParentPaths.length === 0 ? {} : { conflictingParentPaths },
+      });
     }
 
     for (const record of archivedById.values()) {
@@ -4493,6 +4502,7 @@ export class PiSessionService implements SessionRouteService {
         candidates.set(session.sessionId, {
           ...existing,
           conflictingPaths: distinctSessionPaths([sessionFile, ...existing.conflictingPaths ?? []]),
+          conflictingParentPaths: distinctSessionPaths([session.sessionManager.getHeader?.()?.parentSession, ...existing.conflictingParentPaths ?? []]),
         });
       }
     }
@@ -6198,6 +6208,14 @@ function distinctSessionPaths(paths: readonly (string | undefined)[]): string[] 
 
 function assertArchiveTargetsUnambiguous(targets: readonly WorkspaceArchiveCandidate[]): void {
   const ambiguous = targets.find((target) => (target.conflictingPaths?.length ?? 0) > 0);
+  if (ambiguous !== undefined) throw sameIdSessionCopyError(ambiguous.id, [ambiguous.path, ...ambiguous.conflictingPaths ?? []]);
+}
+
+/** A same-ID copy outside the selected tree may still name a selected session as its parent. */
+function assertNoAmbiguousCopyInTree(targets: readonly WorkspaceArchiveCandidate[], catalog: readonly WorkspaceArchiveCandidate[]): void {
+  const targetSet = new Set(targets);
+  const joinsTree = (parentPath: string) => targets.some((target) => sessionPathsEqual(target.path, parentPath));
+  const ambiguous = catalog.find((candidate) => !targetSet.has(candidate) && (candidate.conflictingParentPaths ?? []).some(joinsTree));
   if (ambiguous !== undefined) throw sameIdSessionCopyError(ambiguous.id, [ambiguous.path, ...ambiguous.conflictingPaths ?? []]);
 }
 
