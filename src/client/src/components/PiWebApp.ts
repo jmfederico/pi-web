@@ -38,6 +38,7 @@ import { SessionStorageWorkspaceSelectionMemory, shouldShowWorkspaceSelection } 
 import { KeyboardShortcutDispatcher } from "../keyboardShortcuts";
 import { selectedMachineId, type NavigationDestinationOptions, type NavigationFreshness, type NavigationScope, type NavigationSelection } from "../controllers/types";
 import { machineSessionKey } from "../machineKeys";
+import { ComposerFocusRequest, type ComposerFocusSurface } from "./composerFocusRequest";
 import { appendPromptChipText, samePromptChipTarget, type PromptChipTarget, type StagedPromptChip } from "../promptChips";
 import { HttpRequestError } from "../api/http";
 import { isSessionOnlyRoute, resolveSessionLink, sessionLinkMachineOrder, type SessionLinkResolution } from "../sessionLinkResolution";
@@ -537,6 +538,7 @@ export class PiWebApp extends LitElement {
       if (!this.chatWasVisible) this.chatView?.restoreScrollPosition();
     } else this.cancelSelectedChatLoad();
     this.chatWasVisible = chatVisible;
+    this.composerFocus.offer(() => this.composerFocusSurface());
   }
 
   private selectedChatLoadFrame: number | undefined;
@@ -562,6 +564,7 @@ export class PiWebApp extends LitElement {
   // Once shown, retain the selected chat's DOM across tabs so drafts, scroll,
   // disclosures and in-flight UI state survive. A new hidden selection stays cold.
   private displayedChatIdentity: string | undefined;
+  private readonly composerFocus = new ComposerFocusRequest();
 
   private isChatVisible(): boolean {
     const mainView = this.effectiveMainView();
@@ -1618,7 +1621,7 @@ export class PiWebApp extends LitElement {
     if (tool !== undefined) await this.invalidateWorkspacePanels(tool, contributionQueryRestore);
   }
 
-  private async withChatScrollTransition(action: () => Promise<void>, shouldComplete: () => boolean = () => true) {
+  private async withChatScrollTransition(action: () => void | Promise<void>, shouldComplete: () => boolean = () => true) {
     this.chatView?.saveScrollPosition();
     await action();
     if (!shouldComplete()) return;
@@ -2412,7 +2415,7 @@ export class PiWebApp extends LitElement {
     selectWorkspace: (workspace: Workspace) => this.selectNavigationItem("workspaces", "sessions", () => this.selectWorkspaceFromNavigation(workspace)),
     deleteWorkspace: (workspace: Workspace) => { void this.deleteWorkspace(workspace); },
     archivedCollapsed: () => { void this.sessions.clearSelectionAfterArchivedCollapse(); },
-    startSession: () => this.startSessionFromNavigation(),
+    startSession: () => { this.startSessionFromNavigation(); },
     selectSession: (session: SessionInfo) => this.selectNavigationItem("sessions", "chat", () => this.selectSessionFromNavigation(session)),
     markSessionRead: (session: SessionInfo) => { this.markSessionsRead([session]); },
     markSessionUnread: (session: SessionInfo) => { void this.markSessionUnread(session); },
@@ -2431,7 +2434,7 @@ export class PiWebApp extends LitElement {
     reloadSession: (session: SessionInfo) => this.sessions.reloadSession(session),
     cleanupSessions: () => { this.openSessionCleanupDialog(); },
     focusNavigationTarget: (target: NavigationFocusTarget) => { this.cancelAutomaticProjectNavigation(); void this.focusNavigationTarget(target); },
-    cancelKeyboardNavigation: () => { this.cancelAutomaticProjectNavigation(); void this.openChatAndFocusComposer(); },
+    cancelKeyboardNavigation: () => { this.cancelAutomaticProjectNavigation(); this.openChatAndFocusComposer(); },
     moveProject: (project: Project, direction: -1 | 1) => { this.moveNavigationItem({ kind: "projects", machineId: selectedMachineId(this.state) }, project.id, direction); },
     reorderProject: (project: Project, neighbor: Project, position: "before" | "after") => { this.reorderNavigationItem({ kind: "projects", machineId: selectedMachineId(this.state) }, project.id, neighbor.id, position); },
     moveWorkspace: (workspace: Workspace, direction: -1 | 1) => { this.moveNavigationItem({ kind: "workspaces", machineId: selectedMachineId(this.state), projectId: workspace.projectId }, workspace.id, direction); },
@@ -2620,28 +2623,30 @@ export class PiWebApp extends LitElement {
     }
   }
 
-  private async startSessionFromNavigation(): Promise<void> {
+  private startSessionFromNavigation(): void {
     const seq = ++this.navigationSelectionSeq;
     const isCurrentSelection = () => seq === this.navigationSelectionSeq;
 
     this.navigationSections.advanceAfterSelection("sessions");
-    await this.startSessionAndOpenChat(isCurrentSelection);
+    this.startSessionAndOpenChat(isCurrentSelection);
   }
 
-  private async startSessionAndOpenChat(shouldComplete: () => boolean = () => true): Promise<void> {
+  private startSessionAndOpenChat(shouldComplete: () => boolean = () => true): void {
     // Open Chat before publishing the creation token; completion owns only
     // that token and leaves subsequent surface navigation untouched.
     const navigationSeq = this.navigationSelectionSeq;
     const isCurrent = () => navigationSeq === this.navigationSelectionSeq && shouldComplete();
     const workspace = this.state.selectedWorkspace;
-    const machineId = selectedMachineId(this.state);
-    if (isCurrent()) await this.openChatAndFocusComposer(isCurrent);
     if (!isCurrent()) return;
-    const start = this.sessions.startSession().catch((error: unknown) => {
+    if (this.effectiveMainView() !== "chat") this.selectMainView("chat", { invalidateNavigationSelection: false });
+    const start = this.sessions.beginSessionStart();
+    if (start === undefined) return;
+    void start.completion.catch((error: unknown) => {
       if (workspace === undefined) return;
-      this.browserErrors.reportLocalized(workspaceBrowserErrorScope(machineId, workspace.projectId, workspace.id), () => String(error));
+      this.browserErrors.reportLocalized(workspaceBrowserErrorScope(start.machineId, workspace.projectId, workspace.id), () => String(error));
     });
-    void start;
+    // The new session's composer does not exist yet; focus it once it renders.
+    this.focusChatComposer(isCurrent, machineSessionKey(start.machineId, start.sessionId));
   }
 
   private async focusNavigationTarget(target: NavigationFocusTarget, shouldComplete: () => boolean = () => true): Promise<void> {
@@ -2649,7 +2654,7 @@ export class PiWebApp extends LitElement {
     const isCurrent = () => navigationSeq === this.navigationSelectionSeq && shouldComplete();
     if (!isCurrent()) return;
     if (target === "chat") {
-      await this.openChatAndFocusComposer(isCurrent);
+      this.openChatAndFocusComposer(isCurrent);
       return;
     }
     await this.focusNavigationSection(target, isCurrent);
@@ -2680,35 +2685,49 @@ export class PiWebApp extends LitElement {
     await this.navigationPanel?.focusSection(section);
   }
 
-  private async openChatAndFocusComposer(shouldComplete: () => boolean = () => true): Promise<void> {
+  private openChatAndFocusComposer(shouldComplete: () => boolean = () => true): void {
     if (!shouldComplete()) return;
     if (this.effectiveMainView() !== "chat") this.selectMainView("chat", { invalidateNavigationSelection: false });
-    await this.focusChatComposer(shouldComplete);
+    this.focusChatComposer(shouldComplete);
   }
 
-  /** Restore focus only; callers that intend navigation must explicitly open Chat. */
-  private async focusChatComposer(shouldComplete: () => boolean = () => true): Promise<void> {
+  /**
+   * Restore focus only; callers that intend navigation must explicitly open Chat.
+   * Focus applies when the target chat's composer has rendered, which may be
+   * after a deferred chat load or a just-selected session's first render.
+   */
+  private focusChatComposer(shouldComplete: () => boolean = () => true, targetChatKey = this.selectedChatKey()): void {
     const navigationSeq = this.navigationSelectionSeq;
     const isCurrent = () => navigationSeq === this.navigationSelectionSeq && shouldComplete();
-    if (!isCurrent() || !this.isChatVisible()) return;
-    await this.updateComplete;
-    if (!isCurrent()) return;
-    await nextFrame();
-    if (!isCurrent()) return;
-    // A restored chat starts only after the list's first paint. Its editor may
-    // not exist in that first frame; wait for the deferred mount, not the HTTP read.
-    if (this.sessions.isChatLoadDeferred) await nextFrame();
-    await this.updateComplete;
-    await this.promptEditor?.updateComplete;
-    // The focus request may outlive the dialog transition that scheduled it.
-    // Recheck the rendered boundary at the final side-effect point so a newer
-    // or surviving modal keeps visual and keyboard focus ownership.
-    if (!isCurrent() || !this.isChatVisible() || this.isRenderedModalOpen()) return;
-    if (this.unacknowledgedActivitySessionKey() !== undefined) {
-      this.renderRoot.querySelector<HTMLButtonElement>(".composer-activity-notice button")?.focus();
-      return;
-    }
-    this.promptEditor?.focusInput();
+    if (targetChatKey === undefined || !isCurrent() || !this.isChatVisible()) return;
+    this.composerFocus.request(targetChatKey, isCurrent);
+    // Offer at least one committed render, even when the composer already exists.
+    this.requestUpdate();
+  }
+
+  private selectedChatKey(): string | undefined {
+    const session = this.state.selectedSession;
+    return session === undefined ? undefined : machineSessionKey(selectedMachineId(this.state), session.id);
+  }
+
+  private composerFocusSurface(): ComposerFocusSurface {
+    return {
+      selectedChatKey: this.selectedChatKey(),
+      chatVisible: this.isChatVisible(),
+      // A modal opened or retained since the request keeps focus ownership.
+      modalOpen: this.isRenderedModalOpen(),
+      focus: () => {
+        if (this.sessions.isChatLoadDeferred) return false;
+        if (this.unacknowledgedActivitySessionKey() !== undefined) {
+          const notice = this.renderRoot.querySelector<HTMLButtonElement>(".composer-activity-notice button");
+          notice?.focus();
+          return notice !== null;
+        }
+        const editor = this.renderRoot.querySelector<PromptEditor>("prompt-editor");
+        editor?.focusInput();
+        return editor !== null;
+      },
+    };
   }
 
   private async navigateSessionTree(targetId: string, summaryChoice: SessionTreeSummaryChoice): Promise<SessionTreeNavigateResult> {
@@ -2721,7 +2740,7 @@ export class PiWebApp extends LitElement {
       && originSessionId !== undefined
       && selectedMachineId(this.state) === originMachineId
       && this.state.selectedSession?.id === originSessionId) {
-      await this.focusChatComposer();
+      this.focusChatComposer();
     }
     return result;
   }
@@ -2733,7 +2752,7 @@ export class PiWebApp extends LitElement {
 
   private closeSessionTreeNavigator(): void {
     this.sessions.closeTreeDialog();
-    void this.focusChatComposer();
+    this.focusChatComposer();
   }
 
   private renderSessionTreeNavigator(state: AppState) {
@@ -3505,7 +3524,7 @@ export class PiWebApp extends LitElement {
         openMcpAuth: (mode) => this.auth.openMcpAuth(mode),
       },
       openActionPalette: () => { this.setState({ actionPaletteOpen: true }); },
-      focusPrompt: () => { void this.openChatAndFocusComposer(); },
+      focusPrompt: () => { this.openChatAndFocusComposer(); },
       addProject: () => { this.setState({ projectDialogOpen: true }); },
       addMachine: () => { this.openMachineDialog(); },
       refreshSelectedMachine: async () => {
@@ -3528,7 +3547,7 @@ export class PiWebApp extends LitElement {
       checkForPiWebUpdates: () => this.piWebStatusController.checkForUpdates().finally(() => { this.schedulePiWebStatusRetry(); }),
       reloadPage: () => { this.hardReloadApp(); },
       deleteWorkspace: (workspace) => this.deleteWorkspace(workspace),
-      startSession: () => this.withChatScrollTransition(() => this.startSessionAndOpenChat()),
+      startSession: () => this.withChatScrollTransition(() => { this.startSessionAndOpenChat(); }),
       archiveSession: () => this.sessions.archiveSession(),
       reloadSession: () => this.sessions.reloadSession(),
       deleteCachedNewSession: () => this.sessions.deleteCachedNewSession(),

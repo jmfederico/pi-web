@@ -126,6 +126,7 @@ export class PromptEditor extends LitElement {
     ? window.matchMedia(MOBILE_PROMPT_ENTER_MEDIA_QUERY) : undefined;
   private readonly handleShortcutMediaChange = (): void => { this.requestUpdate(); };
   private explicitShiftKeyActive = false;
+  private focusWhenMounted = false;
 
   protected override willUpdate(changed: PropertyValues<this>) {
     if (this.busy || changed.has("sessionId") || changed.has("machineId")) this.attachSourceOpen = false;
@@ -160,6 +161,10 @@ export class PromptEditor extends LitElement {
 
   override firstUpdated(): void {
     this.createEditor();
+    if (this.focusWhenMounted) {
+      this.focusWhenMounted = false;
+      this.editor?.focus();
+    }
   }
 
   private get submitting(): boolean {
@@ -188,6 +193,7 @@ export class PromptEditor extends LitElement {
   override disconnectedCallback(): void {
     this.mobilePromptEnterMedia?.removeEventListener("change", this.handleShortcutMediaChange);
     this.attachSourceOpen = false;
+    this.focusWhenMounted = false;
     this.editor?.destroy();
     this.editor = undefined;
     super.disconnectedCallback();
@@ -238,8 +244,10 @@ export class PromptEditor extends LitElement {
     `;
   }
 
+  /** Focus the input now, or as soon as the editor mounts. */
   focusInput() {
-    this.editor?.focus();
+    if (this.editor === undefined) this.focusWhenMounted = true;
+    else this.editor.focus();
   }
 
   replaceText(text: string): void {

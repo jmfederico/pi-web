@@ -218,14 +218,38 @@ describe("application rendering boundaries", () => {
     await settle(app);
     const focus: unknown = Reflect.get(app, "openChatAndFocusComposer");
     if (typeof focus !== "function") throw new Error("Expected Chat navigation action");
-    const focusing: unknown = Reflect.apply(focus, app, []);
+    Reflect.apply(focus, app, []);
     await settle(app);
     runFrame();
     await settle(app);
     expect(app.shadowRoot?.querySelector("prompt-editor")).toBeNull();
     runFrame();
-    await focusing;
     await settle(app);
+    const editor = app.shadowRoot?.querySelector("prompt-editor");
+    expect(editor).toBeInstanceOf(PromptEditor);
+    expect(deepActiveElement(document)).toBe(editor?.shadowRoot?.querySelector(".cm-content"));
+  });
+
+  it("focuses a started session's composer after it first renders in the installed app", async () => {
+    const app = new RenderOnlyApp();
+    const shell: unknown = Reflect.get(app, "appShell");
+    const controller: unknown = Reflect.get(app, "sessions");
+    if (!(shell instanceof AppShellController) || !(controller instanceof SessionController)) throw new Error("Expected app controllers");
+    // The installed app does not auto-focus after scroll transitions; only the
+    // explicit start request can focus the new composer.
+    shell.isPwaDisplayMode = true;
+    const backendStart = new Promise<SessionInfo>(() => undefined);
+    if (!Reflect.set(controller, "api", { startSession: () => backendStart })) throw new Error("Could not stub session start API");
+    patchState(app, { selectedWorkspace: workspace, workspaces: [workspace], sessions: [], mainView: "chat" });
+    document.body.append(app);
+    await settle(app);
+    expect(app.shadowRoot?.querySelector("prompt-editor")).toBeNull();
+
+    const start: unknown = Reflect.get(app, "startSessionAndOpenChat");
+    if (typeof start !== "function") throw new Error("Expected session start action");
+    Reflect.apply(start, app, []);
+    await settle(app);
+
     const editor = app.shadowRoot?.querySelector("prompt-editor");
     expect(editor).toBeInstanceOf(PromptEditor);
     expect(deepActiveElement(document)).toBe(editor?.shadowRoot?.querySelector(".cm-content"));

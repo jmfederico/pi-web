@@ -783,7 +783,6 @@ describe("PiWebApp plugin host", () => {
     const previousSession: SessionInfo = { id: "session-old", cwd: workspace.path, path: "/repo/.sessions/session-old", created: "now", modified: "now", messageCount: 0, firstMessage: "" };
     const browser = installBrowserWindow("http://localhost/app?project=project-1&workspace=workspace-1&session=session-old&tool=core%3Aworkspace.terminal&view=workspace");
     const app = createDetachedApp();
-    if (!Reflect.set(app, "openChatAndFocusComposer", () => { callAppMethod(app, "selectMainView", "chat", { invalidateNavigationSelection: false }); })) throw new Error("Could not stub Chat navigation");
     setAppState(app, {
       ...initialAppState(),
       selectedProject: project,
@@ -797,9 +796,9 @@ describe("PiWebApp plugin host", () => {
     const sessions: unknown = Reflect.get(app, "sessions");
     if (!(sessions instanceof SessionController)) throw new Error("PiWebApp session controller was unavailable");
     let viewAtStart: string | null = null;
-    vi.spyOn(sessions, "startSession").mockImplementation(() => {
+    vi.spyOn(sessions, "beginSessionStart").mockImplementation(() => {
       viewAtStart = browser.url.searchParams.get("view");
-      return Promise.resolve();
+      return undefined;
     });
 
     await callAsyncAppMethod(app, "startSessionAndOpenChat");
@@ -843,7 +842,6 @@ describe("PiWebApp plugin host", () => {
       workspaceTool: TERMINAL_PANEL_ID,
       mainView: "workspace",
     });
-    if (!Reflect.set(app, "openChatAndFocusComposer", () => { callAppMethod(app, "selectMainView", "chat", { invalidateNavigationSelection: false }); })) throw new Error("Could not stub Chat navigation");
     if (!Reflect.set(app, "restoreRouteFor", (route: { sessionId?: string }) => {
       if (route.sessionId === started.id) setAppState(app, { ...appState(app), selectedSession: started });
       return Promise.resolve();
@@ -2234,7 +2232,7 @@ describe("PiWebApp plugin host", () => {
     setAppState(app, { ...initialAppState(), projects: [project] });
     const sessions = await installRuntimeRecoveryBoundaries(app, () => Promise.resolve([workspace]), runtimeRecoverySession(workspace));
     const select = vi.spyOn(sessions, "selectSession");
-    const start = vi.spyOn(sessions, "startSession");
+    const start = vi.spyOn(sessions, "beginSessionStart");
     await callAsyncAppMethod(app, "restoreRoute", false);
     expect(appState(app).selectedWorkspace?.id).toBe(workspace.id);
     expect(appState(app).selectedSession).toBeUndefined();
@@ -2592,7 +2590,7 @@ describe("PiWebApp plugin host", () => {
     const session = runtimeRecoverySession(workspace);
     setAppState(app, { ...initialAppState(), projects: [project] });
     const sessions = await installRuntimeRecoveryBoundaries(app, () => Promise.resolve([workspace]), session);
-    const start = vi.spyOn(sessions, "startSession");
+    const start = vi.spyOn(sessions, "beginSessionStart");
     const context = createPluginRuntimeContext(app);
     await context.navigate({ machineId: "local", projectId: project.id, workspaceId: workspace.id, sessionId: session.id, view: "chat" });
     expect(appState(app).selectedSession?.id).toBe(session.id);
