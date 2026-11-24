@@ -3949,7 +3949,11 @@ export class PiSessionService implements SessionRouteService {
       if (manager.getSessionId() !== parent.id) throw new Error(`Session changed while preparing archival: ${parent.id}. Retry the request.`);
       const visitChild = (childId: string, childFile: string | undefined) => {
         const child = findArchiveCandidateByExactId(catalog, childId);
-        if (child !== undefined && child.path === childFile && child.parentSessionPath === parent.path && child.cwd === root.cwd) visit(child);
+        if (child === undefined || childFile === undefined || child.cwd !== root.cwd) return;
+        // A link to any same-ID copy reaches the ambiguity check in visit,
+        // rather than skipping a child that may still be running.
+        if ((child.conflictingPaths ?? []).some((path) => sessionPathsEqual(path, childFile))) visit(child);
+        else if (child.path === childFile && child.parentSessionPath === parent.path) visit(child);
       };
       for (const entry of manager.getEntries?.() ?? manager.getBranch()) {
         const link = parsePersistedParentSubsessionLink(entry);

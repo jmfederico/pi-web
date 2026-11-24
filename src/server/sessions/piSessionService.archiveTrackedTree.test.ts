@@ -411,6 +411,23 @@ describe("tracked self-archive trees", () => {
     } finally { await f.service.dispose(); }
   });
 
+  it("refuses self-archival when a tracked link names a same-ID copy that is not listed first", async () => {
+    const f = fixture();
+    const child = f.records.find((record) => record.id === "child");
+    if (child === undefined) throw new Error("Missing fixture record");
+    f.list.mockResolvedValue([{ ...child, path: "/sessions/copy-of-child.jsonl" }, ...f.records]);
+    try {
+      await f.service.status(sessionRef("root"));
+      await f.service.status(sessionRef("child"));
+      f.runtime("child").session.isStreaming = true;
+      await expect(f.service.checkSelfArchive("root")).rejects.toThrow("more than one transcript");
+      f.request();
+      await vi.runOnlyPendingTimersAsync();
+      expect(f.archiveMany).not.toHaveBeenCalled();
+      expect(f.runtime("root").calls.dispose).toBe(0);
+    } finally { await f.service.dispose(); }
+  });
+
   it.each(["bulk", "tree"] as const)("refuses %s archival of an indexed session whose remaining original has a same-ID copy", async (source) => {
     const f = fixture();
     const target = source === "bulk" ? "independent" : "child";
