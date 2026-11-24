@@ -411,6 +411,20 @@ describe("tracked self-archive trees", () => {
     } finally { await f.service.dispose(); }
   });
 
+  it("includes a busy tracked child whose link spells its path differently", async () => {
+    const f = fixture();
+    f.runtime("root").session.sessionManager.appendCustomEntry?.("pi-web.subsession.link", {
+      spawnedBySessionId: "root", spawnedSessionId: "independent", spawnedSessionFile: "/sessions/./independent.jsonl", cwd: "/workspace",
+    });
+    f.list.mockResolvedValue(f.records.map((record) => record.id === "independent" ? { ...record, parentSessionPath: "/sessions/../sessions/root.jsonl" } : record));
+    try {
+      await f.service.status(sessionRef("root"));
+      await f.service.status(sessionRef("independent"));
+      f.runtime("independent").session.isStreaming = true;
+      await expect(f.service.checkSelfArchive("root")).rejects.toThrow("independent");
+    } finally { await f.service.dispose(); }
+  });
+
   it("refuses self-archival when a tracked link names a same-ID copy that is not listed first", async () => {
     const f = fixture();
     const child = f.records.find((record) => record.id === "child");

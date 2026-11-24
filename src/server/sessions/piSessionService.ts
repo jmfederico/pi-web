@@ -3956,7 +3956,7 @@ export class PiSessionService implements SessionRouteService {
         // A link to any same-ID copy reaches the ambiguity check in visit,
         // rather than skipping a child that may still be running.
         if ((child.conflictingPaths ?? []).some((path) => sessionPathsEqual(path, childFile))) visit(child);
-        else if (child.path === childFile && child.parentSessionPath === parent.path) visit(child);
+        else if (sessionPathsEqual(child.path, childFile) && child.parentSessionPath !== undefined && sessionPathsEqual(child.parentSessionPath, parent.path)) visit(child);
       };
       for (const entry of manager.getEntries?.() ?? manager.getBranch()) {
         const link = parsePersistedParentSubsessionLink(entry);
