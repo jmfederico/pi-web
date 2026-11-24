@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, copyFile, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { access, copyFile, link, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { piWebDataDir } from "../../config.js";
 import { canonicalizeStoredCwd } from "../workingDirectory.js";
@@ -324,14 +324,15 @@ async function includeStagedTranscript(staged: string, archivePath: string): Pro
   }
 }
 
+/** Put the original back without replacing a file recreated at its path. */
 async function unstage(staged: string, source: string): Promise<string> {
   try {
-    if (await pathExists(source)) return staged;
-    await rename(staged, source);
-    return source;
+    await link(staged, source);
   } catch {
     return staged;
   }
+  await unlink(staged).catch(() => undefined);
+  return source;
 }
 
 async function restoreSessionFile(archivePath: string, originalPath: string): Promise<void> {

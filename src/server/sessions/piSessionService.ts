@@ -3861,10 +3861,12 @@ export class PiSessionService implements SessionRouteService {
 
     for (const ref of uniqueRefs) {
       const archived = findArchivedRecordForBulkRef(archivedRecords, ref);
-      const listed = findListedSessionForBulkRef(sessionContext, ref);
+      const sameIdListings = (sessionContext.sessionsByCwd.get(ref.cwd) ?? []).filter((session) => session.id === ref.id);
       // An indexed archive whose original remains listed has not finished
       // cleanup; the store completes it or reports a conflict.
-      if (archived !== undefined && !archiveCleanupPending(archived, listed)) {
+      const remainingOriginal = archived === undefined ? undefined : sameIdListings.find((session) => archiveCleanupPending(archived, session));
+      const listed = remainingOriginal ?? sameIdListings[0];
+      if (archived !== undefined && remainingOriginal === undefined) {
         this.publishNotificationMutations(this.notificationStore.clearSession(archived.sessionId, "archive"));
         alreadyArchivedSessionIds.push(archived.sessionId);
         unreadArchivedIdentities.push(archived);
@@ -3880,7 +3882,7 @@ export class PiSessionService implements SessionRouteService {
 
       try {
         if (listed !== undefined) {
-          assertSingleListedTranscript(sessionContext.sessionsByCwd.get(ref.cwd) ?? [], listed, active?.runtime.session);
+          assertSingleListedTranscript(sameIdListings, listed, active?.runtime.session);
           planItems.push({ input: archiveInputFromListEntry(listed) });
         } else if (active !== undefined) {
           planItems.push({ input: archiveInputFromActiveSession(active.runtime.session) });
@@ -4440,23 +4442,23 @@ export class PiSessionService implements SessionRouteService {
       if (record.cwd === cwd) archivedById.set(record.sessionId, record);
     }
 
-    // Sessions are selected by ID, so a same-ID copy at another path makes the
-    // selection ambiguous. Record it and refuse only if that session is selected.
-    const addCandidate = (candidate: WorkspaceArchiveCandidate) => {
-      const existing = candidates.get(candidate.id);
-      if (existing === undefined) candidates.set(candidate.id, candidate);
-      else if (!sessionPathsEqual(existing.path, candidate.path)) {
-        existing.conflictingPaths = uniqueStrings([...existing.conflictingPaths ?? [], candidate.path]);
-      }
-    };
+    const listingsById = new Map<string, PiSessionListEntry[]>();
+    for (const session of sessions) listingsById.set(session.id, [...listingsById.get(session.id) ?? [], session]);
 
-    for (const session of sessions) {
-      const archived = archivedById.get(session.id);
-      if (archived === undefined || archiveCleanupPending(archived, session)) addCandidate(archiveCandidateFromListEntry(session));
-      else {
-        const candidate = archiveCandidateFromArchivedRecord(archived, session);
-        if (candidate !== undefined) addCandidate(candidate);
+    for (const [sessionId, listings] of listingsById) {
+      const archived = archivedById.get(sessionId);
+      const remainingOriginal = archived === undefined ? undefined : listings.find((session) => archiveCleanupPending(archived, session));
+      if (archived !== undefined && remainingOriginal === undefined) {
+        const candidate = archiveCandidateFromArchivedRecord(archived, listings[0]);
+        if (candidate !== undefined) candidates.set(sessionId, candidate);
+        continue;
       }
+      // Sessions are selected by ID, so a same-ID copy at another path makes
+      // the selection ambiguous. Record it and refuse only if it is selected.
+      const selected = remainingOriginal ?? listings[0];
+      if (selected === undefined) continue;
+      const conflictingPaths = distinctSessionPaths(listings.map((session) => session.path)).filter((path) => !sessionPathsEqual(path, selected.path));
+      candidates.set(sessionId, { ...archiveCandidateFromListEntry(selected), ...conflictingPaths.length === 0 ? {} : { conflictingPaths } });
     }
 
     for (const record of archivedById.values()) {
@@ -4476,7 +4478,7 @@ export class PiSessionService implements SessionRouteService {
         // The open runtime defines the session; never pair it with another file.
         candidates.set(session.sessionId, {
           ...archiveCandidateFromActiveSession(session, false),
-          conflictingPaths: uniqueStrings([existing.path, ...existing.conflictingPaths ?? []]),
+          conflictingPaths: distinctSessionPaths([existing.path, ...existing.conflictingPaths ?? []]),
         });
       }
     }
@@ -5988,10 +5990,6 @@ function findArchivedRecordForBulkRef(records: readonly ArchivedSessionRecord[],
   return records.find((record) => record.cwd === ref.cwd && record.sessionId === ref.id);
 }
 
-function findListedSessionForBulkRef(context: BulkSessionRefContext, ref: SessionBulkMutationRef): PiSessionListEntry | undefined {
-  return findSessionByExactId(context.sessionsByCwd.get(ref.cwd) ?? [], ref.id);
-}
-
 function findSessionByExactId(sessions: readonly PiSessionListEntry[], sessionId: string): PiSessionListEntry | undefined {
   return sessions.find((session) => session.id === sessionId);
 }
@@ -6163,13 +6161,18 @@ function archiveCleanupPending(record: ArchivedSessionRecord, listed: PiSessionL
 
 /** Archive input is selected by ID; refuse when that ID names more than one transcript. */
 function assertSingleListedTranscript(sessions: readonly PiSessionListEntry[], listed: PiSessionListEntry, active: PiAgentSession | undefined): void {
-  const paths = [listed.path];
-  const addPath = (path: string | undefined) => {
-    if (path !== undefined && !paths.some((known) => sessionPathsEqual(known, path))) paths.push(path);
-  };
-  addPath(nonEmptyString(active?.sessionFile));
-  for (const session of sessions) if (session.id === listed.id) addPath(session.path);
+  const paths = distinctSessionPaths([
+    listed.path, nonEmptyString(active?.sessionFile), ...sessions.filter((session) => session.id === listed.id).map((session) => session.path),
+  ]);
   if (paths.length > 1) throw sameIdSessionCopyError(listed.id, paths);
+}
+
+function distinctSessionPaths(paths: readonly (string | undefined)[]): string[] {
+  const distinct: string[] = [];
+  for (const path of paths) {
+    if (path !== undefined && !distinct.some((known) => sessionPathsEqual(known, path))) distinct.push(path);
+  }
+  return distinct;
 }
 
 function assertArchiveTargetsUnambiguous(targets: readonly WorkspaceArchiveCandidate[]): void {

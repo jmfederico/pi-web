@@ -406,6 +406,26 @@ describe("tracked self-archive trees", () => {
     } finally { await f.service.dispose(); }
   });
 
+  it.each(["bulk", "tree"] as const)("refuses %s archival of an indexed session whose remaining original has a same-ID copy", async (source) => {
+    const f = fixture();
+    const target = source === "bulk" ? "independent" : "child";
+    const original = f.records.find((record) => record.id === target);
+    if (original === undefined) throw new Error("Missing fixture record");
+    f.archived.push(f.toArchived({ ...original, sessionId: target, created: "", modified: "", messageCount: 0, firstMessage: "" }));
+    // The copy is listed before the original that still needs cleanup.
+    f.list.mockResolvedValue([{ ...original, path: "/sessions/copy.jsonl" }, ...f.records]);
+    try {
+      if (source === "bulk") {
+        const result = await f.service.archiveMany([sessionRef(target)]);
+        expect(result.archivedSessionIds).toEqual([]);
+        expect(result.failures[0]?.error).toContain("more than one transcript");
+      } else {
+        await expect(f.service.archiveTree(sessionRef("root"))).rejects.toThrow("more than one transcript");
+      }
+      expect(f.archiveMany).not.toHaveBeenCalled();
+    } finally { await f.service.dispose(); }
+  });
+
   it("declines a tree selection made stale by detaching a child", async () => {
     const dir = await mkdtemp(join(tmpdir(), "pi-web-archive-detach-"));
     const f = fixture({ sessionDir: dir });
