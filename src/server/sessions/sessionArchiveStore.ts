@@ -157,8 +157,10 @@ export class SessionArchiveStore {
 
       const sessions = data.sessions.filter((session) => session.sessionId !== sessionId);
       await this.write({ sessions });
-      // Keep the archive copy until the record is gone, so a failed write can be retried.
-      if (replacedArchive !== undefined) await unlink(replacedArchive);
+      // Keep the archive copy until the record is gone, so a failed write can be
+      // retried. The restore has then succeeded; a leftover copy is an older
+      // prefix that a later archive of this session refreshes.
+      if (replacedArchive !== undefined) await unlink(replacedArchive).catch(() => undefined);
     });
   }
 
