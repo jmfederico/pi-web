@@ -108,6 +108,20 @@ describe("Workflows v5 project peer", () => {
   });
 
   it.each([
+    "'leading and trailing apostrophes'",
+    "a backslash before an apostrophe: \\'",
+    "trailing backslashes \\\\",
+    "''",
+  ])("keeps the description %j as one literal /worktree argument", async (description) => {
+    const f = await fixture();
+    await f.request("dispatch", { base: "main", description });
+    const command = f.run.mock.calls[0]?.[0]?.prompt ?? "";
+    const args = parseCommandArgs(command.slice("/worktree ".length));
+    expect(args).toHaveLength(1);
+    expect(substituteArgs("$ARGUMENTS", args)).toBe(`base: main\n\ndescription:\n${description}`);
+  });
+
+  it.each([
     null, [], {}, { base: "", description: "purpose" }, { base: "main", description: "  " },
     { base: "main\0", description: "purpose" }, { base: "a".repeat(1025), description: "purpose" },
     { base: "main", description: "é".repeat(8193) }, { base: "main", description: "purpose", workspaceId: "guessed" },
