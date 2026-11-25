@@ -51,6 +51,7 @@ export class VisibleContentController implements ReactiveController {
   private work: (() => void) | undefined;
   private cancelQueued: Cancel | undefined;
   private wasVisible = false;
+  private wasRevealed = false;
 
   constructor(
     private readonly host: ContentHost,
@@ -60,10 +61,18 @@ export class VisibleContentController implements ReactiveController {
     host.addController(this);
   }
 
+  /** Worth starting work now: on screen, in a visible document, inside open disclosures. */
   get visible(): boolean {
-    return this.host.isConnected && this.intersecting
-      && this.host.ownerDocument.visibilityState !== "hidden"
-      && this.details.every((details) => details.open);
+    return this.revealed && this.intersecting
+      && this.host.ownerDocument.visibilityState !== "hidden";
+  }
+
+  /**
+   * Part of the rendered layout: connected and not inside a closed disclosure.
+   * Viewport position is deliberately excluded so finished output can stay mounted.
+   */
+  get revealed(): boolean {
+    return this.host.isConnected && this.details.every((details) => details.open);
   }
 
   hostConnected(): void {
@@ -109,6 +118,7 @@ export class VisibleContentController implements ReactiveController {
     this.target = undefined;
     this.intersecting = false;
     this.wasVisible = false;
+    this.wasRevealed = false;
     for (const details of this.details) details.removeEventListener("toggle", this.refresh);
     this.details = [];
     this.host.ownerDocument.removeEventListener("visibilitychange", this.refresh);
@@ -132,8 +142,10 @@ export class VisibleContentController implements ReactiveController {
       this.cancelQueued?.();
       this.cancelQueued = undefined;
     }
-    if (visible !== this.wasVisible) {
+    const revealed = this.revealed;
+    if (visible !== this.wasVisible || revealed !== this.wasRevealed) {
       this.wasVisible = visible;
+      this.wasRevealed = revealed;
       this.visibilityChanged(visible);
     }
     this.enqueue();

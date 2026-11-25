@@ -58,8 +58,10 @@ export class ContentRendererHost extends LitElement {
   private preview: TemplateResult | undefined;
   private previewScheduled = false;
   private displayedPreview: TemplateResult | undefined;
-  private readonly enhancement = new VisibleContentController(this, (visible) => {
-    if (!visible) this.cancelPreview();
+  private readonly enhancement = new VisibleContentController(this, () => {
+    // Scrolling offscreen keeps a started preview: swapping back to source
+    // changes its height, which can move it into view again and loop.
+    if (!this.enhancement.revealed) this.cancelPreview();
     this.requestUpdate();
   });
 
@@ -180,7 +182,9 @@ export class ContentRendererHost extends LitElement {
   }
 
   private get previewActive(): boolean {
-    return this.enhancement.visible && !this.raw
+    // Visibility gates starting a preview; a started one needs only to stay revealed.
+    const shown = this.preview === undefined ? this.enhancement.visible : this.enhancement.revealed;
+    return shown && !this.raw
       && (this.renderer?.renderMode === "automatic" || this.allowManualPreview || this.manuallyActivated);
   }
 
