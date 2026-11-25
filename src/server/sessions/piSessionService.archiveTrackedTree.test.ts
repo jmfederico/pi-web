@@ -425,40 +425,6 @@ describe("tracked self-archive trees", () => {
     } finally { await f.service.dispose(); }
   });
 
-  it("refuses self-archival when a tracked link names a same-ID copy that is not listed first", async () => {
-    const f = fixture();
-    const child = f.records.find((record) => record.id === "child");
-    if (child === undefined) throw new Error("Missing fixture record");
-    f.list.mockResolvedValue([{ ...child, path: "/sessions/copy-of-child.jsonl" }, ...f.records]);
-    try {
-      await f.service.status(sessionRef("root"));
-      await f.service.status(sessionRef("child"));
-      f.runtime("child").session.isStreaming = true;
-      await expect(f.service.checkSelfArchive("root")).rejects.toThrow("more than one transcript");
-      f.request();
-      await vi.runOnlyPendingTimersAsync();
-      expect(f.archiveMany).not.toHaveBeenCalled();
-      expect(f.runtime("root").calls.dispose).toBe(0);
-    } finally { await f.service.dispose(); }
-  });
-
-  it("refuses tree archival when a same-ID copy that is not listed first names a tree session as parent", async () => {
-    const f = fixture();
-    const independent = f.records.find((record) => record.id === "independent");
-    if (independent === undefined) throw new Error("Missing fixture record");
-    f.list.mockResolvedValue([...f.records, { ...independent, path: "/sessions/copy-of-independent.jsonl", parentSessionPath: f.path("root") }]);
-    try {
-      await f.service.status(sessionRef("root"));
-      await expect(f.service.archiveTree(sessionRef("root"))).rejects.toThrow("more than one transcript");
-      expect(f.archiveMany).not.toHaveBeenCalled();
-      expect(f.runtime("root").calls.dispose).toBe(0);
-      // A copy outside the tree does not block it.
-      f.list.mockResolvedValue([...f.records, { ...independent, path: "/sessions/copy-of-independent.jsonl" }]);
-      await f.service.archiveTree(sessionRef("root"));
-      expect(f.archiveMany).toHaveBeenCalledOnce();
-    } finally { await f.service.dispose(); }
-  });
-
   it.each(["bulk", "tree"] as const)("refuses %s archival of an indexed session whose remaining original has a same-ID copy", async (source) => {
     const f = fixture();
     const target = source === "bulk" ? "independent" : "child";

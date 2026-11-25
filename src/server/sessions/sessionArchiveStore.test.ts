@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, appendFile, chmod, mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, appendFile, chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -262,43 +262,31 @@ describe("SessionArchiveStore", () => {
     await expect(store.list()).resolves.toEqual([record]);
   });
 
-  it.each([
-    { name: "includes a message appended", change: "append", archived: transcript("a", "original", "appended") },
-    { name: "leaves unarchived an original rewritten", change: "rewrite", archived: undefined },
-  ] as const)("$name after the copy but before the index commit", async ({ change, archived }) => {
+  it("leaves a session unarchived when a message is appended after the copy", async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-web-archive-source-change-"));
     tempRoots.push(root);
     const store = new SessionArchiveStore(join(root, "index.json"), join(root, "archive"));
     const input = archiveInput("a", join(root, "a.jsonl"));
     const archivePath = join(root, "archive", "a.jsonl");
     await writeFile(input.path, transcript("a", "original"));
-    const rewritten = transcript("a", "rewritten");
-    // Change the original between the archive copy and the index commit.
+    // Append between the archive copy and the index commit.
     const writeIndex: unknown = Reflect.get(store, "write");
     if (typeof writeIndex !== "function") throw new Error("Expected the archive index writer");
     Reflect.set(store, "write", async (data: unknown) => {
+      Reflect.deleteProperty(store, "write");
       await expect(readFile(archivePath, "utf8")).resolves.toBe(transcript("a", "original"));
-      if (change === "append") await appendFile(input.path, `${JSON.stringify({ type: "message", message: { role: "user", content: "appended" } })}\n`);
-      else await writeFile(input.path, rewritten);
+      await appendFile(input.path, `${JSON.stringify({ type: "message", message: { role: "user", content: "appended" } })}\n`);
       const written: unknown = Reflect.apply(writeIndex, store, [data]);
       await written;
     });
 
-    const attempt = store.archive(input);
-    if (archived !== undefined) {
-      await attempt;
-      expect(await exists(input.path)).toBe(false);
-      await expect(readFile(archivePath, "utf8")).resolves.toBe(archived);
-    } else {
-      await expect(attempt).rejects.toThrow(/changed during archival.*left unarchived/);
-      await expect(readFile(input.path, "utf8")).resolves.toBe(rewritten);
-      await expect(store.list()).resolves.toEqual([]);
-      expect(await exists(archivePath)).toBe(false);
-    }
-    expect((await readdir(root)).filter((name) => name.endsWith(".archiving"))).toEqual([]);
+    await expect(store.archive(input)).rejects.toThrow(/changed during archival.*left unarchived/);
+    await expect(readFile(input.path, "utf8")).resolves.toBe(transcript("a", "original", "appended"));
+    await expect(store.list()).resolves.toEqual([]);
+    expect(await exists(archivePath)).toBe(false);
   });
 
-  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("leaves a session unarchived when its original cannot be moved", async () => {
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("leaves a session unarchived when its original cannot be removed", async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-web-archive-cleanup-"));
     tempRoots.push(root);
     const activeDir = join(root, "active");
@@ -309,7 +297,7 @@ describe("SessionArchiveStore", () => {
     await writeFile(input.path, original);
     await chmod(activeDir, 0o555);
     try {
-      await expect(store.archive(input)).rejects.toThrow(/original could not be moved.*left unarchived/);
+      await expect(store.archive(input)).rejects.toThrow(/left unarchived/);
     } finally {
       await chmod(activeDir, 0o755);
     }

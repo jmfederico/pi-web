@@ -108,6 +108,7 @@
             <a href="#worktree-list-out-of-date">A worktree I created is missing</a>
             <a href="#navigation-order">How do I arrange navigation lists?</a>
             <a href="#session-links">How do I link to a session?</a>
+            <a href="#one-session-one-place">Can I use a session in Pi and PI WEB at once?</a>
             <a href="#session-notices">Where are persistent session warnings?</a>
             <a href="#chat-images">How do chat images load?</a>
             <a href="#chat-updates">Chat updates stopped</a>
@@ -374,6 +375,20 @@
                 full session link. It checks this machine first, then connected machines; add
                 <code>&amp;machine=&lt;machine ID&gt;</code> to check only one. Only sessions you could open from a
                 workspace's session list are found; for others, the link reports that the session was not found.
+              </p>
+            </article>
+
+            <article id="one-session-one-place" class="faq-item">
+              <h2>Can I use a session in Pi and PI WEB at the same time?</h2>
+              <p>
+                Use each session in one place at a time. PI WEB and Pi share the same session files, and PI WEB shows
+                messages that another Pi process adds to an idle session. When two programs write to the same session,
+                messages can be lost or split into a separate file.
+              </p>
+              <p>
+                Close a session in other Pi or PI WEB instances before archiving, restoring, or detaching it in PI WEB.
+                PI WEB warns when another PI WEB instance was recently active in a session; it does not detect Pi
+                running in a terminal.
               </p>
             </article>
 

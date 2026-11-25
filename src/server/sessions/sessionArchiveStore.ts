@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, copyFile, link, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { piWebDataDir } from "../../config.js";
 import { canonicalizeStoredCwd } from "../workingDirectory.js";
@@ -100,50 +100,49 @@ export class SessionArchiveStore {
       }
 
       await this.write(data);
-      const failures: { file: (typeof filesToRemove)[number]; error: ArchiveCleanupError }[] = [];
+      const failures: { file: (typeof filesToRemove)[number]; error: unknown }[] = [];
       for (const file of filesToRemove) {
         try {
           await removeArchivedSource(file.session, file.archivePath);
         } catch (error: unknown) {
-          failures.push({ file, error: error instanceof ArchiveCleanupError ? error : new ArchiveCleanupError(errorMessage(error), undefined, false, error) });
+          failures.push({ file, error });
         }
       }
       if (failures.length === 0) return records;
-      const errors = await this.rollBackUnfinishedArchives(data, failures);
-      const [only] = errors;
-      throw errors.length === 1 && only !== undefined ? only : new AggregateError(errors, errors.map(errorMessage).join("; "));
+      throw await this.rollBackUnfinishedArchives(data, failures);
     });
   }
 
   /**
-   * Unindex sessions this operation archived but whose original is back in
-   * place, so a failed archive leaves them active. Records that existed
-   * before, or whose original moved, stay indexed until a retry finishes them.
+   * A failed cleanup always leaves the original in place. Unindex sessions this
+   * operation archived so they stay active; records that existed before stay
+   * indexed until a retry finishes them or a restore keeps the original.
    */
   private async rollBackUnfinishedArchives(
     data: SessionArchiveFile,
-    failures: readonly { file: { session: ArchiveSessionInput; archivePath: string; created: boolean }; error: ArchiveCleanupError }[],
-  ): Promise<Error[]> {
-    const rollBack = failures.filter(({ file, error }) => file.created && error.originalInPlace);
-    const rollBackIds = new Set(rollBack.map(({ file }) => file.session.sessionId));
+    failures: readonly { file: { session: ArchiveSessionInput; archivePath: string; created: boolean }; error: unknown }[],
+  ): Promise<Error> {
+    const rollBackIds = new Set(failures.filter(({ file }) => file.created).map(({ file }) => file.session.sessionId));
     let rolledBack = false;
-    if (rollBack.length > 0) {
+    if (rollBackIds.size > 0) {
       try {
         await this.write({ sessions: data.sessions.filter((record) => !rollBackIds.has(record.sessionId)) });
         rolledBack = true;
-        for (const { file } of rollBack) await unlink(file.archivePath).catch(() => undefined);
+        for (const { file } of failures) {
+          if (rollBackIds.has(file.session.sessionId)) await unlink(file.archivePath).catch(() => undefined);
+        }
       } catch {
         // Keep the indexed archive; retrying archival completes or reports it.
       }
     }
-    return failures.map(({ file, error }) => {
-      const { sessionId } = file.session;
-      if (rolledBack && rollBackIds.has(sessionId)) {
-        return new Error(`Could not archive session ${sessionId}: ${error.message}. It was left unarchived at ${file.session.path}`, { cause: error });
-      }
-      const preserved = error.preservedAt === undefined ? "" : `. The original was preserved at ${error.preservedAt}`;
-      return new Error(`Session ${sessionId} is archived, but ${error.message}${preserved}`, { cause: error });
+    const errors = failures.map(({ file, error }) => {
+      const { sessionId, path } = file.session;
+      return rolledBack && rollBackIds.has(sessionId)
+        ? new Error(`Could not archive session ${sessionId}: ${errorMessage(error)}. It was left unarchived`, { cause: error })
+        : new Error(`Session ${sessionId} is archived, but its original at ${path} was kept: ${errorMessage(error)}`, { cause: error });
     });
+    const [only] = errors;
+    return errors.length === 1 && only !== undefined ? only : new AggregateError(errors, errors.map(errorMessage).join("; "));
   }
 
   async restore(sessionId: string): Promise<void> {
@@ -274,65 +273,21 @@ async function copySessionFileToArchive(session: ArchiveSessionInput, archivePat
 }
 
 /**
- * Remove the original only once the archive holds all of it. Pi appends by
- * path, so moving the original aside first makes a later append recreate the
- * original path instead of landing in a file that is about to be deleted.
+ * Delete the original only while it still matches the archive copy. Another
+ * writer is not supported, so this guards the archive operation's own window.
  */
 async function removeArchivedSource(session: ArchiveSessionInput, archivePath: string): Promise<void> {
   const source = session.path;
   if (source === archivePath) return;
-  const staged = join(dirname(source), `.${basename(source)}.${randomUUID()}.archiving`);
+  let original: Buffer;
   try {
-    await rename(source, staged);
+    original = await readFile(source);
   } catch (error: unknown) {
     if (isNodeErrorWithCode(error, "ENOENT")) return;
-    throw new ArchiveCleanupError(`its original could not be moved (${errorMessage(error)})`, source, true, error);
-  }
-  try {
-    await includeStagedTranscript(staged, archivePath);
-  } catch (error: unknown) {
-    const preservedAt = await unstage(staged, source);
-    throw new ArchiveCleanupError(errorMessage(error), preservedAt, preservedAt === source, error);
-  }
-  await unlink(staged);
-  // The archive holds everything written before the move; keep later writes too.
-  if (await pathExists(source)) throw new ArchiveCleanupError("its original was written again during archival", source, false);
-}
-
-/**
- * Thrown after the index commit. `preservedAt` locates a remaining original;
- * `originalInPlace` means it is the complete original at its own path.
- */
-class ArchiveCleanupError extends Error {
-  constructor(message: string, readonly preservedAt: string | undefined, readonly originalInPlace: boolean, cause?: unknown) {
-    super(message, { cause });
-  }
-}
-
-/** Messages appended after the copy are added to this session's own archive copy. */
-async function includeStagedTranscript(staged: string, archivePath: string): Promise<void> {
-  const [stagedContent, archiveContent] = await Promise.all([readFile(staged), readFile(archivePath)]);
-  if (stagedContent.equals(archiveContent)) return;
-  if (!startsWith(stagedContent, archiveContent)) throw new Error("its transcript changed during archival");
-  const temp = join(dirname(archivePath), `.${basename(archivePath)}.${randomUUID()}.tmp`);
-  try {
-    await copyFile(staged, temp, constants.COPYFILE_EXCL);
-    await rename(temp, archivePath);
-  } catch (error: unknown) {
-    await unlink(temp).catch(() => undefined);
     throw error;
   }
-}
-
-/** Put the original back without replacing a file recreated at its path. */
-async function unstage(staged: string, source: string): Promise<string> {
-  try {
-    await link(staged, source);
-  } catch {
-    return staged;
-  }
-  await unlink(staged).catch(() => undefined);
-  return source;
+  if (!original.equals(await readFile(archivePath))) throw new Error("its transcript changed during archival");
+  await unlink(source);
 }
 
 async function restoreSessionFile(archivePath: string, originalPath: string): Promise<void> {
