@@ -104,11 +104,13 @@ function boundedString(value: unknown, name: string, maxBytes: number): string {
 }
 
 function worktreeCommand(base: string, description: string): string {
-  // Pi parses quotes before expanding $ARGUMENTS. Keep the formatted text in
-  // one argument, switching to double quotes for literal apostrophes. These
-  // transport quotes disappear during expansion; user text stays unchanged.
+  // Pi 1.5.1+ parses quotes before expanding $ARGUMENTS. Keep the formatted
+  // text in one single-quoted argument, where `\'` is a literal apostrophe.
+  // A backslash before the closing quote would escape it, so trailing
+  // backslashes follow the quote, where Pi keeps them as literal text.
   const details = `base: ${base}\n\ndescription:\n${description}`;
-  return `/worktree '${details.replaceAll("'", "'\"'\"'")}'`;
+  const quoted = details.replace(/\\+$/u, "");
+  return `/worktree '${quoted.replaceAll("'", "\\'")}'${details.slice(quoted.length)}`;
 }
 
 async function runGit(
