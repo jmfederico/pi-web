@@ -151,12 +151,14 @@ export class SessionArchiveStore {
       const record = data.sessions.find((session) => session.sessionId === sessionId);
       if (record === undefined) return;
 
-      if (record.archivePath !== undefined && record.originalPath !== undefined) {
-        await restoreSessionFile(record.archivePath, record.originalPath);
-      }
+      const replacedArchive = record.archivePath !== undefined && record.originalPath !== undefined
+        ? await restoreSessionFile(record.archivePath, record.originalPath)
+        : undefined;
 
       const sessions = data.sessions.filter((session) => session.sessionId !== sessionId);
       await this.write({ sessions });
+      // Keep the archive copy until the record is gone, so a failed write can be retried.
+      if (replacedArchive !== undefined) await unlink(replacedArchive);
     });
   }
 
@@ -290,20 +292,26 @@ async function removeArchivedSource(session: ArchiveSessionInput, archivePath: s
   await unlink(source);
 }
 
-async function restoreSessionFile(archivePath: string, originalPath: string): Promise<void> {
-  if (archivePath === originalPath) return;
+/**
+ * Put the transcript back at its original path. Returns an archive copy that
+ * is superseded by the original and can be deleted once the record is removed.
+ */
+async function restoreSessionFile(archivePath: string, originalPath: string): Promise<string | undefined> {
+  if (archivePath === originalPath) return undefined;
   if (await pathExists(originalPath)) {
-    // Interrupted cleanup can leave the original behind. When it still holds
-    // the whole archived transcript, it is the current copy.
-    const occupied = new Error(`Cannot restore archived session because a session already exists at ${originalPath}`);
-    if (!await pathExists(archivePath)) throw occupied;
+    // An interrupted restore already moved the archive copy back.
+    if (!await pathExists(archivePath)) return undefined;
+    // Interrupted archive cleanup can leave the original behind. When it still
+    // holds the whole archived transcript, it is the current copy.
     const [original, archived] = await Promise.all([readFile(originalPath), readFile(archivePath)]);
-    if (archived.length === 0 || !startsWith(original, archived)) throw occupied;
-    await unlink(archivePath);
-    return;
+    if (archived.length === 0 || !startsWith(original, archived)) {
+      throw new Error(`Cannot restore archived session because a session already exists at ${originalPath}`);
+    }
+    return archivePath;
   }
   await mkdir(dirname(originalPath), { recursive: true });
   await moveFile(archivePath, originalPath);
+  return undefined;
 }
 
 function startsWith(content: Buffer, prefix: Buffer): boolean {

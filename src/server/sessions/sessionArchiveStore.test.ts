@@ -336,6 +336,28 @@ describe("SessionArchiveStore", () => {
     expect(await exists(join(root, "archive", "a.jsonl"))).toBe(false);
   });
 
+  it.each([false, true])("retries a restore whose index write failed (original left behind: %s)", async (originalLeftBehind) => {
+    const root = await mkdtemp(join(tmpdir(), "pi-web-archive-restore-retry-"));
+    tempRoots.push(root);
+    const store = new SessionArchiveStore(join(root, "index.json"), join(root, "archive"));
+    const input = archiveInput("a", join(root, "a.jsonl"));
+    const original = transcript("a", "original");
+    await writeFile(input.path, original);
+    await store.archive(input);
+    const current = originalLeftBehind ? transcript("a", "original", "continued") : original;
+    if (originalLeftBehind) await writeFile(input.path, current);
+    Reflect.set(store, "write", () => {
+      Reflect.deleteProperty(store, "write");
+      return Promise.reject(new Error("index unavailable"));
+    });
+
+    await expect(store.restore("a")).rejects.toThrow("index unavailable");
+    await store.restore("a");
+    await expect(store.list()).resolves.toEqual([]);
+    await expect(readFile(input.path, "utf8")).resolves.toBe(current);
+    expect(await exists(join(root, "archive", "a.jsonl"))).toBe(false);
+  });
+
   it("rejects archiving an indexed session from a different original path", async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-web-archive-other-original-"));
     tempRoots.push(root);
