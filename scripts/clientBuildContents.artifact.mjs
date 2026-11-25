@@ -71,6 +71,11 @@ describe("production client build contents", () => {
     expect(licenses).toEqual(expect.arrayContaining(["NOTICE.txt", "LICENSE-APACHE-2.0.txt", "LICENSE-MIT.txt"]));
   });
 
+  it("ships the licenses of packages bundled into the minified client", async () => {
+    const licenses = await readFile(join(repoRoot, "dist/client/licenses/bundled-dependencies.md"), "utf8");
+    for (const name of ["lit", "@codemirror/view", "@lezer/common"]) expect(licenses).toContain(`## ${name} - `);
+  });
+
   it("excludes the checkout-only Playground plugin and assets from release output", async () => {
     const files = await readdir(join(repoRoot, "dist"), { recursive: true });
     expect(files.filter((file) => /playground/i.test(file))).toEqual([]);
