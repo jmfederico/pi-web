@@ -64,7 +64,7 @@ describe("shared Mermaid engine", () => {
     expect(load).toHaveBeenCalledOnce();
   });
 
-  it("skips aborted queued diagrams and releases an aborted caller without stalling the queue", async () => {
+  it("releases aborted callers at once but lets started work finish before the next diagram", async () => {
     const engine = new MermaidEngine(() => Promise.resolve("engine"));
     const running = new AbortController();
     const queued = new AbortController();
@@ -77,11 +77,30 @@ describe("shared Mermaid engine", () => {
     running.abort();
     await expect(first).rejects.toThrow();
     await expect(skipped).rejects.toThrow();
+    // The engine is still drawing the aborted diagram; the next one must not queue behind it.
+    await Promise.resolve();
+    expect(post).toHaveBeenCalledOnce();
+    reply({ type: "mermaid-rendered", id: 1, ...drawn });
     await vi.waitFor(() => { expect(post).toHaveBeenCalledTimes(2); });
     expect(post).toHaveBeenLastCalledWith(expect.objectContaining({ id: 2, text: "last" }), "*");
-    reply({ type: "mermaid-rendered", id: 1, ...drawn });
     reply({ type: "mermaid-rendered", id: 2, ...drawn });
     await expect(last).resolves.toEqual(drawn);
+  });
+
+  it("unloads an engine that finishes loading after its only diagram was aborted", async () => {
+    vi.useFakeTimers();
+    let finishLoading: (engine: string) => void = () => { throw new Error("Not loading"); };
+    const engine = new MermaidEngine(() => new Promise((resolve) => { finishLoading = resolve; }), { idleMs: 5_000 });
+    const controller = new AbortController();
+    const aborted = engine.render(request("abandoned", controller.signal));
+    controller.abort();
+    await expect(aborted).rejects.toThrow();
+    finishLoading("engine");
+    const { post } = await engineFrame();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(post).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(document.querySelector("iframe")).toBeNull();
   });
 
   it("replaces a stuck engine after the timeout and releases an idle engine's memory", async () => {

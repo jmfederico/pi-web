@@ -134,7 +134,6 @@ export class MermaidEngine implements MermaidRenderer {
         this.stopActive = undefined;
         clearTimeout(timeout);
         this.document.defaultView?.removeEventListener("message", onMessage);
-        job.signal.removeEventListener("abort", onAbort);
         result();
       };
       const timeout = setTimeout(() => {
@@ -142,9 +141,6 @@ export class MermaidEngine implements MermaidRenderer {
         this.teardown();
         finish(() => { reject(new Error("Mermaid preview timed out")); });
       }, this.timeoutMs);
-      // Queued work is skipped on abort; started work finishes so the queue stays ordered,
-      // but its waiting caller has already been released.
-      const onAbort = () => { finish(() => { reject(abortError(job.signal)); }); };
       const onMessage = (event: MessageEvent<unknown>) => {
         const data = event.data;
         if (event.source === null || event.source !== this.frame?.contentWindow) return;
@@ -155,10 +151,14 @@ export class MermaidEngine implements MermaidRenderer {
         finish(() => { if (result === undefined) reject(new Error("Mermaid returned an invalid diagram")); else resolve(result); });
       };
       this.stopActive = (error) => { finish(() => { reject(error); }); };
-      job.signal.addEventListener("abort", onAbort, { once: true });
       this.document.defaultView?.addEventListener("message", onMessage);
+      // render() releases an aborted caller at once. This draw still owns the engine until
+      // it settles, so the next diagram never queues behind it unbounded and an engine
+      // that finished loading after the abort still gets its idle unload.
       this.engineWindow().then((engine) => {
-        if (!settled) engine.postMessage({ type: "mermaid-render", id, text: job.text, width: job.width }, "*");
+        if (settled) return;
+        if (job.signal.aborted) finish(() => { reject(abortError(job.signal)); });
+        else engine.postMessage({ type: "mermaid-render", id, text: job.text, width: job.width }, "*");
       }, (error: unknown) => { finish(() => { reject(error instanceof Error ? error : new Error(String(error))); }); });
     });
   }
