@@ -425,6 +425,25 @@ describe("tracked self-archive trees", () => {
     } finally { await f.service.dispose(); }
   });
 
+  it.each(["tree", "self"] as const)("refuses %s archival while any session ID in the workspace has two transcripts", async (source) => {
+    const f = fixture();
+    const independent = f.records.find((record) => record.id === "independent");
+    if (independent === undefined) throw new Error("Missing fixture record");
+    // The duplicate is outside the tree; PI WEB reports it rather than judging relevance.
+    f.list.mockResolvedValue([...f.records, { ...independent, path: "/sessions/copy-of-independent.jsonl" }]);
+    try {
+      await f.service.status(sessionRef("root"));
+      if (source === "tree") await expect(f.service.archiveTree(sessionRef("root"))).rejects.toThrow("session ID independent");
+      else {
+        f.request();
+        await vi.runOnlyPendingTimersAsync();
+        expect(f.notifications.inboxSnapshot("root", "/workspace").notifications[0]?.message).toContain("session ID independent");
+      }
+      expect(f.archiveMany).not.toHaveBeenCalled();
+      expect(f.runtime("root").calls.dispose).toBe(0);
+    } finally { await f.service.dispose(); }
+  });
+
   it.each(["bulk", "tree"] as const)("refuses %s archival of an indexed session whose remaining original has a same-ID copy", async (source) => {
     const f = fixture();
     const target = source === "bulk" ? "independent" : "child";

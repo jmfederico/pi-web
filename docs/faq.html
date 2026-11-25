@@ -109,6 +109,7 @@
             <a href="#navigation-order">How do I arrange navigation lists?</a>
             <a href="#session-links">How do I link to a session?</a>
             <a href="#one-session-one-place">Can I use a session in Pi and PI WEB at once?</a>
+            <a href="#duplicate-session-ids">Archiving reports more than one transcript</a>
             <a href="#session-notices">Where are persistent session warnings?</a>
             <a href="#chat-images">How do chat images load?</a>
             <a href="#chat-updates">Chat updates stopped</a>
@@ -389,6 +390,16 @@
                 Close a session in other Pi or PI WEB instances before archiving, restoring, or detaching it in PI WEB.
                 PI WEB warns when another PI WEB instance was recently active in a session; it does not detect Pi
                 running in a terminal.
+              </p>
+            </article>
+
+            <article id="duplicate-session-ids" class="faq-item">
+              <h2>Archiving reports more than one transcript for a session ID</h2>
+              <p>
+                Each session file must have its own session ID. A copy made outside Pi and PI WEB keeps the original
+                ID, for example a manual backup in the sessions folder, a sync conflict copy, or a restored backup kept
+                next to the original. PI WEB does not choose between copies: archiving stops, names the files, and
+                changes nothing. Move the extra copy out of the sessions folder, then try again.
               </p>
             </article>
 
