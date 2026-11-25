@@ -66,14 +66,16 @@ test("deferred long code formatting preserves the reading position when entering
   await expectStableEntry(page);
 });
 
-test("highlighted code preserves the reading position after repeated offscreen exit and reentry", async ({ page }) => {
+test("highlighted code stays rendered and preserves the reading position across repeated offscreen exit and reentry", async ({ page }) => {
   await prepareReading(page);
   // Initial deferred formatting has its own regression above; warm the real
   // renderer before testing the independent offscreen visibility transitions.
   await recordEntry(page);
   for (let cycle = 0; cycle < 2; cycle++) {
     await page.evaluate(() => window.codeScrollFixture.exitBelow());
-    await expect(page.locator("pi-web-highlighted-code")).toHaveCount(0);
+    // Reverting offscreen previews to source changed their height and could loop.
+    await page.evaluate(() => window.codeScrollFixture.frames());
+    await expect(page.locator("pi-web-highlighted-code")).toHaveCount(1);
     await page.evaluate(() => window.codeScrollFixture.frames());
     await expectStableEntry(page);
   }
