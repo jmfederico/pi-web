@@ -239,6 +239,8 @@ export default defineConfig({
   build: {
     outDir: "../../dist/client",
     emptyOutDir: true,
+    // Minification strips upstream notices; ship bundled packages' licenses instead.
+    license: { fileName: "licenses/bundled-dependencies.md" },
     // Accept the measured ~1,570 kB main chunk, but flag growth beyond ~15%.
     chunkSizeWarningLimit: 1800,
     rollupOptions: {
