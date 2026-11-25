@@ -3864,6 +3864,12 @@ export class PiSessionService implements SessionRouteService {
       // cleanup; the store completes it or reports a conflict.
       const remainingOriginal = archived === undefined ? undefined : sameIdListings.find((session) => archiveCleanupPending(archived, session));
       const listed = remainingOriginal ?? sameIdListings[0];
+      try {
+        assertListingsMatchArchive(archived, sameIdListings);
+      } catch (error: unknown) {
+        failures.push({ sessionId: ref.id, error: errorMessage(error) });
+        continue;
+      }
       if (archived !== undefined && remainingOriginal === undefined) {
         this.publishNotificationMutations(this.notificationStore.clearSession(archived.sessionId, "archive"));
         alreadyArchivedSessionIds.push(archived.sessionId);
@@ -4426,6 +4432,7 @@ export class PiSessionService implements SessionRouteService {
     if (sessionFile === undefined || sessionFile === "") throw new Error("Session is not persisted");
     const [sessions, archived] = await Promise.all([this.sessionManager.list(cwd), this.archiveStore.get(session.sessionId)]);
     const sameIdListings = sessions.filter((candidate) => candidate.id === session.sessionId);
+    assertListingsMatchArchive(archived, sameIdListings);
     const remainingOriginal = archived === undefined ? undefined : sameIdListings.find((candidate) => archiveCleanupPending(archived, candidate));
     const listed = remainingOriginal ?? sameIdListings[0];
     if (listed === undefined) return archiveInputFromActiveSession(session);
@@ -4448,6 +4455,7 @@ export class PiSessionService implements SessionRouteService {
 
     for (const session of sessions) {
       const archived = archivedById.get(session.id);
+      assertListingsMatchArchive(archived, [session]);
       if (archived === undefined || archiveCleanupPending(archived, session)) candidates.set(session.id, archiveCandidateFromListEntry(session));
       else {
         const candidate = archiveCandidateFromArchivedRecord(archived, session);
@@ -6172,6 +6180,15 @@ function distinctSessionPaths(paths: readonly (string | undefined)[]): string[] 
     if (path !== undefined && !distinct.some((known) => sessionPathsEqual(known, path))) distinct.push(path);
   }
   return distinct;
+}
+
+/** A listed transcript of an indexed session must be its original or its archive copy. */
+function assertListingsMatchArchive(record: ArchivedSessionRecord | undefined, listings: readonly PiSessionListEntry[]): void {
+  if (record?.originalPath === undefined) return;
+  const { originalPath, archivePath } = record;
+  const others = listings.filter((listing) => !sessionPathsEqual(listing.path, originalPath)
+    && (archivePath === undefined || !sessionPathsEqual(listing.path, archivePath)));
+  if (others.length > 0) throw sameIdSessionCopyError(record.sessionId, distinctSessionPaths([originalPath, ...others.map((listing) => listing.path)]));
 }
 
 function assertUniqueListedSessionIds(sessions: readonly PiSessionListEntry[]): void {

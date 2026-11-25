@@ -444,6 +444,31 @@ describe("tracked self-archive trees", () => {
     } finally { await f.service.dispose(); }
   });
 
+  it.each(["tree", "self", "bulk"] as const)("refuses %s archival when an archived session ID is listed at another path", async (source) => {
+    const f = fixture();
+    const target = source === "bulk" ? "independent" : "child";
+    const original = f.records.find((record) => record.id === target);
+    if (original === undefined) throw new Error("Missing fixture record");
+    f.archived.push(f.toArchived({ ...original, sessionId: target, created: "", modified: "", messageCount: 0, firstMessage: "" }));
+    // Archival finished, but a copy with the same ID is listed elsewhere.
+    f.list.mockResolvedValue(f.records.map((record) => record.id === target ? { ...record, path: `/sessions/copy-of-${target}.jsonl` } : record));
+    try {
+      await f.service.status(sessionRef("root"));
+      if (source === "tree") await expect(f.service.archiveTree(sessionRef("root"))).rejects.toThrow(`session ID ${target}`);
+      else if (source === "bulk") {
+        const result = await f.service.archiveMany([sessionRef(target)]);
+        expect(result.archivedSessionIds).toEqual([]);
+        expect(result.failures[0]?.error).toContain(`session ID ${target}`);
+      } else {
+        f.request();
+        await vi.runOnlyPendingTimersAsync();
+        expect(f.notifications.inboxSnapshot("root", "/workspace").notifications[0]?.message).toContain(`session ID ${target}`);
+      }
+      expect(f.archiveMany).not.toHaveBeenCalled();
+      expect(f.runtime("root").calls.dispose).toBe(0);
+    } finally { await f.service.dispose(); }
+  });
+
   it.each(["bulk", "tree"] as const)("refuses %s archival of an indexed session whose remaining original has a same-ID copy", async (source) => {
     const f = fixture();
     const target = source === "bulk" ? "independent" : "child";
