@@ -1,0 +1,10 @@
+{
+  "$comment": "Read by .github/scripts/dependency-updates.mjs. See docs/development-checks.md#dependency-updates.",
+  "follow": {
+    "typebox": {
+      "dependencyOf": "@earendil-works/pi-coding-agent",
+      "reason": "Extensions typecheck against the TypeBox version that Pi pins and provides at runtime."
+    }
+  },
+  "holds": {}
+}

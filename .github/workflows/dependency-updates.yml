@@ -1,0 +1,94 @@
+name: Dependency updates
+
+# Daily: try the latest dependency versions, keep the ones that pass the CI
+# checks, and propose them as a pull request. See
+# docs/development-checks.md#dependency-updates.
+on:
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-updates
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Try dependency updates
+    if: github.repository == 'jmfederico/pi-web' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # Bisecting failures runs the checks several times.
+    timeout-minutes: 330
+    outputs:
+      proposals: ${{ steps.prepare.outputs.proposals }}
+    steps:
+      # New package versions run their install scripts here, so this job has
+      # no write credentials and no secrets.
+      - name: Checkout main
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - name: Try updates and run the checks
+        id: prepare
+        run: node .github/scripts/dependency-updates.mjs prepare --out "$RUNNER_TEMP/dependency-updates"
+
+      - name: Save proposals
+        if: steps.prepare.outputs.proposals != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dependency-updates
+          path: ${{ runner.temp }}/dependency-updates
+          include-hidden-files: true
+          retention-days: 7
+
+  publish:
+    name: Open pull requests
+    needs: prepare
+    if: needs.prepare.outputs.proposals != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Pushes by the App, unlike GITHUB_TOKEN, trigger CI on the pull request.
+      - name: Create repository-scoped token
+        id: app-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ vars.AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.AUTOMATION_APP_PRIVATE_KEY }}
+          owner: jmfederico
+          repositories: pi-web
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+
+      # The trusted publisher comes from main; the proposals are data only.
+      - name: Checkout main
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Load proposals
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dependency-updates
+          path: ${{ runner.temp }}/dependency-updates
+
+      - name: Open or update pull requests
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: >-
+          node .github/scripts/dependency-updates.mjs publish
+          --in "$RUNNER_TEMP/dependency-updates"
+          --base "$GITHUB_SHA"
+          --repository "$GITHUB_REPOSITORY"
+          --app-slug "${{ steps.app-token.outputs.app-slug }}"

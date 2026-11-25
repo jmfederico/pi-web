@@ -45,10 +45,14 @@ Use a GitHub App, rather than Actions' built-in `GITHUB_TOKEN`: merges made with
 1. Use the `federico-agent` App owned by `jmfederico`, or a separate merge App, with webhooks disabled. No user authorization callback is needed for installation-token authentication.
 2. The merge workflow needs repository **Contents: Read and write**, **Pull requests: Read and write**, and the mandatory **Metadata: Read-only** permission. It requests a token restricted to those permissions and `pi-web`, even if the personal App has broader access for agent work. Do not add the App to any ruleset bypass list.
 3. Install the App with access to `jmfederico/pi-web` and generate a private key. The personal App can also be installed on other repositories; the merge token does not include them.
-4. Save its App ID as repository variable `CODERABBIT_MERGE_APP_ID`. Save the PEM key as Actions secret `CODERABBIT_MERGE_PRIVATE_KEY`. Never commit or paste the key into chat.
+4. Save its App ID as repository variable `AUTOMATION_APP_ID`. Save the PEM key as Actions secret `AUTOMATION_APP_PRIVATE_KEY`. Never commit or paste the key into chat. The [dependency update workflow](development-checks.md#dependency-updates) uses the same App credentials to open pull requests; it also needs **Issues: Read and write** to label and assign them.
 5. Confirm the `main` rules above, then set repository variable `CODERABBIT_MERGE_ENABLED` to `true` and manually run `CodeRabbit merge`. Enabling it applies to existing eligible PRs as well as future ones; label any PR that should wait with `do-not-merge` first.
 
 The workflow uses pinned actions and trusted default-branch code. It never checks out or executes a PR branch, installs PR dependencies, or downloads PR artifacts.
+
+### Pull requests opened by the App
+
+On CodeRabbit's open-source plan, pull requests opened by the App are skipped with "Bot user detected", and CodeRabbit ignores `@coderabbitai review` when the App posts it. A maintainer's `@coderabbitai review` comment starts the review; later pushes may need another one. A paid CodeRabbit seat assigned to the App restores automatic reviews. Until a review approves the current head, these pull requests, including dependency updates, wait instead of merging.
 
 ### Pause and recovery
 

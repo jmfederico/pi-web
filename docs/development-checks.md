@@ -188,3 +188,32 @@ Pi warns when an extension package lists `typebox` in `dependencies`, even if on
 The installed-package smoke checks native Node schema creation/validation and imports all three built server tool modules against the selected existing Pi installation. It also installs the tarball with Pi's `--legacy-peer-deps` policy. Both installations load `/pi-web` through the real Pi resource loader with no dependency warning; neither requires PI WEB to install another SDK.
 
 Revisit the alias if Pi introduces a supported way to distinguish standalone runtime dependencies from extension dependencies. Until then, keep the explicit server dependency and preserve these installation checks rather than moving it to peers or relying on an undeclared transitive dependency.
+
+## Dependency updates
+
+The `Dependency updates` workflow (`.github/workflows/dependency-updates.yml`) keeps `package.json` and `package-lock.json` on the latest versions that pass the checks. It runs daily and can be started manually. The Docker development stack installs from the lockfile, so `pi-web-docker --dev update` picks up merged updates through its normal `git pull`.
+
+Each run starts from `main`:
+
+1. It looks up the latest registry version of every direct dependency, including the Pi SDK packages, and updates indirect packages within their declared ranges.
+2. It tries all updates together and runs the Linux CI checks: typecheck, lint, knip, tests, build, artifact checks and browser tests. Windows tests run only in pull request CI.
+3. If the checks fail, it splits the updates until it finds the ones that fail, and keeps the rest. An update that cannot even be resolved, such as a peer-range conflict, is rejected without running checks. A single failing check is retried once before it counts.
+4. It opens or updates the `automation/dependency-updates` pull request. A pull request that is still open and mergeable is left for review rather than replaced. Changes to published dependencies or the supported Pi version include a changeset.
+
+The job that runs new package code has no write credentials. A second job publishes the result with the automation App; it accepts only the manifest, the lockfile, `dependency-policy.json` and a changeset. The App opens the pull requests, so the [CodeRabbit notes for App pull requests](coderabbit.md#pull-requests-opened-by-the-app) apply.
+
+### Held versions
+
+`dependency-policy.json` records why a dependency stays where it is, so the same version is not tried again every day:
+
+- When an update fails, the workflow records a hold with the version, the failed command and the end of its output. When a newer version is published, it tries again; if that passes, the hold is removed.
+- To keep a dependency back for a known reason, add a hold yourself. Use a specific version to skip it until something newer appears, or `"version": "*"` to skip all versions. Put your explanation in `note`; the workflow keeps notes when it updates a hold.
+- `follow` keeps a dependency at the version another package pins. The `typebox` development dependency follows the version Pi pins, because extensions typecheck against the TypeBox that Pi provides at runtime.
+
+### Pi updates
+
+PI WEB supports the latest Pi minor line (see [Shared Pi runtime](#shared-pi-runtime)). A Pi update that passes the checks joins the regular pull request; when it starts a new minor line, the development dependency floor moves to it, such as `^1.7.0`. A deliberately higher patch floor in the same line is kept.
+
+A new Pi major version, or a Pi update that fails the checks, gets its own `automation/pi-<version>` pull request, labeled `do-not-merge` and assigned to the maintainer. It includes the failed output and the breaking changes from Pi's changelog. Fix PI WEB on that branch and remove the label to adopt it. To stay on the current version, add a hold for `@earendil-works/pi-coding-agent` with the reason and close the pull request; a closed Pi pull request is not reopened.
+
+For a local trial run, copy `package.json`, `package-lock.json` and `dependency-policy.json` into an empty directory and run `node <checkout>/.github/scripts/dependency-updates.mjs prepare --out <dir>` there with npm 11. `DEPENDENCY_UPDATES_CHECKS` can replace the checks with a JSON array of commands.
