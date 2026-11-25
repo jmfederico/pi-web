@@ -358,6 +358,26 @@ describe("SessionArchiveStore", () => {
     expect(await exists(join(root, "archive", "a.jsonl"))).toBe(false);
   });
 
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("reports a leftover archive copy without failing a committed restore", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-web-archive-restore-leftover-"));
+    tempRoots.push(root);
+    const archiveDir = join(root, "archive");
+    const warn = vi.fn();
+    const store = new SessionArchiveStore(join(root, "index.json"), archiveDir, { warn });
+    const input = archiveInput("a", join(root, "a.jsonl"));
+    await writeFile(input.path, transcript("a", "original"));
+    await store.archive(input);
+    await writeFile(input.path, transcript("a", "original", "continued"));
+    await chmod(archiveDir, 0o555);
+    try {
+      await store.restore("a");
+    } finally {
+      await chmod(archiveDir, 0o755);
+    }
+    await expect(store.list()).resolves.toEqual([]);
+    expect(warn).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ archivePath: join(archiveDir, "a.jsonl") }), expect.any(String));
+  });
+
   it("rejects archiving an indexed session from a different original path", async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-web-archive-other-original-"));
     tempRoots.push(root);

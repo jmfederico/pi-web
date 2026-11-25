@@ -44,12 +44,19 @@ export function defaultSessionArchiveFilePath(env: NodeJS.ProcessEnv = process.e
   return join(piWebDataDir(env, cwd), "archived-sessions.json");
 }
 
+export interface SessionArchiveLogger {
+  warn(details: Record<string, unknown>, message: string): void;
+}
+
+const noopLogger: SessionArchiveLogger = { warn() { /* no-op */ } };
+
 export class SessionArchiveStore {
   private operationQueue: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly filePath = defaultSessionArchiveFilePath(),
     private readonly archiveDir = join(dirname(filePath), "archived-sessions"),
+    private readonly logger: SessionArchiveLogger = noopLogger,
   ) {}
 
   async list(): Promise<ArchivedSessionRecord[]> {
@@ -128,11 +135,15 @@ export class SessionArchiveStore {
       try {
         await this.write({ sessions: data.sessions.filter((record) => !rollBackIds.has(record.sessionId)) });
         rolledBack = true;
+      } catch (error: unknown) {
+        // Keep the indexed archive; the reported error says so, and retrying
+        // archival completes it.
+        this.logger.warn({ sessionIds: [...rollBackIds], error: errorMessage(error) }, "could not roll back archive index after failed cleanup");
+      }
+      if (rolledBack) {
         for (const { file } of failures) {
-          if (rollBackIds.has(file.session.sessionId)) await unlink(file.archivePath).catch(() => undefined);
+          if (rollBackIds.has(file.session.sessionId)) await this.removeUnindexedArchiveCopy(file.archivePath);
         }
-      } catch {
-        // Keep the indexed archive; retrying archival completes or reports it.
       }
     }
     const errors = failures.map(({ file, error }) => {
@@ -160,8 +171,17 @@ export class SessionArchiveStore {
       // Keep the archive copy until the record is gone, so a failed write can be
       // retried. The restore has then succeeded; a leftover copy is an older
       // prefix that a later archive of this session refreshes.
-      if (replacedArchive !== undefined) await unlink(replacedArchive).catch(() => undefined);
+      if (replacedArchive !== undefined) await this.removeUnindexedArchiveCopy(replacedArchive);
     });
+  }
+
+  /** The index no longer references this copy; a leftover is reported, not fatal. */
+  private async removeUnindexedArchiveCopy(archivePath: string): Promise<void> {
+    try {
+      await unlink(archivePath);
+    } catch (error: unknown) {
+      this.logger.warn({ archivePath, error: errorMessage(error) }, "could not remove unindexed archive copy");
+    }
   }
 
   async deleteArchived(sessionId: string): Promise<void> {
