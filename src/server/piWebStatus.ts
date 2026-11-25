@@ -14,6 +14,8 @@ import { parsePiWebRuntimeComponent } from "../shared/piWebStatusParsing.js";
 import { SessionDaemonClient } from "../sessiond/sessionDaemonClient.js";
 import { isHostAbsoluteAgentDir, loadPiWebConfig, PI_CODING_AGENT_DIR_ENV, type LoadedPiWebConfig } from "../config.js";
 import { versionChecksDisabled } from "../shared/versionCheckPolicy.js";
+import { comparePackageVersions } from "../shared/packageVersions.js";
+import { isOlderThanSupportedPi, loadedPiVersion, supportedPiMinimumVersion, unsupportedPiSummary } from "../shared/piSupport.js";
 import { createPiWebReleaseLookupCache, type PiWebReleaseLookup } from "./piWebReleaseLookupCache.js";
 
 const PI_WEB_PACKAGE_NAME = "@jmfederico/pi-web";
@@ -70,6 +72,7 @@ interface PackageInfo {
   name: string;
   version: string;
   path: string;
+  supportedPiMinimum?: string;
 }
 
 interface PiWebStatusDaemon {
@@ -179,26 +182,13 @@ export async function getPiWebStatus(daemon: PiWebStatusDaemon = new SessionDaem
     activeAgentProfile: options.activeAgentProfile,
     hasCommand: options.hasCommand ?? hasCommand,
   });
-  const messages = buildMessages(components, release, commands);
+  const messages = buildMessages(components, release, commands, runtimePackageInfo?.supportedPiMinimum);
   return {
     ...versionStatus,
     release,
     commands,
     messages,
   };
-}
-
-export function comparePackageVersions(leftVersion: string, rightVersion: string): number | undefined {
-  const left = parsePackageVersion(leftVersion);
-  const right = parsePackageVersion(rightVersion);
-  if (left === undefined || right === undefined) return undefined;
-  if (left.major !== right.major) return left.major - right.major;
-  if (left.minor !== right.minor) return left.minor - right.minor;
-  if (left.patch !== right.patch) return left.patch - right.patch;
-  if (left.prerelease === right.prerelease) return 0;
-  if (left.prerelease === undefined) return 1;
-  if (right.prerelease === undefined) return -1;
-  return left.prerelease.localeCompare(right.prerelease);
 }
 
 function readPackageInfoSync(): PackageInfo | undefined {
@@ -229,7 +219,8 @@ function parsePackageInfo(value: unknown, path: string): PackageInfo | undefined
   const name = value["name"];
   const version = value["version"];
   if (typeof name !== "string" || name === "" || typeof version !== "string" || version === "") return undefined;
-  return { name, version, path };
+  const supportedPiMinimum = supportedPiMinimumVersion(value);
+  return { name, version, path, ...(supportedPiMinimum === undefined ? {} : { supportedPiMinimum }) };
 }
 
 export async function detectPiWebInstallation(agentDir?: string): Promise<PiWebInstallationInfo> {
@@ -596,7 +587,7 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function buildMessages(components: PiWebStatusResponse["components"], release: PiWebReleaseStatus, commands: PiWebStatusResponse["commands"]): PiWebStatusMessage[] {
+function buildMessages(components: PiWebStatusResponse["components"], release: PiWebReleaseStatus, commands: PiWebStatusResponse["commands"], supportedPiMinimum: string | undefined): PiWebStatusMessage[] {
   const messages: PiWebStatusMessage[] = [];
   const installedVersion = components.web.installedVersion ?? components.web.runtimeVersion;
 
@@ -646,6 +637,19 @@ function buildMessages(components: PiWebStatusResponse["components"], release: P
     });
   }
 
+  const loadedPi = loadedPiVersion(components);
+  if (loadedPi !== undefined && supportedPiMinimum !== undefined && isOlderThanSupportedPi(loadedPi.version, supportedPiMinimum)) {
+    messages.push({
+      id: "pi-unsupported",
+      severity: "warning",
+      title: "Pi update recommended",
+      body: `${unsupportedPiSummary(loadedPi, supportedPiMinimum)} ${commands.restart === undefined
+        ? "Update Pi, then restart the PI WEB services or processes."
+        : "Update Pi, then restart PI WEB."}`,
+      ...optionalMessageCommand(commands.restart),
+    });
+  }
+
   return messages;
 }
 
@@ -666,19 +670,6 @@ function isNewerPackageVersion(candidateVersion: string, currentVersion: string)
   const comparison = comparePackageVersions(candidateVersion, currentVersion);
   if (comparison !== undefined) return comparison > 0;
   return candidateVersion.trim() !== currentVersion.trim();
-}
-
-function parsePackageVersion(version: string): { major: number; minor: number; patch: number; prerelease?: string } | undefined {
-  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+.*)?$/u.exec(version.trim());
-  if (match === null) return undefined;
-  const [, major, minor, patch, prerelease] = match;
-  if (major === undefined || minor === undefined || patch === undefined) return undefined;
-  return {
-    major: Number.parseInt(major, 10),
-    minor: Number.parseInt(minor, 10),
-    patch: Number.parseInt(patch, 10),
-    ...(prerelease === undefined ? {} : { prerelease }),
-  };
 }
 
 function formatVersion(version: string | undefined): string {

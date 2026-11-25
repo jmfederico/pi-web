@@ -5,6 +5,8 @@ import { effectivePiWebConfig } from "./config.js";
 import { SessionDaemonClient } from "./sessiond/sessionDaemonClient.js";
 import type { PiWebComponentStatus, PiWebInstallationInfo, PiWebVersionResponse } from "./shared/apiTypes.js";
 import { parsePiWebComponentStatus, parsePiWebVersionResponse } from "./shared/piWebStatusParsing.js";
+import { comparePackageVersions } from "./shared/packageVersions.js";
+import { isOlderThanSupportedPi, loadedPiVersion, supportedPiMinimumVersion, unsupportedPiSummary, type LoadedPiVersion } from "./shared/piSupport.js";
 
 const PI_WEB_PACKAGE_NAME = "@jmfederico/pi-web";
 const PI_WEB_VERSION_TIMEOUT_MS = 2000;
@@ -108,6 +110,34 @@ export async function probeRunningComponentReady(
 
 export function packageVersion(): string {
   return readPackageInfo()?.version ?? DEFAULT_PACKAGE_VERSION;
+}
+
+/** Supported Pi minimum declared by this installed PI WEB package. */
+export function installedSupportedPiMinimum(): string | undefined {
+  try {
+    return supportedPiMinimumVersion(JSON.parse(readFileSync(packageJsonPath(), "utf8")));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Doctor's advisory Pi support check. Running services report the Pi they
+ * loaded; without one, this command's own Pi is what newly started services
+ * would select. An older Pi is a warning, never a failed check.
+ */
+export function piSupportCheckLines(info: RunningVersionInfo, cliPiVersion: string | undefined, minimum: string | undefined): string[] {
+  const loaded: LoadedPiVersion | undefined = loadedPiVersion(info)
+    ?? (cliPiVersion === undefined ? undefined : { source: "cli", version: cliPiVersion });
+  if (minimum === undefined) return ["? Supported Pi version unknown: package metadata does not declare it"];
+  if (loaded === undefined) return [`? Pi version unknown; PI WEB supports Pi ${minimum} or later`];
+  if (comparePackageVersions(loaded.version, minimum) === undefined) return [`? Pi version ${loaded.version} not recognized; PI WEB supports Pi ${minimum} or later`];
+  if (!isOlderThanSupportedPi(loaded.version, minimum)) return [`✓ Pi ${loaded.version} (PI WEB supports Pi ${minimum} or later)`];
+  return [
+    `! Pi update recommended`,
+    `  ${unsupportedPiSummary(loaded, minimum)}`,
+    "  Update Pi, then run `pi-web restart`.",
+  ];
 }
 
 export async function printPiWebVersionReport(options: PiWebVersionReportOptions = {}): Promise<PiWebVersionReport> {
