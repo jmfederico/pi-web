@@ -4460,6 +4460,8 @@ export class PiSessionService implements SessionRouteService {
       }
       // Sessions are selected by ID, so a same-ID copy at another path makes
       // the selection ambiguous. Record it and refuse only if it is selected.
+      // Duplicate IDs are unsupported: copies that would join a tree through
+      // their own header or a link to them are deliberately not traced.
       const selected = remainingOriginal ?? listings[0];
       if (selected === undefined) continue;
       const conflictingPaths = distinctSessionPaths(listings.map((session) => session.path)).filter((path) => !sessionPathsEqual(path, selected.path));
