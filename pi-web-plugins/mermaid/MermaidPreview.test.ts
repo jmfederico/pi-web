@@ -1,34 +1,41 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ContentRendererInput } from "@jmfederico/pi-web/plugin-api";
-import { mermaidFrameDocument } from "./MermaidPreview";
 import { LocalizationService } from "../../src/client/src/localization/service";
 import { createPluginLocalization } from "../../src/client/src/plugins/localization";
 import { createMermaidContent } from "./mermaidLocalization";
+import type { MermaidDrawing, MermaidRenderer } from "./mermaidEngine";
+import { MermaidPreview } from "./MermaidPreview";
 
-let tag = 0;
+customElements.define("mermaid-preview-test", MermaidPreview);
 afterEach(() => {
   document.body.replaceChildren();
   localStorage.clear();
-  vi.unstubAllGlobals();
-  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
-async function preview(input: ContentRendererInput, loadEngine?: () => Promise<string>) {
-  vi.resetModules();
-  const { MermaidPreview } = await import("./MermaidPreview");
-  customElements.define(`mermaid-test-${String(++tag)}`, MermaidPreview);
+const svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"300\" height=\"120\"><text>A &amp; B</text></svg>";
+
+function deferred() {
+  let resolve: (drawing: MermaidDrawing) => void = () => { throw new Error("Not pending"); };
+  let reject: (error: unknown) => void = () => { throw new Error("Not pending"); };
+  const promise = new Promise<MermaidDrawing>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+
+async function preview(input: ContentRendererInput, engine: MermaidRenderer) {
   const element = new MermaidPreview();
   element.content = createMermaidContent(createPluginLocalization(new LocalizationService(), "mermaid", "mermaid", new AbortController().signal));
+  element.engine = engine;
   element.input = input;
-  if (loadEngine !== undefined) element.loadEngine = loadEngine;
   document.body.append(element);
   await element.updateComplete;
   return element;
 }
 
-describe("Mermaid isolation and lifecycle", () => {
+const image = (element: MermaidPreview) => element.shadowRoot?.querySelector("img") ?? null;
+
+describe("Mermaid preview", () => {
   it("requires renderer support rather than silently loading on older API v4 hosts", async () => {
     const { default: plugin } = await import("./pi-web-plugin");
     expect(plugin.requires).toEqual(expect.arrayContaining([
@@ -37,88 +44,59 @@ describe("Mermaid isolation and lifecycle", () => {
     ]));
   });
 
-  it("embeds only trusted engine code under a no-network policy and escapes script terminators", () => {
-    const document = mermaidFrameDocument('const value = "</script><script>bad()</script>";');
-    expect(document).toContain("default-src 'none'");
-    expect(document).toContain("script-src 'unsafe-inline'");
-    expect(document).toContain("<\\/script>");
-    expect(document.match(/<\/script>/gu)).toHaveLength(1);
+  it("shows the shared engine's output as a script-free image that reserves its size", async () => {
+    const pending = deferred();
+    const render = vi.fn<MermaidRenderer["render"]>(() => pending.promise);
+    const input = { text: "graph TD; A-->B", signal: new AbortController().signal, fail: vi.fn() };
+    const element = await preview(input, { render });
+    const drawn = render.mock.calls[0]?.[0];
+    expect(drawn).toMatchObject({ text: input.text, signal: input.signal });
+    expect(drawn?.width).toBeGreaterThan(0);
+    expect(element.shadowRoot?.querySelector('[role="status"]')).not.toBeNull();
+
+    pending.resolve({ svg, width: 300, height: 120 });
+    await vi.waitFor(() => { expect(image(element)).not.toBeNull(); });
+    const img = image(element);
+    expect(img?.getAttribute("width")).toBe("300");
+    expect(img?.getAttribute("height")).toBe("120");
+    const source = img?.getAttribute("src") ?? "";
+    expect(source.startsWith("data:image/svg+xml;charset=utf-8,")).toBe(true);
+    expect(decodeURIComponent(source.slice(source.indexOf(",") + 1))).toBe(svg);
+    expect(element.shadowRoot?.querySelector("iframe")).toBeNull();
+    expect(input.fail).not.toHaveBeenCalled();
   });
 
-  it("accepts messages only from its opaque frame, forwards source, reports failure, and removes the frame on abort", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("/* trusted engine */")));
+  it("reports engine failures, clears on abort, and ignores results for detached or replaced work", async () => {
+    const failing = { render: vi.fn().mockRejectedValue(new Error("Mermaid could not render this source")) };
+    const failed = { text: "bad", signal: new AbortController().signal, fail: vi.fn() };
+    await preview(failed, failing);
+    await vi.waitFor(() => { expect(failed.fail).toHaveBeenCalledWith(new Error("Mermaid could not render this source")); });
+
     const controller = new AbortController();
-    const fail = vi.fn();
-    const element = await preview({ text: "graph TD; A-->B", signal: controller.signal, fail });
-    await vi.waitFor(() => { expect(element.shadowRoot?.querySelector("iframe")).not.toBeNull(); });
-    const frame = element.shadowRoot?.querySelector("iframe");
-    if (frame?.contentWindow === null || frame?.contentWindow === undefined) throw new Error("Missing frame window");
-    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
-    expect(frame.srcdoc).not.toContain("graph TD");
-    const send = vi.spyOn(frame.contentWindow, "postMessage").mockImplementation(() => undefined);
-    window.dispatchEvent(new MessageEvent("message", { source: window, data: { type: "mermaid-error" } }));
-    expect(fail).not.toHaveBeenCalled();
-    window.dispatchEvent(new MessageEvent("message", { source: frame.contentWindow, data: { type: "mermaid-ready" } }));
-    expect(send).toHaveBeenCalledWith({ type: "mermaid-render", text: "graph TD; A-->B" }, "*");
-    window.dispatchEvent(new MessageEvent("message", { source: frame.contentWindow, data: { type: "mermaid-rendered", height: 200 } }));
-    await element.updateComplete;
-    expect(frame.style.height).toBe("224px");
-    window.dispatchEvent(new MessageEvent("message", { source: frame.contentWindow, data: { type: "mermaid-error" } }));
-    expect(fail).toHaveBeenCalledOnce();
+    const shown = { text: "good", signal: controller.signal, fail: vi.fn() };
+    const element = await preview(shown, { render: () => Promise.resolve({ svg, width: 300, height: 120 }) });
+    await vi.waitFor(() => { expect(image(element)).not.toBeNull(); });
     controller.abort();
     await element.updateComplete;
-    expect(element.shadowRoot?.querySelector("iframe")).toBeNull();
-    window.dispatchEvent(new MessageEvent("message", { source: frame.contentWindow, data: { type: "mermaid-error" } }));
-    expect(fail).toHaveBeenCalledOnce();
-  });
+    expect(image(element)).toBeNull();
 
-  it("uses the active package's loader and ignores a previous package's late engine failure", async () => {
-    let rejectOld: (error: Error) => void = () => { throw new Error("Not initialized"); };
-    const oldEngine = new Promise<string>((_resolve, reject) => { rejectOld = reject; });
-    const fail = vi.fn();
-    const element = await preview({ text: "same source", signal: new AbortController().signal, fail }, () => oldEngine);
-    const activeLoader = vi.fn().mockResolvedValue("/* active package engine */");
-    element.loadEngine = activeLoader;
-    await element.updateComplete;
-    await vi.waitFor(() => { expect(element.shadowRoot?.querySelector("iframe")?.srcdoc).toContain("active package engine"); });
-    rejectOld(new Error("old machine unavailable"));
+    const late = deferred();
+    const detached = { text: "late", signal: new AbortController().signal, fail: vi.fn() };
+    const removed = await preview(detached, { render: () => late.promise });
+    removed.remove();
+    late.reject(new Error("too late"));
     await Promise.resolve();
-    expect(fail).not.toHaveBeenCalled();
-    expect(activeLoader).toHaveBeenCalledOnce();
-  });
+    expect(detached.fail).not.toHaveBeenCalled();
 
-  it("reports a bounded failure if the engine never becomes ready and cancels the timeout on disconnect", async () => {
-    vi.useFakeTimers();
-    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
-    const fail = vi.fn();
-    const element = await preview({ text: "source", signal: new AbortController().signal, fail });
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(fail).toHaveBeenCalledWith(new Error("Mermaid preview timed out"));
-    element.remove();
-    fail.mockClear();
-    const other = await preview({ text: "source", signal: new AbortController().signal, fail });
-    other.remove();
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(fail).not.toHaveBeenCalled();
-  });
-
-  it("ignores engine loading results after disconnect and reports fetch failures", async () => {
-    let resolveEngine: (response: Response) => void = () => { throw new Error("Not initialized"); };
-    const pending = new Promise<Response>((resolve) => { resolveEngine = resolve; });
-    vi.stubGlobal("fetch", vi.fn(() => pending));
-    const fail = vi.fn();
-    const element = await preview({ text: "old", signal: new AbortController().signal, fail });
-    element.remove();
-    resolveEngine(new Response("engine"));
-    await pending;
+    const previous = deferred();
+    const replaced = { text: "same", signal: new AbortController().signal, fail: vi.fn() };
+    const switched = await preview(replaced, { render: () => previous.promise });
+    const active = vi.fn<MermaidRenderer["render"]>().mockResolvedValue({ svg, width: 300, height: 120 });
+    switched.engine = { render: active };
+    await vi.waitFor(() => { expect(image(switched)).not.toBeNull(); });
+    previous.reject(new Error("previous machine unavailable"));
     await Promise.resolve();
-    await element.updateComplete;
-    expect(element.shadowRoot?.querySelector("iframe")).toBeNull();
-    expect(fail).not.toHaveBeenCalled();
-
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("unavailable", { status: 503 })));
-    await preview({ text: "new", signal: new AbortController().signal, fail });
-    await vi.waitFor(() => { expect(fail).toHaveBeenCalledOnce(); });
-    expect(fail.mock.calls[0]?.[0]).toEqual(new Error("Mermaid engine unavailable (503)"));
+    expect(replaced.fail).not.toHaveBeenCalled();
+    expect(active).toHaveBeenCalledOnce();
   });
 });
