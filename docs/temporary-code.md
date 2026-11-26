@@ -40,6 +40,15 @@ Release baselines below were checked against containing Git tags and GitHub stab
 - **Remove when:** PI WEB requires a stable node-pty version whose published macOS helpers have verified executable permissions. Verify both supported macOS architectures before removing the repair.
 - **Tracking:** [PI WEB #391](https://github.com/jmfederico/pi-web/issues/391), [node-pty #850](https://github.com/microsoft/node-pty/issues/850).
 
+### happy-dom-selectionchange
+
+- **Why:** happy-dom 21.0.4 dispatches `selectionchange` synchronously when a Selection changes. Browsers queue it as a task. CodeMirror 6.43.14 and later re-enter their view update on the synchronous event and throw `Calls to EditorView.update are not allowed while an update is in progress`. The real-browser suite passes with the same CodeMirror version. The shim queues one task per document, like the upstream fix.
+- **Implementation:** [happyDomSelectionChange.testSupport.ts](../src/client/src/happyDomSelectionChange.testSupport.ts), loaded through `setupFiles` in [vitest.config.ts](../vitest.config.ts). Test-only; it is not shipped.
+- **Tests:** [happyDomSelectionChange.test.ts](../src/client/src/happyDomSelectionChange.test.ts); the CodeMirror composer tests in `PromptEditor.shortcuts.test.ts`, `PromptEditor.localization.test.ts` and `PiWebApp.rendering.test.ts` depend on it.
+- **First shipped:** not applicable (test environment only).
+- **Remove when:** the project uses a happy-dom release that queues `selectionchange` as a task. Remove the setup file, its `setupFiles` entry and its test, then confirm the composer tests still pass.
+- **Tracking:** [happy-dom #2185](https://github.com/capricorn86/happy-dom/issues/2185), [happy-dom PR #2325](https://github.com/capricorn86/happy-dom/pull/2325).
+
 ### session-naming-config-migration
 
 - **Why:** move legacy core `sessionNaming` settings into configuration owned by the removable session-naming Pi package without losing saved settings.

@@ -10,6 +10,8 @@ export default defineConfig({
     // Base CSS is application data exposed through the host UI styles capability;
     // mocking it to an empty string would bypass that contract in node tests.
     css: { include: [/\/theme\/base\/.*\.css/] },
+    // TEMP(happy-dom-selectionchange): see docs/temporary-code.md
+    setupFiles: ["src/client/src/happyDomSelectionChange.testSupport.ts"],
     include: ["src/**/*.test.ts", "pi-web-plugins/**/*.test.ts", "pi-packages/**/*.test.ts", "scripts/**/*.test.mjs"],
   },
 });
