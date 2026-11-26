@@ -1,5 +1,37 @@
 # @jmfederico/pi-web
 
+## 1.202611.6
+
+### Patch Changes
+
+- 92021bd: Make session archival safer. Archival never deletes an original that changed after it was copied, and reports when an original is kept. Retrying an archive whose original was left behind finishes cleanup or reports a conflict instead of reporting success, and restoring it keeps the newer original. Session IDs must be unique: archival stops and names the files when it finds more than one transcript for an ID. Archival also includes running tracked subsessions even when their spawn link was not saved, and declines a tree selection made stale by detaching a child.
+- 0eecff3: Ship the licenses of third-party packages bundled into the web client and browser plugins, including the source location and copyright notices for the ELK layout engine in Mermaid diagrams.
+- fffd071: Load the main web client's Markdown, stylesheet, and localization libraries from installed packages instead of shipping another copy in the client bundle. Production installs no longer need a separate copy of the bundled CodeMirror editor.
+- f8fc130: Update the CodeMirror editor view used by the message box and Files viewer to 6.44.
+- dbea5c5: Keep relay names aligned in the Relays tab by using the same dropdown for one or more relays.
+- 72c897a: Update runtime dependencies and verify the Pi integration against SDK 1.6.1. With Pi 1.6.1, the sign-in dialog no longer labels a saved key that cannot be used as configured.
+- 71de860: Focus the message box of a newly started session reliably, including in the installed app.
+- 8fb7b9a: Stop iPadOS and iOS 26 from blurring the top of PI WEB just below the status bar or Safari toolbar. An invisible full-width strip at the top edge gives Safari the app background colour to use, so the system blur stays off. The strip does not draw anything or block taps.
+- dfd1a4a: Keep the iPad keyboard Shortcuts bar from covering the composer and status bar or moving the page. The first time the bar appears, PI WEB reserves its height at the bottom of the app and keeps that space on that iPad, including after reloads. The strip says what it is for and has a Remove button that frees the space until the bar appears again. While the bar is up, trackpad scrolling and touch drags that no panel can scroll no longer slide the whole page. Detection uses a small, stable viewport reduction while a text field is focused; other devices and the full software keyboard keep their existing behavior.
+- 41e70a3: Serve Material file icons from the locally installed theme package instead of shipping a second copy of the artwork. No CDN connection is needed.
+- b333874: Update the bundled Mermaid diagram renderer to 12.3.
+- 1169567: Disable routine HTTP access logs by default in web and sessiond while keeping application diagnostics. Set `httpAccessLog` to enable structured completion records, and use `logLevel` to set the minimum severity. The gateway returns an `x-request-id` that also identifies requests to its local daemon.
+- 52964f9: Warn when Pi is older than the version this PI WEB release supports. The Updates panel and `pi-web doctor` recommend updating Pi and restarting PI WEB; older Pi versions still run.
+- 93a880d: Keep PI WEB responsive while a large session daemon runs Git and other plugin commands. Commands now start from a small helper process, so selecting a project no longer pauses every other request for one to three seconds when the daemon holds many long sessions.
+- dca6646: Avoid installing extra copies of the terminal emulator and syntax highlighter. Their portable plugins still include the browser code they need.
+- 5995d89: Keep the portable Relays viewer’s Markdown parser in sync with the version used by PI WEB.
+- c2eb396: Show how many tasks need attention on the Scheduled tasks tab, without opening the dashboard.
+- dafb3ba: Reduce the Scheduled Tasks package size by using the installed cron parser and Pi's TypeBox instead of bundling extra copies.
+- 65fb1de: Scroll the desktop workspace navigation menu button with the tool tabs, keeping only the panel toggle fixed at the edge.
+- e7327ec: Attribute server plugin logs to the plugin that emitted them, even when its log details include a different plugin ID.
+- deaa7eb: Fix automatic session naming with OpenCode Go models. Naming requests now send the session id that OpenCode requires, instead of failing with `400 MissingSessionID` and falling back to the first request text.
+- a3af7c1: Render Mermaid diagrams through one shared engine and show them as static images, instead of loading a separate copy of the engine for every diagram. Many diagrams now render faster and use much less memory.
+- c887984: Keep the chat send shortcut unchanged when resizing the window. Enter now sends by default even in a narrow desktop window; touch devices with a coarse primary pointer still use Enter for a new line.
+- 3f8bff8: Keep rendered previews, such as Mermaid diagrams, in place when they scroll out of view. Previously they reverted to source offscreen and re-rendered on return, changing their height and making the chat jump.
+- 056ed27: Emit a single `web.ready` info log with the bound address and port when web/API stdout is not a terminal. Interactive terminals keep the startup banner and URLs.
+- 7d26a86: Use themed buttons in the Create worktree dialog and highlight the primary action.
+- a06b30d: Keep apostrophes, quotes and trailing backslashes intact in Create Worktree requests. The shortcut now requires Pi 1.5.1 or later.
+
 ## 1.202611.5
 
 ### Patch Changes
