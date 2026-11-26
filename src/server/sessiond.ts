@@ -357,7 +357,7 @@ async function createSessionDaemonRuntime() {
       modelRuntime: auth.runtime,
       sessionEvents,
       agentDir: activeAgentProfile.dir,
-      archiveStore: new SessionArchiveStore(defaultSessionArchiveFilePath(daemonEnvironment), sessionArchiveDirectory(daemonEnvironment, config)),
+      archiveStore: new SessionArchiveStore(defaultSessionArchiveFilePath(daemonEnvironment), sessionArchiveDirectory(daemonEnvironment, config), app.log),
       sessionPins: pins,
       workspaceActivity,
       logger: app.log,

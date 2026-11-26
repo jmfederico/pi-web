@@ -1,3 +1,7 @@
+import * as fsPromises from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionManager } from "../../piSdk.js";
 import { createPiWebCustomToolDefinitions, PiSessionService, type PiSessionListEntry } from "./piSessionService.js";
@@ -5,11 +9,18 @@ import { CapturingSessionEventHub, emptyArchiveStore, fakeRuntime, sessionGatewa
 import type { ArchivedSessionRecord, ArchiveSessionInput } from "./sessionArchiveStore.js";
 import { SessionNotificationStore } from "./sessionNotificationStore.js";
 
-function fixture() {
-  const records: PiSessionListEntry[] = ["root", "child", "grandchild", "independent", "fork"].map((id) => ({
+/**
+ * `spawned` is a root child known only from spawning; `sessionDir` places
+ * transcript paths in a real directory.
+ */
+function fixture(options: { spawned?: boolean; sessionDir?: string } = {}) {
+  const path = (id: string) => options.sessionDir === undefined ? sessionRecord(id).path : join(options.sessionDir, `${id}.jsonl`);
+  const ids = ["root", "child", "grandchild", "independent", "fork", ...options.spawned === true ? ["spawned"] : []];
+  const records: PiSessionListEntry[] = ids.map((id) => ({
     ...sessionRecord(id),
-    ...(["child", "fork"].includes(id) ? { parentSessionPath: sessionRecord("root").path } : {}),
-    ...(id === "grandchild" ? { parentSessionPath: sessionRecord("child").path } : {}),
+    path: path(id),
+    ...(["child", "fork", "spawned"].includes(id) ? { parentSessionPath: path("root") } : {}),
+    ...(id === "grandchild" ? { parentSessionPath: path("child") } : {}),
   }));
   const runtimes = new Map(records.map((record) => {
     const manager = SessionManager.inMemory(record.cwd, { id: record.id });
@@ -22,14 +33,14 @@ function fixture() {
   };
   function link(parent: string, child: string) {
     runtime(parent).session.sessionManager.appendCustomEntry?.("pi-web.subsession.link", {
-      spawnedBySessionId: parent, spawnedSessionId: child, spawnedSessionFile: sessionRecord(child).path, cwd: "/workspace",
+      spawnedBySessionId: parent, spawnedSessionId: child, spawnedSessionFile: path(child), cwd: "/workspace",
     });
   }
   link("root", "child");
   link("child", "grandchild");
   // A fork may carry copied links, but they still belong to the original parent.
   runtime("fork").session.sessionManager.appendCustomEntry?.("pi-web.subsession.link", {
-    spawnedBySessionId: "root", spawnedSessionId: "child", spawnedSessionFile: sessionRecord("child").path,
+    spawnedBySessionId: "root", spawnedSessionId: "child", spawnedSessionFile: path("child"),
   });
   const archived: ArchivedSessionRecord[] = [];
   const toArchived = (input: ArchiveSessionInput): ArchivedSessionRecord => ({
@@ -50,16 +61,23 @@ function fixture() {
     agentDir: "/tmp/pi-web-archive-tree-test", modelRuntime: runtime("root").session.modelRuntime,
     sessionManager: {
       ...gateway, list,
-      open: (path) => {
-        const record = records.find((candidate) => candidate.path === path || `/archive/${candidate.id}.jsonl` === path);
-        if (record === undefined) throw new Error(`Missing fixture file: ${path}`);
+      create: () => runtime("spawned").session.sessionManager,
+      open: (file) => {
+        const record = records.find((candidate) => candidate.path === file || `/archive/${candidate.id}.jsonl` === file);
+        if (record === undefined) throw new Error(`Missing fixture file: ${file}`);
         return runtime(record.id).session.sessionManager;
       },
     },
     archiveStore: { ...emptyArchiveStore(), list: () => Promise.resolve([...archived]),
+      archive: async (input) => {
+        const [record] = await archiveMany([input]);
+        if (record === undefined) throw new Error("Missing archived record");
+        return record;
+      },
       get: (id) => Promise.resolve(archived.find((record) => record.sessionId === id)), archiveMany, restore },
     createAgentRuntime: (_factory, options) => Promise.resolve(runtime(options.sessionManager.getSessionId()).runtime),
     notificationStore: notifications, onSessionArchived, heartbeatIntervalMs: 60_000,
+    spawnTargets: { resolveSpawnTarget: (cwd) => Promise.resolve({ allowed: true, cwd }) },
   });
   function request(sessionId = "root") {
     const root = runtime(sessionId);
@@ -69,8 +87,11 @@ function fixture() {
     root.emit({ type: "turn_end" });
     root.emit({ type: "agent_settled" });
   }
-  return { service, runtime, records, archived, archiveMany, toArchived, list, notifications, hub, onSessionArchived, restore, request };
+  return { service, runtime, path, records, archived, archiveMany, toArchived, list, notifications, hub, onSessionArchived, restore, request };
 }
+
+// Builtin namespaces are frozen; a plain copy lets a test pause one write.
+vi.mock("node:fs/promises", async (importOriginal) => ({ ...(await importOriginal<typeof fsPromises>()) }));
 
 function deferred() {
   let release: () => void = () => undefined;
@@ -320,5 +341,248 @@ describe("tracked self-archive trees", () => {
       expect(f.archiveMany).toHaveBeenCalledOnce();
       expect(f.onSessionArchived).not.toHaveBeenCalled();
     } finally { await f.service.dispose(); }
+  });
+
+  it("includes a running child whose spawn link could not be saved", async () => {
+    const f = fixture({ spawned: true });
+    try {
+      await f.service.status(sessionRef("root"));
+      const append = f.runtime("root").session.sessionManager.appendCustomEntry?.bind(f.runtime("root").session.sessionManager);
+      f.runtime("root").session.sessionManager.appendCustomEntry = (customType, data) => {
+        if (customType === "pi-web.subsession.link") throw new Error("disk full");
+        return append?.(customType, data) ?? "";
+      };
+      await f.service.spawnSubsession({ spawningCwd: "/workspace", parentSessionId: "root", parentSessionFile: f.path("root"), prompt: "Work" });
+      f.runtime("spawned").session.isStreaming = true;
+      await expect(f.service.checkSelfArchive("root")).rejects.toThrow("spawned");
+      f.request();
+      await vi.runOnlyPendingTimersAsync();
+      expect(f.archiveMany).not.toHaveBeenCalled();
+      expect(f.runtime("root").calls.dispose).toBe(0);
+      expect(f.runtime("spawned").calls).toMatchObject({ abort: 0, dispose: 0 });
+      expect(f.notifications.inboxSnapshot("root", "/workspace").notifications[0]?.message).toContain("spawned");
+    } finally { await f.service.dispose(); }
+  });
+
+  it.each(["tree", "self", "single", "bulk"] as const)("refuses %s archival when the open transcript is not the listed same-ID file", async (source) => {
+    const f = fixture();
+    f.list.mockResolvedValue(f.records.map((record) => record.id === "root" ? { ...record, path: "/sessions/copy-of-root.jsonl" } : record));
+    try {
+      await f.service.status(sessionRef("root"));
+      if (source === "tree") await expect(f.service.archiveTree(sessionRef("root"))).rejects.toThrow("more than one transcript");
+      else if (source === "single") await expect(f.service.archive(sessionRef("root"))).rejects.toThrow("more than one transcript");
+      else if (source === "bulk") {
+        const result = await f.service.archiveMany([sessionRef("root")]);
+        expect(result.archivedSessionIds).toEqual([]);
+        expect(result.failures).toHaveLength(1);
+        expect(result.failures[0]?.error).toContain("more than one transcript");
+      } else {
+        f.request();
+        await vi.runOnlyPendingTimersAsync();
+        expect(f.notifications.inboxSnapshot("root", "/workspace").notifications[0]?.message).toContain("more than one transcript");
+      }
+      expect(f.archiveMany).not.toHaveBeenCalled();
+      expect(f.runtime("root").calls.dispose).toBe(0);
+    } finally { await f.service.dispose(); }
+  });
+
+  it.each(["bulk", "tree"] as const)("finishes %s archival of an indexed session whose original is still listed", async (source) => {
+    const f = fixture();
+    const target = source === "bulk" ? "independent" : "child";
+    f.archived.push({ ...f.toArchived({ ...f.records.find((record) => record.id === target), sessionId: target, cwd: "/workspace",
+      path: f.path(target), created: "", modified: "", messageCount: 0, firstMessage: "" }) });
+    f.list.mockResolvedValue(f.records);
+    f.archiveMany.mockRejectedValueOnce(new Error("transcript contents differ"));
+    try {
+      if (source === "bulk") {
+        await expect(f.service.archiveMany([sessionRef(target)])).resolves.toMatchObject({
+          archivedSessionIds: [], failures: [{ sessionId: target, error: "transcript contents differ" }],
+        });
+      } else {
+        await expect(f.service.archiveTree(sessionRef("root"))).rejects.toThrow("transcript contents differ");
+      }
+      expect(f.archiveMany).toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({ sessionId: target, path: f.path(target) })]));
+      // Once the original is gone, the indexed archive is complete.
+      f.archiveMany.mockClear();
+      f.list.mockResolvedValue(f.records.filter((record) => record.id !== target));
+      if (source === "bulk") {
+        await expect(f.service.archiveMany([sessionRef(target)])).resolves.toMatchObject({ archivedSessionIds: [target], failures: [] });
+        expect(f.archiveMany).not.toHaveBeenCalled();
+      } else {
+        await expect(f.service.archiveTree(sessionRef("root"))).resolves.toMatchObject({ skippedAlreadyArchivedCount: 1 });
+        expect(f.archiveMany).not.toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({ sessionId: target })]));
+      }
+    } finally { await f.service.dispose(); }
+  });
+
+  it("includes a busy tracked child whose link spells its path differently", async () => {
+    const f = fixture();
+    f.runtime("root").session.sessionManager.appendCustomEntry?.("pi-web.subsession.link", {
+      spawnedBySessionId: "root", spawnedSessionId: "independent", spawnedSessionFile: "/sessions/./independent.jsonl", cwd: "/workspace",
+    });
+    f.list.mockResolvedValue(f.records.map((record) => record.id === "independent" ? { ...record, parentSessionPath: "/sessions/../sessions/root.jsonl" } : record));
+    try {
+      await f.service.status(sessionRef("root"));
+      await f.service.status(sessionRef("independent"));
+      f.runtime("independent").session.isStreaming = true;
+      await expect(f.service.checkSelfArchive("root")).rejects.toThrow("independent");
+    } finally { await f.service.dispose(); }
+  });
+
+  it.each(["tree", "self"] as const)("refuses %s archival while any session ID in the workspace has two transcripts", async (source) => {
+    const f = fixture();
+    const independent = f.records.find((record) => record.id === "independent");
+    if (independent === undefined) throw new Error("Missing fixture record");
+    // The duplicate is outside the tree; PI WEB reports it rather than judging relevance.
+    f.list.mockResolvedValue([...f.records, { ...independent, path: "/sessions/copy-of-independent.jsonl" }]);
+    try {
+      await f.service.status(sessionRef("root"));
+      if (source === "tree") await expect(f.service.archiveTree(sessionRef("root"))).rejects.toThrow("session ID independent");
+      else {
+        f.request();
+        await vi.runOnlyPendingTimersAsync();
+        expect(f.notifications.inboxSnapshot("root", "/workspace").notifications[0]?.message).toContain("session ID independent");
+      }
+      expect(f.archiveMany).not.toHaveBeenCalled();
+      expect(f.runtime("root").calls.dispose).toBe(0);
+    } finally { await f.service.dispose(); }
+  });
+
+  it.each(["tree", "self", "bulk"] as const)("refuses %s archival when an archived session ID is listed at another path", async (source) => {
+    const f = fixture();
+    const target = source === "bulk" ? "independent" : "child";
+    const original = f.records.find((record) => record.id === target);
+    if (original === undefined) throw new Error("Missing fixture record");
+    f.archived.push(f.toArchived({ ...original, sessionId: target, created: "", modified: "", messageCount: 0, firstMessage: "" }));
+    // Archival finished, but a copy with the same ID is listed elsewhere.
+    f.list.mockResolvedValue(f.records.map((record) => record.id === target ? { ...record, path: `/sessions/copy-of-${target}.jsonl` } : record));
+    try {
+      await f.service.status(sessionRef("root"));
+      if (source === "tree") await expect(f.service.archiveTree(sessionRef("root"))).rejects.toThrow(`session ID ${target}`);
+      else if (source === "bulk") {
+        const result = await f.service.archiveMany([sessionRef(target)]);
+        expect(result.archivedSessionIds).toEqual([]);
+        expect(result.failures[0]?.error).toContain(`session ID ${target}`);
+      } else {
+        f.request();
+        await vi.runOnlyPendingTimersAsync();
+        expect(f.notifications.inboxSnapshot("root", "/workspace").notifications[0]?.message).toContain(`session ID ${target}`);
+      }
+      expect(f.archiveMany).not.toHaveBeenCalled();
+      expect(f.runtime("root").calls.dispose).toBe(0);
+    } finally { await f.service.dispose(); }
+  });
+
+  it.each(["bulk", "tree"] as const)("refuses %s archival of an indexed session whose remaining original has a same-ID copy", async (source) => {
+    const f = fixture();
+    const target = source === "bulk" ? "independent" : "child";
+    const original = f.records.find((record) => record.id === target);
+    if (original === undefined) throw new Error("Missing fixture record");
+    f.archived.push(f.toArchived({ ...original, sessionId: target, created: "", modified: "", messageCount: 0, firstMessage: "" }));
+    // The copy is listed before the original that still needs cleanup.
+    f.list.mockResolvedValue([{ ...original, path: "/sessions/copy.jsonl" }, ...f.records]);
+    try {
+      if (source === "bulk") {
+        const result = await f.service.archiveMany([sessionRef(target)]);
+        expect(result.archivedSessionIds).toEqual([]);
+        expect(result.failures[0]?.error).toContain("more than one transcript");
+      } else {
+        await expect(f.service.archiveTree(sessionRef("root"))).rejects.toThrow("more than one transcript");
+      }
+      expect(f.archiveMany).not.toHaveBeenCalled();
+    } finally { await f.service.dispose(); }
+  });
+
+  it.each([
+    { source: "tree", runtimeFile: "archive copy" },
+    { source: "bulk", runtimeFile: "archive copy" },
+    { source: "single", runtimeFile: "archive copy" },
+    { source: "tree", runtimeFile: "unrelated" },
+    { source: "bulk", runtimeFile: "unrelated" },
+    { source: "single", runtimeFile: "unrelated" },
+  ] as const)("$source archival of an indexed session with its original listed and a runtime at an $runtimeFile path", async ({ source, runtimeFile }) => {
+    const f = fixture();
+    const original = f.records.find((record) => record.id === "child");
+    if (original === undefined) throw new Error("Missing fixture record");
+    const record = f.toArchived({ ...original, sessionId: "child", created: "", modified: "", messageCount: 0, firstMessage: "" });
+    f.archived.push(record);
+    f.list.mockResolvedValue(f.records);
+    // Indexed sessions open from their archive copy.
+    f.runtime("child").session.sessionFile = runtimeFile === "archive copy" ? record.archivePath : "/sessions/unrelated.jsonl";
+    try {
+      await f.service.status(sessionRef("child"));
+      const attempt = source === "tree" ? f.service.archiveTree(sessionRef("root"))
+        : source === "single" ? f.service.archive(sessionRef("child"))
+        : f.service.archiveMany([sessionRef("child")]).then((result) => {
+          if (result.failures.length > 0) throw new Error(result.failures.map((failure) => failure.error).join("; "));
+        });
+      if (runtimeFile === "unrelated") {
+        await expect(attempt).rejects.toThrow("more than one transcript");
+        expect(f.archiveMany).not.toHaveBeenCalled();
+        return;
+      }
+      await attempt;
+      expect(f.archiveMany).toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({ sessionId: "child", path: f.path("child") })]));
+    } finally { await f.service.dispose(); }
+  });
+
+  it("declines a tree selection made stale by detaching a child", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-web-archive-detach-"));
+    const f = fixture({ sessionDir: dir });
+    const header = (parentSession?: string) => `${JSON.stringify({ type: "session", version: 3, id: "child", timestamp: "2026-01-01T00:00:00Z", cwd: "/workspace", ...parentSession === undefined ? {} : { parentSession } })}\n`;
+    await writeFile(f.path("child"), header(f.path("root")));
+    const metadata = deferred();
+    let archival: Promise<unknown> | undefined;
+    try {
+      await f.service.status(sessionRef("root"));
+      await f.service.status(sessionRef("child"));
+      f.list.mockImplementationOnce(async () => { await metadata.promise; return f.records; });
+      archival = f.service.archiveTree(sessionRef("root"));
+      await vi.waitFor(() => { expect(f.list).toHaveBeenCalledOnce(); });
+      await f.service.detachParent(sessionRef("child"));
+      await expect(readFile(f.path("child"), "utf8")).resolves.toBe(header());
+      metadata.release();
+      await expect(archival).rejects.toThrow("Session lifecycle changed");
+      expect(f.archiveMany).not.toHaveBeenCalled();
+      expect(f.runtime("child").calls.dispose).toBe(0);
+    } finally {
+      metadata.release();
+      await archival?.catch(() => undefined);
+      await f.service.dispose();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses single and bulk archival of a child while its parent link is being removed", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-web-archive-detaching-"));
+    const f = fixture({ sessionDir: dir });
+    await writeFile(f.path("child"), `${JSON.stringify({ type: "session", version: 3, id: "child", timestamp: "2026-01-01T00:00:00Z", cwd: "/workspace", parentSession: f.path("root") })}\n`);
+    const rewrite = deferred();
+    const write = vi.spyOn(fsPromises, "writeFile").mockImplementationOnce(async (...args) => {
+      await rewrite.promise;
+      write.mockRestore();
+      await fsPromises.writeFile(...args);
+    });
+    let detach: Promise<void> | undefined;
+    try {
+      await f.service.status(sessionRef("child"));
+      detach = f.service.detachParent(sessionRef("child"));
+      await vi.waitFor(() => { expect(write).toHaveBeenCalledOnce(); });
+      await expect(f.service.archive(sessionRef("child"))).rejects.toThrow();
+      const bulk = await f.service.archiveMany([sessionRef("child")]);
+      expect(bulk.archivedSessionIds).toEqual([]);
+      expect(bulk.failures.map((failure) => failure.sessionId)).toEqual(["child"]);
+      expect(f.archiveMany).not.toHaveBeenCalled();
+      rewrite.release();
+      await detach;
+      await f.service.archive(sessionRef("child"));
+      expect(f.archiveMany).toHaveBeenCalledOnce();
+    } finally {
+      rewrite.release();
+      write.mockRestore();
+      await detach?.catch(() => undefined);
+      await f.service.dispose();
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
