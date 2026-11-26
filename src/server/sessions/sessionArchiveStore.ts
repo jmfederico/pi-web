@@ -79,7 +79,7 @@ export class SessionArchiveStore {
     return this.exclusive(async () => {
       const data = await this.read();
       const records: ArchivedSessionRecord[] = [];
-      const filesToRemove: { session: ArchiveSessionInput; archivePath: string; created: boolean }[] = [];
+      const filesToRemove: { session: ArchiveSessionInput; archivePath: string }[] = [];
 
       for (const session of sessions) {
         const existingIndex = data.sessions.findIndex((record) => record.sessionId === session.sessionId);
@@ -103,57 +103,26 @@ export class SessionArchiveStore {
         if (existingIndex === -1) data.sessions.push(record);
         else data.sessions[existingIndex] = record;
         records.push(record);
-        filesToRemove.push({ session, archivePath, created: existing === undefined });
+        filesToRemove.push({ session, archivePath });
       }
 
       await this.write(data);
-      const failures: { file: (typeof filesToRemove)[number]; error: unknown }[] = [];
-      for (const file of filesToRemove) {
+      // The index is committed. A kept original stays as unfinished cleanup:
+      // a retry finishes it, and restore keeps an original with newer messages.
+      const failures: string[] = [];
+      for (const { session, archivePath } of filesToRemove) {
+        const kept = `Session ${session.sessionId} is archived, but its original at ${session.path}`;
         try {
-          await removeArchivedSource(file.session, file.archivePath);
+          if (!await removeUnchangedSource(session.path, archivePath)) {
+            failures.push(`${kept} changed during archival and was kept. Restore the session to keep the newer messages.`);
+          }
         } catch (error: unknown) {
-          failures.push({ file, error });
+          failures.push(`${kept} could not be removed: ${errorMessage(error)}. Retry archiving to finish.`);
         }
       }
-      if (failures.length === 0) return records;
-      throw await this.rollBackUnfinishedArchives(data, failures);
+      if (failures.length > 0) throw new Error(failures.join(" "));
+      return records;
     });
-  }
-
-  /**
-   * A failed cleanup always leaves the original in place. Unindex sessions this
-   * operation archived so they stay active; records that existed before stay
-   * indexed until a retry finishes them or a restore keeps the original.
-   */
-  private async rollBackUnfinishedArchives(
-    data: SessionArchiveFile,
-    failures: readonly { file: { session: ArchiveSessionInput; archivePath: string; created: boolean }; error: unknown }[],
-  ): Promise<Error> {
-    const rollBackIds = new Set(failures.filter(({ file }) => file.created).map(({ file }) => file.session.sessionId));
-    let rolledBack = false;
-    if (rollBackIds.size > 0) {
-      try {
-        await this.write({ sessions: data.sessions.filter((record) => !rollBackIds.has(record.sessionId)) });
-        rolledBack = true;
-      } catch (error: unknown) {
-        // Keep the indexed archive; the reported error says so, and retrying
-        // archival completes it.
-        this.logger.warn({ sessionIds: [...rollBackIds], error: errorMessage(error) }, "could not roll back archive index after failed cleanup");
-      }
-      if (rolledBack) {
-        for (const { file } of failures) {
-          if (rollBackIds.has(file.session.sessionId)) await this.removeUnindexedArchiveCopy(file.archivePath);
-        }
-      }
-    }
-    const errors = failures.map(({ file, error }) => {
-      const { sessionId, path } = file.session;
-      return rolledBack && rollBackIds.has(sessionId)
-        ? new Error(`Could not archive session ${sessionId}: ${errorMessage(error)}. It was left unarchived`, { cause: error })
-        : new Error(`Session ${sessionId} is archived, but its original at ${path} was kept: ${errorMessage(error)}`, { cause: error });
-    });
-    const [only] = errors;
-    return errors.length === 1 && only !== undefined ? only : new AggregateError(errors, errors.map(errorMessage).join("; "));
   }
 
   async restore(sessionId: string): Promise<void> {
@@ -171,17 +140,12 @@ export class SessionArchiveStore {
       // Keep the archive copy until the record is gone, so a failed write can be
       // retried. The restore has then succeeded; a leftover copy is an older
       // prefix that a later archive of this session refreshes.
-      if (replacedArchive !== undefined) await this.removeUnindexedArchiveCopy(replacedArchive);
+      if (replacedArchive !== undefined) {
+        await unlink(replacedArchive).catch((error: unknown) => {
+          this.logger.warn({ archivePath: replacedArchive, error: errorMessage(error) }, "could not remove superseded archive copy after restore");
+        });
+      }
     });
-  }
-
-  /** The index no longer references this copy; a leftover is reported, not fatal. */
-  private async removeUnindexedArchiveCopy(archivePath: string): Promise<void> {
-    try {
-      await unlink(archivePath);
-    } catch (error: unknown) {
-      this.logger.warn({ archivePath, error: errorMessage(error) }, "could not remove unindexed archive copy");
-    }
   }
 
   async deleteArchived(sessionId: string): Promise<void> {
@@ -297,21 +261,22 @@ async function copySessionFileToArchive(session: ArchiveSessionInput, archivePat
 }
 
 /**
- * Delete the original only while it still matches the archive copy. Another
- * writer is not supported, so this guards the archive operation's own window.
+ * Delete the original only while it still matches the archive copy, and
+ * report false when it changed. Another writer is not supported, so this
+ * guards the archive operation's own window.
  */
-async function removeArchivedSource(session: ArchiveSessionInput, archivePath: string): Promise<void> {
-  const source = session.path;
-  if (source === archivePath) return;
+async function removeUnchangedSource(source: string, archivePath: string): Promise<boolean> {
+  if (source === archivePath) return true;
   let original: Buffer;
   try {
     original = await readFile(source);
   } catch (error: unknown) {
-    if (isNodeErrorWithCode(error, "ENOENT")) return;
+    if (isNodeErrorWithCode(error, "ENOENT")) return true;
     throw error;
   }
-  if (!original.equals(await readFile(archivePath))) throw new Error("its transcript changed during archival");
+  if (!original.equals(await readFile(archivePath))) return false;
   await unlink(source);
+  return true;
 }
 
 /**

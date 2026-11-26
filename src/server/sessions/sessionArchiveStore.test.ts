@@ -262,7 +262,7 @@ describe("SessionArchiveStore", () => {
     await expect(store.list()).resolves.toEqual([record]);
   });
 
-  it("leaves a session unarchived when a message is appended after the copy", async () => {
+  it("keeps an original that gains a message after the copy, and restore keeps it", async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-web-archive-source-change-"));
     tempRoots.push(root);
     const store = new SessionArchiveStore(join(root, "index.json"), join(root, "archive"));
@@ -280,13 +280,17 @@ describe("SessionArchiveStore", () => {
       await written;
     });
 
-    await expect(store.archive(input)).rejects.toThrow(/changed during archival.*left unarchived/);
+    await expect(store.archive(input)).rejects.toThrow(/is archived, but its original .* changed during archival and was kept\. Restore/);
     await expect(readFile(input.path, "utf8")).resolves.toBe(transcript("a", "original", "appended"));
+    await expect(store.list()).resolves.toEqual([expect.objectContaining({ sessionId: "a", originalPath: input.path, archivePath })]);
+
+    await store.restore("a");
     await expect(store.list()).resolves.toEqual([]);
+    await expect(readFile(input.path, "utf8")).resolves.toBe(transcript("a", "original", "appended"));
     expect(await exists(archivePath)).toBe(false);
   });
 
-  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("leaves a session unarchived when its original cannot be removed", async () => {
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("keeps a session indexed when its original cannot be removed, and a retry finishes", async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-web-archive-cleanup-"));
     tempRoots.push(root);
     const activeDir = join(root, "active");
@@ -297,16 +301,17 @@ describe("SessionArchiveStore", () => {
     await writeFile(input.path, original);
     await chmod(activeDir, 0o555);
     try {
-      await expect(store.archive(input)).rejects.toThrow(/left unarchived/);
+      await expect(store.archive(input)).rejects.toThrow(/is archived, but its original .* could not be removed: .*Retry archiving/);
     } finally {
       await chmod(activeDir, 0o755);
     }
-    await expect(store.list()).resolves.toEqual([]);
+    const indexed = await store.list();
+    expect(indexed).toEqual([expect.objectContaining({ sessionId: "a", originalPath: input.path })]);
     await expect(readFile(input.path, "utf8")).resolves.toBe(original);
-    expect(await exists(join(root, "archive", "a.jsonl"))).toBe(false);
 
-    await store.archive(input);
+    await expect(store.archive(input)).resolves.toEqual(indexed[0]);
     expect(await exists(input.path)).toBe(false);
+    await expect(readFile(join(root, "archive", "a.jsonl"), "utf8")).resolves.toBe(original);
   });
 
   it("keeps newer work in the remaining original of an indexed archive and restores it", async () => {
