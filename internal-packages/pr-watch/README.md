@@ -62,6 +62,6 @@ The session is checked again just before each delivery. Unarchiving a session do
 
 ## Delivery and failures
 
-Delivery loads a saved session if needed and waits for the companion extension to acknowledge the message. A rejection is logged with the extension's reason. Unacknowledged or rejected messages are retried with backoff, reusing the same ID so a retry never produces a second turn. Newer activity, including the final merged/closed message, waits behind an unacknowledged message. A message already sending when its subscription is removed may still arrive. After five failed attempts, or three consecutive GitHub read failures, PR watch records a warning notice on that session. The plugin's health is degraded while GitHub reads fail.
+Delivery loads a saved session if needed and waits for the companion extension to acknowledge the message. A rejection is logged with the extension's reason. Unacknowledged or rejected messages are retried with backoff, reusing the same ID so a retry never produces a second turn. Newer activity, including the final merged/closed message, waits behind an unacknowledged message. A message already sending when its subscription is removed may still arrive. After five failed delivery attempts, PR watch records a warning notice on that session. After three consecutive GitHub read failures for a pull request, it records a warning notice and reports degraded health until a read succeeds; individual failures are logged.
 
 State is stored in `subscriptions.json` in the plugin's data directory.
