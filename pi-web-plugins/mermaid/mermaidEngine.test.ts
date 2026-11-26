@@ -56,9 +56,17 @@ describe("shared Mermaid engine", () => {
     reply({ type: "mermaid-error", id: 2 });
     await expect(second).rejects.toThrow("Mermaid could not render this source");
 
-    const invalid = engine.render(request("graph TD; E"));
+    const labelled = engine.render(request("graph TD; L"));
     await vi.waitFor(() => { expect(post).toHaveBeenCalledTimes(3); });
-    reply({ type: "mermaid-rendered", id: 3, svg: "<svg/>", width: 300, height: Number.NaN });
+    reply({ type: "mermaid-rendered", id: 3, ...drawn, title: "Flow", description: 42 });
+    await expect(labelled).resolves.toEqual({ ...drawn, title: "Flow" });
+
+    await expect(engine.render(request("x".repeat(100_001)))).rejects.toThrow("Mermaid source is too large to render");
+    expect(post).toHaveBeenCalledTimes(3);
+
+    const invalid = engine.render(request("graph TD; E"));
+    await vi.waitFor(() => { expect(post).toHaveBeenCalledTimes(4); });
+    reply({ type: "mermaid-rendered", id: 4, svg: "<svg/>", width: 300, height: Number.NaN });
     await expect(invalid).rejects.toThrow("Mermaid returned an invalid diagram");
     expect(document.querySelectorAll("iframe")).toHaveLength(1);
     expect(load).toHaveBeenCalledOnce();

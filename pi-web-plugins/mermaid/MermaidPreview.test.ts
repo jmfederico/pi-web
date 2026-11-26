@@ -66,6 +66,22 @@ describe("Mermaid preview", () => {
     expect(input.fail).not.toHaveBeenCalled();
   });
 
+  it("names the image from the diagram's own accessible title and description, falling back to the generic name", async () => {
+    const generic = await preview({ text: "graph TD; A", signal: new AbortController().signal, fail: vi.fn() },
+      { render: () => Promise.resolve({ svg, width: 300, height: 120 }) });
+    await vi.waitFor(() => { expect(image(generic)).not.toBeNull(); });
+    expect(image(generic)?.alt).toBe("Mermaid diagram");
+    expect(image(generic)?.hasAttribute("aria-describedby")).toBe(false);
+
+    const authored = await preview({ text: "graph TD; B", signal: new AbortController().signal, fail: vi.fn() },
+      { render: () => Promise.resolve({ svg, width: 300, height: 120, title: "Checkout flow", description: "Cart to payment" }) });
+    await vi.waitFor(() => { expect(image(authored)).not.toBeNull(); });
+    const img = image(authored);
+    expect(img?.alt).toBe("Checkout flow");
+    const described = authored.shadowRoot?.getElementById(img?.getAttribute("aria-describedby") ?? "");
+    expect(described?.textContent).toBe("Cart to payment");
+  });
+
   it("reports engine failures, clears on abort, and ignores results for detached or replaced work", async () => {
     const failing = { render: vi.fn().mockRejectedValue(new Error("Mermaid could not render this source")) };
     const failed = { text: "bad", signal: new AbortController().signal, fail: vi.fn() };

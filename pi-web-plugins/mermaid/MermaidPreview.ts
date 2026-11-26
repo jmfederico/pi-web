@@ -1,10 +1,17 @@
 import type { StylesheetIntegrationCapabilityV1, ContentRendererInput } from "@jmfederico/pi-web/plugin-api";
 import { LitElement, css, html, type PropertyValues } from "lit";
 import { property, state } from "lit/decorators.js";
+import { ifDefined } from "lit/directives/if-defined.js";
 import type { MermaidContent } from "./mermaidLocalization";
 import type { MermaidRenderer } from "./mermaidEngine";
 
-interface Diagram { readonly url: string; readonly width: number; readonly height: number }
+interface Diagram {
+  readonly url: string;
+  readonly width: number;
+  readonly height: number;
+  readonly title?: string;
+  readonly description?: string;
+}
 
 export class MermaidPreview extends LitElement {
   private localizedContent: MermaidContent | undefined;
@@ -75,8 +82,8 @@ export class MermaidPreview extends LitElement {
     const current = () => this.isConnected && !input.signal.aborted && generation === this.generation;
     input.signal.addEventListener("abort", () => { if (generation === this.generation) this.diagram = undefined; }, { once: true });
     try {
-      const { svg, width, height } = await engine.render({ text: input.text, width: this.clientWidth || 800, signal: input.signal });
-      if (current()) this.diagram = { url: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`, width, height };
+      const { svg, ...drawing } = await engine.render({ text: input.text, width: this.clientWidth || 800, signal: input.signal });
+      if (current()) this.diagram = { url: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`, ...drawing };
     } catch (error) {
       if (current()) input.fail(error);
     }
@@ -87,9 +94,12 @@ export class MermaidPreview extends LitElement {
     const messages = this.content.messages;
     // An image cannot run scripts or load resources, even if sanitizing missed something.
     // Explicit dimensions reserve the scaled height before the image decodes.
-    return this.diagram === undefined
-      ? html`<p role="status">${messages.t("rendering")}</p>`
-      : html`<img alt=${messages.t("frameTitle")} src=${this.diagram.url} width=${this.diagram.width} height=${this.diagram.height} decoding="async">`;
+    const diagram = this.diagram;
+    if (diagram === undefined) return html`<p role="status">${messages.t("rendering")}</p>`;
+    // Author-supplied accTitle/accDescr take precedence over the generic name.
+    return html`<img alt=${diagram.title ?? messages.t("frameTitle")} src=${diagram.url} width=${diagram.width} height=${diagram.height} decoding="async"
+      aria-describedby=${ifDefined(diagram.description === undefined ? undefined : "description")}>
+      ${diagram.description === undefined ? null : html`<span id="description" hidden>${diagram.description}</span>`}`;
   }
 
   static override styles = css`

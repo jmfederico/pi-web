@@ -2,13 +2,14 @@
 // One frame serves every diagram; Mermaid resets per-diagram configuration on each render.
 import mermaid from "mermaid";
 import DOMPurify from "dompurify";
+import { MAX_MERMAID_LABEL_LENGTH, MAX_MERMAID_SOURCE_LENGTH } from "./mermaidLimits";
 
 mermaid.initialize({
   startOnLoad: false,
   htmlLabels: false,
   securityLevel: "strict",
   suppressErrorRendering: true,
-  maxTextSize: 100_000,
+  maxTextSize: MAX_MERMAID_SOURCE_LENGTH,
   maxEdges: 500,
   secure: ["secure", "securityLevel", "startOnLoad", "suppressErrorRendering", "maxTextSize", "maxEdges", "htmlLabels", "flowchart"],
 });
@@ -19,11 +20,12 @@ document.body.append(stage);
 
 interface DrawRequest { readonly id: number; readonly text: string; readonly width: number }
 
-function drawRequest(data: unknown): DrawRequest | undefined {
+/** A request with an ID always gets a reply, so a bad one cannot stall the shared queue. */
+function drawRequest(data: unknown): DrawRequest | { readonly id: number } | undefined {
   if (typeof data !== "object" || data === null || !("type" in data) || data.type !== "mermaid-render") return undefined;
-  if (!("id" in data) || typeof data.id !== "number" || !("text" in data) || typeof data.text !== "string"
-    || !("width" in data) || typeof data.width !== "number" || !Number.isFinite(data.width)) return undefined;
-  if (data.text.length > 100_000) return undefined;
+  if (!("id" in data) || typeof data.id !== "number") return undefined;
+  if (!("text" in data) || typeof data.text !== "string" || data.text.length > MAX_MERMAID_SOURCE_LENGTH
+    || !("width" in data) || typeof data.width !== "number" || !Number.isFinite(data.width)) return { id: data.id };
   return { id: data.id, text: data.text, width: Math.min(4096, Math.max(160, data.width)) };
 }
 
@@ -31,7 +33,9 @@ let queue = Promise.resolve();
 window.addEventListener("message", (event: MessageEvent<unknown>) => {
   if (event.source !== parent) return;
   const request = drawRequest(event.data);
-  if (request !== undefined) queue = queue.then(() => draw(request));
+  if (request === undefined) return;
+  if ("text" in request) queue = queue.then(() => draw(request));
+  else parent.postMessage({ type: "mermaid-error", id: request.id }, "*");
 });
 parent.postMessage({ type: "mermaid-ready" }, "*");
 
@@ -59,6 +63,11 @@ function intrinsicSize(svg: SVGSVGElement): { width: number; height: number } {
   return { width: rect.width, height: rect.height };
 }
 
+function label(svg: SVGSVGElement, tag: "title" | "desc"): string | undefined {
+  const text = svg.querySelector(`:scope > ${tag}`)?.textContent.trim().slice(0, MAX_MERMAID_LABEL_LENGTH);
+  return text === undefined || text === "" ? undefined : text;
+}
+
 async function draw({ id, text, width }: DrawRequest): Promise<void> {
   try {
     stage.style.width = `${String(width)}px`;
@@ -79,7 +88,10 @@ async function draw({ id, text, width }: DrawRequest): Promise<void> {
     root.style.removeProperty("max-width");
     // Images require standalone XML, not the HTML serialization of an inline SVG.
     const markup = new XMLSerializer().serializeToString(root);
-    parent.postMessage({ type: "mermaid-rendered", id, svg: markup, width: size.width, height: size.height }, "*");
+    // An image hides the SVG's own accessible title and description (accTitle/accDescr);
+    // send them so the page can expose them on the image.
+    parent.postMessage({ type: "mermaid-rendered", id, svg: markup, width: size.width, height: size.height,
+      title: label(root, "title"), description: label(root, "desc") }, "*");
   } catch {
     parent.postMessage({ type: "mermaid-error", id }, "*");
   } finally {

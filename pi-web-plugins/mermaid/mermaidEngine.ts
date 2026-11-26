@@ -1,8 +1,13 @@
+import { MAX_MERMAID_LABEL_LENGTH, MAX_MERMAID_SOURCE_LENGTH } from "./mermaidLimits";
+
 export interface MermaidDrawing {
   /** Sanitized standalone SVG markup with explicit intrinsic dimensions. */
   readonly svg: string;
   readonly width: number;
   readonly height: number;
+  /** Author-supplied accessible title and description (Mermaid accTitle/accDescr). */
+  readonly title?: string;
+  readonly description?: string;
 }
 
 export interface MermaidDrawRequest {
@@ -45,7 +50,10 @@ function drawing(data: object): MermaidDrawing | undefined {
   const { width, height } = data;
   if (typeof width !== "number" || typeof height !== "number" || !(width > 0) || !(height > 0)
     || !Number.isFinite(width) || !Number.isFinite(height)) return undefined;
-  return { svg: data.svg, width, height };
+  const text = (value: unknown) => typeof value === "string" && value !== "" ? value.slice(0, MAX_MERMAID_LABEL_LENGTH) : undefined;
+  const title = text("title" in data ? data.title : undefined);
+  const description = text("description" in data ? data.description : undefined);
+  return { svg: data.svg, width, height, ...(title === undefined ? {} : { title }), ...(description === undefined ? {} : { description }) };
 }
 
 /**
@@ -77,6 +85,8 @@ export class MermaidEngine implements MermaidRenderer {
     const { signal } = request;
     if (this.disposed) return Promise.reject(new Error("Mermaid engine is no longer available"));
     if (signal.aborted) return Promise.reject(abortError(signal));
+    // The engine enforces the same limit; rejecting here keeps oversized source out of the queue.
+    if (request.text.length > MAX_MERMAID_SOURCE_LENGTH) return Promise.reject(new Error("Mermaid source is too large to render"));
     return new Promise<MermaidDrawing>((resolve, reject) => {
       const onAbort = () => {
         const queued = this.queue.indexOf(job);
