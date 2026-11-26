@@ -1,5 +1,6 @@
 import type { StylesheetIntegrationCapabilityV1, PluginCapability, ContentRendererInput, PiWebPlugin } from "@jmfederico/pi-web/plugin-api";
-import { loadMermaidEngine, MermaidPreview } from "./MermaidPreview";
+import { MermaidPreview } from "./MermaidPreview";
+import { loadMermaidEngine, MermaidEngine } from "./mermaidEngine";
 import { mermaidSyntaxHighlighter } from "./mermaidSyntax";
 import { createMermaidContent } from "./mermaidLocalization";
 
@@ -33,10 +34,13 @@ const plugin = {
     // source and asset loader, never the first machine's artifact URL.
     if (customElements.get("pi-web-mermaid-preview") === undefined) customElements.define("pi-web-mermaid-preview", MermaidPreview);
     let stylesheetIntegration: StylesheetIntegrationCapabilityV1 | undefined;
+    // One engine per activation serves all of its diagrams and is released with it.
+    const engine = new MermaidEngine(loadMermaidEngine);
     return {
       start: ({ capabilities }) => {
         stylesheetIntegration = capabilities.resolve(stylesheetIntegrationCapability);
       },
+      dispose: () => { engine.dispose(); },
       contributions: {
         syntaxHighlighters: [mermaidSyntaxHighlighter],
         contentRenderers: [{
@@ -44,7 +48,7 @@ const plugin = {
           get title() { return content.messages.t("diagram"); },
           languages: ["mermaid"],
           fileExtensions: ["mmd", "mermaid"],
-          render: (input: ContentRendererInput) => html`<pi-web-mermaid-preview .stylesheetIntegration=${stylesheetIntegration} .content=${content} .input=${input} .loadEngine=${loadMermaidEngine}></pi-web-mermaid-preview>`,
+          render: (input: ContentRendererInput) => html`<pi-web-mermaid-preview .stylesheetIntegration=${stylesheetIntegration} .content=${content} .input=${input} .engine=${engine}></pi-web-mermaid-preview>`,
         }],
       },
     };

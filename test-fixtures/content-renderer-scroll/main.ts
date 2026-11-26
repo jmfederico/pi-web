@@ -2,6 +2,7 @@ import { html } from "lit";
 import { FilesCodeViewer } from "../../pi-web-plugins/files/FilesCodeViewer";
 import { WorkspaceFileViewer } from "../../pi-web-plugins/files/FilesViewer";
 import { MermaidPreview } from "../../pi-web-plugins/mermaid/MermaidPreview";
+import { MermaidEngine } from "../../pi-web-plugins/mermaid/mermaidEngine";
 import { FormattedText } from "../../src/client/src/components/FormattedText";
 import { createContentRenderingService } from "../../src/client/src/formatting/contentRendering";
 
@@ -14,13 +15,15 @@ const params = new URLSearchParams(location.search);
 const text = params.has("demo")
   ? await (await fetch("/dev-plugins/mermaid-complex-demo.mmd")).text()
   : `flowchart TD\n${Array.from({ length: 45 }, (_, i) => `N${i}[${i === 44 ? "DIAGRAM END" : `Step ${i}`}]${i === 0 ? "" : `\nN${i - 1} --> N${i}`}`).join("\n")}`;
-const engine = () => fetch("/dist/pi-web-plugins/mermaid/browser/mermaid-engine.js").then((response) => {
+// ?engine=<path> points at an alternative build, for example under the ignored test-results/.
+const engineUrl = params.get("engine") ?? "/dist/pi-web-plugins/mermaid/browser/mermaid-engine.js";
+const engine = new MermaidEngine(() => fetch(engineUrl).then((response) => {
   if (!response.ok) throw new Error("Build plugins before running this fixture");
   return response.text();
-});
+}));
 const service = createContentRenderingService(() => [{
   id: "mermaid:diagram", label: "Mermaid", renderer: {
-    id: "diagram", render: (input) => html`<scroll-mermaid-preview .input=${input} .loadEngine=${engine}></scroll-mermaid-preview>`,
+    id: "diagram", render: (input) => html`<scroll-mermaid-preview .input=${input} .engine=${engine}></scroll-mermaid-preview>`,
   },
 }]);
 const viewer = new WorkspaceFileViewer();
