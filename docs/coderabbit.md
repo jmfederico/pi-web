@@ -18,7 +18,7 @@ The goal is a CodeRabbit approval, not adoption of every suggestion. Treat findi
 
 To push back, reply in the finding's thread with the concrete reason, such as how unlikely the case is and what happens when it fails. Then resolve the thread. If CodeRabbit answers with a new substantive argument, reconsider before resolving. Do not resolve a thread without either a fix or a stated reason.
 
-Resolving threads counts toward approval. CodeRabbit approves once the remaining requirements pass. If it does not re-evaluate, request another review with `@coderabbitai review`.
+Resolving threads counts toward approval. CodeRabbit approves once the remaining requirements pass, without needing a new commit. If approval does not arrive, its review summary explains what is pending. `@coderabbitai review` only reviews new commits, so it does not help here.
 
 The public-repository offer currently includes reviews and approvals without a paid subscription, subject to CodeRabbit's rate and file limits. This configuration does not enable paid overages. Account billing and optional products remain account-level settings, not guarantees made by this repository.
 
