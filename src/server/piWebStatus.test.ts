@@ -88,12 +88,13 @@ describe("PI WEB status", () => {
     expect(runtime.components.sessiond.piVersion).toBe("0.83.0");
   });
 
-  it("falls back to this process's Pi version when the daemon predates Pi version reporting", async () => {
+  it("leaves the daemon's Pi version unknown when the daemon predates Pi version reporting", async () => {
     const daemon = daemonWithRuntime(runningSessiondRuntime());
 
     const status = await getPiWebVersionStatus(daemon);
 
-    expect(status.components.sessiond.piVersion).toBe(PI_CODING_AGENT_VERSION);
+    expect(status.components.sessiond).not.toHaveProperty("piVersion");
+    expect(status.components.web.piVersion).toBe(PI_CODING_AGENT_VERSION);
   });
 
   it("detects session daemon package installs from the configured agent dir for runtime responses", async () => {

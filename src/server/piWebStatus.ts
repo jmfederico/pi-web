@@ -358,17 +358,16 @@ async function getSessiondComponentStatus(daemon: PiWebStatusDaemon, options: Pi
     const runtime = parsePiWebRuntimeComponent(parsed);
     if (runtime?.available !== true) return unavailableSessiond(runtime?.error ?? "runtime response did not include valid runtime information");
     const status = await getPiWebComponentStatus("sessiond", options);
-    // A legacy daemon's engine is unknown, never this web process's engine.
+    // A legacy daemon's engine and Pi are unknown, never this web process's.
     delete status.runtime;
+    delete status.piVersion;
     const runtimeVersion = runtime.runtimeVersion ?? status.runtimeVersion;
     return {
       ...status,
       ...(runtime.runtime === undefined ? {} : { runtime: runtime.runtime }),
       ...(runtimeVersion === undefined ? {} : { runtimeVersion }),
-      // The daemon reports the Pi version it has loaded in its own process;
-      // the spread of `status` already carries this process's Pi version as
-      // the fallback for daemons that predate Pi version reporting, mirroring
-      // the runtimeVersion fallback.
+      // Only the daemon knows the Pi it loaded; services can restart at
+      // different times, so this process's Pi is not a substitute.
       ...(runtime.piVersion === undefined ? {} : { piVersion: runtime.piVersion }),
       stale: isInstalledVersionNewer(status.installedVersion, runtimeVersion),
       available: true,

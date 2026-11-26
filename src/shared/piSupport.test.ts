@@ -44,10 +44,11 @@ describe("isOlderThanSupportedPi", () => {
 });
 
 describe("loadedPiVersion", () => {
-  it("prefers the session daemon's Pi and falls back to the web process's", () => {
+  it("prefers the session daemon's Pi and falls back to the web process's only when the daemon is unavailable", () => {
     const web = { available: true, piVersion: "1.6.1" };
     expect(loadedPiVersion({ web, sessiond: { available: true, piVersion: "1.5.0" } })).toEqual({ source: "sessiond", version: "1.5.0" });
     expect(loadedPiVersion({ web, sessiond: { available: false } })).toEqual({ source: "web", version: "1.6.1" });
+    expect(loadedPiVersion({ web, sessiond: { available: true } })).toBeUndefined();
     expect(loadedPiVersion({ sessiond: { available: false } })).toBeUndefined();
   });
 });

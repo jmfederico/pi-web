@@ -39,10 +39,14 @@ interface PiVersionReporter {
   piVersion?: string;
 }
 
-/** The Pi version sessions run on: the session daemon's, falling back to the web process's. */
+/**
+ * The Pi version sessions run on: the session daemon's report. The web
+ * process's Pi is used only when the daemon is unavailable; a running daemon
+ * that does not report its Pi leaves the version unknown.
+ */
 export function loadedPiVersion(components: { web?: PiVersionReporter | undefined; sessiond?: PiVersionReporter | undefined }): LoadedPiVersion | undefined {
   const { web, sessiond } = components;
-  if (sessiond?.available === true && sessiond.piVersion !== undefined) return { source: "sessiond", version: sessiond.piVersion };
+  if (sessiond?.available === true) return sessiond.piVersion === undefined ? undefined : { source: "sessiond", version: sessiond.piVersion };
   if (web?.available === true && web.piVersion !== undefined) return { source: "web", version: web.piVersion };
   return undefined;
 }
