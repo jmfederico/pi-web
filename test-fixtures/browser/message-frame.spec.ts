@@ -65,8 +65,10 @@ for (const visualEffects of [true, false]) {
       await expect(trigger).toBeFocused();
       await expect(reasoning).toHaveJSProperty("open", open);
       // Metadata follows the content; it does not move the menu or precede reasoning.
+      // Touching edges can differ by floating-point rounding (Playwright 1.65 Firefox reports
+      // 283.89999 against a 283.90002 sum), so allow a sub-pixel margin.
       const contentBox = await box(reasoning);
-      expect((await box(metadata)).y).toBeGreaterThanOrEqual(contentBox.y + contentBox.height);
+      expect((await box(metadata)).y).toBeGreaterThanOrEqual(contentBox.y + contentBox.height - 0.01);
       await trigger.click();
       await info.click();
       await expect(metadata).toBeHidden();

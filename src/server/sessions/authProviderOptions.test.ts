@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
+import type { AuthProviderStatus } from "../../shared/apiTypes";
 import { getLoginProviderOptions, getLogoutProviderOptions, type AuthProviderRuntime } from "./authProviderOptions";
 
-function runtime(configuredProviders: ReadonlySet<string> = new Set(["openai"])): AuthProviderRuntime {
+function runtime(
+  configuredProviders: ReadonlySet<string> = new Set(["openai"]),
+  storedStatus: AuthProviderStatus = { configured: true, source: "stored" },
+): AuthProviderRuntime {
   const credentials = [{ providerId: "openai", type: "api_key" as const }];
   // Auth shapes mirror what the Pi SDK actually reports for these providers:
   // github-copilot supports both methods, openai-codex is OAuth-only, and
@@ -21,7 +25,7 @@ function runtime(configuredProviders: ReadonlySet<string> = new Set(["openai"]))
   return {
     getProviders: () => providers,
     listCredentials: () => Promise.resolve(credentials),
-    getProviderAuthStatus: (provider: string) => (provider === "openai" ? { configured: true, source: "stored" } : { configured: false }),
+    getProviderAuthStatus: (provider: string) => (provider === "openai" ? storedStatus : { configured: false }),
     hasConfiguredAuth: (provider: string) => configuredProviders.has(provider),
   };
 }
@@ -51,8 +55,13 @@ describe("auth provider options", () => {
     expect(options).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: "ambient", authType: "api_key" })]));
   });
 
-  it("does not report a stored credential as configured when provider resolution is incomplete", async () => {
-    const unresolvedRuntime = runtime(new Set());
+  it.each<{ pi: string; storedStatus: AuthProviderStatus }>([
+    // Pi 1.6.0 reports every stored entry as configured.
+    { pi: "1.6.0", storedStatus: { configured: true, source: "stored" } },
+    // Pi 1.6.1 reports the unresolved entry as unconfigured but keeps its source.
+    { pi: "1.6.1", storedStatus: { configured: false, source: "stored" } },
+  ])("does not report a stored credential as configured when provider resolution is incomplete (Pi $pi)", async ({ storedStatus }) => {
+    const unresolvedRuntime = runtime(new Set(), storedStatus);
 
     expect(getLoginProviderOptions(unresolvedRuntime, "api_key")).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "openai", status: { configured: false } }),

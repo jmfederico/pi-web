@@ -116,11 +116,11 @@
               <h2>Requirements</h2>
               <ul>
                 <li><strong>Node.js 22.19.0 or newer</strong> and npm (recommended), or <a href="#bun">Bun on a best-effort basis</a>.</li>
-                <li><strong>Pi Coding Agent</strong> installed as an npm SDK package through npm or Bun and configured so the <code>pi</code> command works for your user. Binary-only installations without the SDK are not supported.</li>
+                <li><strong>Pi Coding Agent</strong> installed as an npm SDK package through npm or Bun and configured so the <code>pi</code> command works for your user. Use the latest Pi release; <code>pi-web doctor</code> warns when yours is older than PI WEB supports. Binary-only installations without the SDK are not supported.</li>
                 <li>A shell login environment that exposes your runtime, Pi, git, and any tools your agents need. The package launchers use POSIX <code>sh</code>. Pi's Bash tool and some service scripts still require Bash.</li>
                 <li>For the automatic installer: a supported per-user service manager.</li>
               </ul>
-              <p>PI WEB reuses your existing Pi installation; it does not install a separate Pi engine or pin its version.</p>
+              <p>PI WEB reuses your existing Pi installation; it does not install a separate Pi engine. Each PI WEB release supports the latest Pi minor version it was tested with. An older Pi still runs, but the Updates panel and <code>pi-web doctor</code> recommend updating it. New Pi major versions are evaluated before PI WEB adopts them.</p>
               <details class="config-details">
                 <summary>Changing or upgrading your Pi installation</summary>
                 <p>After upgrading or downgrading Pi, restart the web/API service before the session daemon to use the changed version. Restarting the daemon interrupts active sessions. If a Pi upgrade causes compatibility problems, you can downgrade Pi. If Pi was previously installed only as part of PI WEB, install Pi itself before updating PI WEB.</p>

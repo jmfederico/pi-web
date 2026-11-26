@@ -12,8 +12,11 @@ import { PI_WEB_PI_PACKAGE_DIR_ENV, selectPiRuntimePackageDir, stablePiPackageSe
 import { runPiWebUpdate } from "./piWebUpdate.js";
 import { runWorkspaceNotificationCli } from "./workspaceNotificationCli.js";
 import { runPluginRecoveryCli, type SessionDaemonRestartPlan } from "./pluginRecoveryCli.js";
+import { VERSION as PI_CODING_AGENT_VERSION } from "./piSdk.js";
 import {
+  installedSupportedPiMinimum,
   packageVersion,
+  piSupportCheckLines,
   printPiWebVersionReport,
   probeRunningComponentReady,
   runningComponentsReady,
@@ -1322,6 +1325,9 @@ async function doctor(context: ReadinessDoctorCommandContext): Promise<void> {
     console.log("\n✗ Installed PI WEB services are unavailable or stale (see \"Running services\" above).");
     console.log("  Run `pi-web restart`, then check `pi-web status`.");
   }
+
+  console.log("\nPi support:");
+  for (const line of piSupportCheckLines(runningVersionInfo, PI_CODING_AGENT_VERSION, installedSupportedPiMinimum())) console.log(line);
 
   console.log("\nGeneral login-shell readiness (separate from native-service requirements):");
   const generalReadinessOk = runChecks(generalDoctorChecks());

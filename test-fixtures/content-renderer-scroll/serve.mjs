@@ -4,6 +4,7 @@
 // playwright-cli -s=scroll open http://127.0.0.1:8517/test-fixtures/content-renderer-scroll/
 // playwright-cli -s=scroll run-code --filename=test-fixtures/content-renderer-scroll/check.browser.js
 // Append ?demo to the URL to smoke-test the ignored local complex Mermaid demo.
+// Append ?engine=<path> to load the Mermaid engine from another build, such as one under test-results/.
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 

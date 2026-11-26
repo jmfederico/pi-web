@@ -168,7 +168,7 @@ export function fakeRuntime(sessionId = "session-1", patch: Partial<TestSession>
   const calls = { abort: 0, bindExtensions: bindExtensionCalls, clearQueue: 0, dispose: 0, prompt: promptCalls, reload: 0, sendCustomMessage: customMessageCalls };
   const session: TestSession = {
     sessionId,
-    sessionFile: `/tmp/${sessionId}.jsonl`,
+    sessionFile: `/sessions/${sessionId}.jsonl`,
     messages: [],
     state: {},
     sessionName: undefined,

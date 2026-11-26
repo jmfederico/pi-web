@@ -269,13 +269,16 @@ it("keeps public plugin Markdown calls independent of formatting work", async ()
   expect(boundary.querySelector("strong")?.textContent).toBe("Public content");
 });
 
-it("defers offscreen plugin callbacks and aborts active previews when they leave the viewport", async () => {
+it("defers offscreen plugin callbacks but keeps started previews mounted when they leave the viewport", async () => {
   const intersect = viewport();
   const draw = vi.fn<ContentRendererContribution["render"]>(() => html`<b>Preview</b>`);
   const host = new ContentRendererHost();
   host.text = "source";
   host.choices = [{ id: "test", label: "Test", renderer: { id: "test", renderMode: "automatic", render: draw } }];
-  document.body.append(host);
+  const group = document.createElement("details");
+  group.open = true;
+  group.append(document.createElement("summary"), host);
+  document.body.append(group);
   await settleDeferredContent(host);
   expect(draw).not.toHaveBeenCalled();
   intersect(host, true);
@@ -287,8 +290,19 @@ it("defers offscreen plugin callbacks and aborts active previews when they leave
   await settleDeferredContent(host);
   expect(draw).toHaveBeenCalledOnce();
   const input = draw.mock.calls[0]?.[0];
+  const preview = host.renderRoot.querySelector("b");
+  // Reverting to source offscreen changes height, which can scroll it back into view and loop.
   intersect(host, false);
-  expect(input?.signal.aborted).toBe(true);
   await settleDeferredContent(host);
+  expect(input?.signal.aborted).toBe(false);
+  expect(host.renderRoot.querySelector("b")).toBe(preview);
+  intersect(host, true);
+  await settleDeferredContent(host);
+  expect(draw).toHaveBeenCalledOnce();
+  // Closing a disclosure still releases the preview, even while it is offscreen.
+  intersect(host, false);
+  group.open = false;
+  await settleDeferredContent(host);
+  expect(input?.signal.aborted).toBe(true);
   expect(host.renderRoot.querySelector("pre")?.textContent).toBe("source");
 });

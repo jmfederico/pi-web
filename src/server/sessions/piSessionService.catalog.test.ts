@@ -46,7 +46,7 @@ describe("read-only session catalog", () => {
   });
 
   it("reports already-hosted idle/busy sessions, without assigning runtime state to a cloned file", async () => {
-    const fake = fakeRuntime("live");
+    const fake = fakeRuntime("live", { sessionFile: "/tmp/live.jsonl" });
     const gateway = sessionGateway([]);
     const service = new PiSessionService(new CapturingSessionEventHub(), { agentDir: "/tmp/pi-web-test-agent", modelRuntime: testModelRuntime, sessionManager: gateway, archiveStore: emptyArchiveStore(), createAgentRuntime: runtimeCreator(fake.runtime) });
     try {
@@ -64,7 +64,7 @@ describe("read-only session catalog", () => {
 
   it("keeps scanner dates for hosted files rather than treating header creation as last activity", async () => {
     const disk = { ...sessionRecord("live"), path: "/tmp/live.jsonl", modified: new Date("2026-02-01T00:00:00.000Z") };
-    const fake = fakeRuntime("live", { sessionManager: fakeSessionManager("/workspace", { getHeader: () => ({ timestamp: "2025-01-01T00:00:00.000Z" }) }) });
+    const fake = fakeRuntime("live", { sessionFile: disk.path, sessionManager: fakeSessionManager("/workspace", { getHeader: () => ({ timestamp: "2025-01-01T00:00:00.000Z" }) }) });
     const gateway = sessionGateway([disk]);
     const createRuntime = vi.fn(runtimeCreator(fake.runtime));
     const service = new PiSessionService(new CapturingSessionEventHub(), { agentDir: "/tmp/pi-web-test-agent", modelRuntime: testModelRuntime, sessionManager: gateway, archiveStore: emptyArchiveStore(), createAgentRuntime: createRuntime });

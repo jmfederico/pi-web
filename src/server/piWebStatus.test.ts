@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { VERSION as PI_CODING_AGENT_VERSION } from "../piSdk.js";
-import { comparePackageVersions, getPiWebRuntime, getPiWebStatus, getPiWebVersionStatus, updateCommandFor } from "./piWebStatus.js";
+import { getPiWebRuntime, getPiWebStatus, getPiWebVersionStatus, updateCommandFor } from "./piWebStatus.js";
 import { SessionDaemonClient } from "../sessiond/sessionDaemonClient.js";
 import { piWebRuntimeIdentity } from "../shared/piWebRuntime.js";
 import type { PiWebRuntimeComponent } from "../shared/apiTypes.js";
@@ -53,10 +53,16 @@ describe("PI WEB status", () => {
     expect(unavailable.components.sessiond).not.toHaveProperty("runtime");
   });
 
-  it("compares semver-shaped CalVer versions", () => {
-    expect(comparePackageVersions("1.202605.9", "1.202605.8")).toBeGreaterThan(0);
-    expect(comparePackageVersions("1.202605.8", "1.202605.8")).toBe(0);
-    expect(comparePackageVersions("1.202605.7", "1.202605.8")).toBeLessThan(0);
+  it("recommends a Pi update only when the daemon's Pi is older than the supported minimum", async () => {
+    process.env["PI_WEB_SKIP_VERSION_CHECK"] = "1";
+    const statusWithPi = (piVersion: string) => getPiWebStatus(daemonWithRuntime({ ...runningSessiondRuntime(), piVersion }));
+
+    const older = (await statusWithPi("0.1.0")).messages.find((message) => message.id === "pi-unsupported");
+    expect(older).toMatchObject({ severity: "warning" });
+    expect(older?.body).toContain("0.1.0");
+    for (const piVersion of ["999.0.0", "not-a-version"]) {
+      expect((await statusWithPi(piVersion)).messages.some((message) => message.id === "pi-unsupported")).toBe(false);
+    }
   });
 
   it("returns installed and running version components without release metadata", async () => {
@@ -82,12 +88,13 @@ describe("PI WEB status", () => {
     expect(runtime.components.sessiond.piVersion).toBe("0.83.0");
   });
 
-  it("falls back to this process's Pi version when the daemon predates Pi version reporting", async () => {
+  it("leaves the daemon's Pi version unknown when the daemon predates Pi version reporting", async () => {
     const daemon = daemonWithRuntime(runningSessiondRuntime());
 
     const status = await getPiWebVersionStatus(daemon);
 
-    expect(status.components.sessiond.piVersion).toBe(PI_CODING_AGENT_VERSION);
+    expect(status.components.sessiond).not.toHaveProperty("piVersion");
+    expect(status.components.web.piVersion).toBe(PI_CODING_AGENT_VERSION);
   });
 
   it("detects session daemon package installs from the configured agent dir for runtime responses", async () => {

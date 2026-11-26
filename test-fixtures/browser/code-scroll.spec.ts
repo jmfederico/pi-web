@@ -33,8 +33,24 @@ async function recordEntry(page: Page) {
       element.addEventListener("scrollend", () => { element.setAttribute("data-wheel-ended", "true"); }, { once: true });
     });
   }
+  const startTop = await viewport.evaluate((element) => element.scrollTop);
   await page.mouse.wheel(0, -360);
   if (animatedWheel) await expect(viewport).toHaveAttribute("data-wheel-ended", "true");
+  // mouse.wheel() returns before scrolling finishes, and retained highlighting no longer
+  // delays recording. Firefox does not reliably fire scrollend here, so wait until the
+  // wheel has moved the transcript and the position holds for a few frames.
+  await viewport.evaluate((element, start) => new Promise<void>((resolve) => {
+    let last = element.scrollTop;
+    let stable = 0;
+    const check = () => {
+      if (element.scrollTop !== start && element.scrollTop === last) stable += 1;
+      else stable = 0;
+      last = element.scrollTop;
+      if (stable >= 3) resolve();
+      else requestAnimationFrame(check);
+    };
+    requestAnimationFrame(check);
+  }), startTop);
   await expect(page.locator(highlighted).first()).toBeAttached();
   const samples = await page.evaluate(() => window.codeScrollFixture.stopRecording());
   const after = samples.at(-1);
@@ -66,14 +82,16 @@ test("deferred long code formatting preserves the reading position when entering
   await expectStableEntry(page);
 });
 
-test("highlighted code preserves the reading position after repeated offscreen exit and reentry", async ({ page }) => {
+test("highlighted code stays rendered and preserves the reading position across repeated offscreen exit and reentry", async ({ page }) => {
   await prepareReading(page);
   // Initial deferred formatting has its own regression above; warm the real
   // renderer before testing the independent offscreen visibility transitions.
   await recordEntry(page);
   for (let cycle = 0; cycle < 2; cycle++) {
     await page.evaluate(() => window.codeScrollFixture.exitBelow());
-    await expect(page.locator("pi-web-highlighted-code")).toHaveCount(0);
+    // Reverting offscreen previews to source changed their height and could loop.
+    await page.evaluate(() => window.codeScrollFixture.frames());
+    await expect(page.locator("pi-web-highlighted-code")).toHaveCount(1);
     await page.evaluate(() => window.codeScrollFixture.frames());
     await expectStableEntry(page);
   }
