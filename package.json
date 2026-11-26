@@ -135,7 +135,7 @@
     "happy-dom": "^21.0.4",
     "highlight.js": "^11.12.0",
     "knip": "^6.48.0",
-    "mermaid": "^12.2.0",
+    "mermaid": "^12.3.0",
     "tsx": "^4.23.15",
     "typebox": "1.3.27",
     "typescript": "^6.0.3",
