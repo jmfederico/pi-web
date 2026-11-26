@@ -86,5 +86,6 @@ export class ProjectRenameDialog extends LitElement {
 }
 
 function folderName(path: string): string {
-  return path.split("/").filter((part) => part !== "").at(-1) ?? path;
+  // Remote machines may report either separator.
+  return path.split(/[\\/]/).filter((part) => part !== "").at(-1) ?? path;
 }

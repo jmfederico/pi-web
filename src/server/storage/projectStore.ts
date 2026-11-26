@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { piWebDataDir } from "../../config.js";
 import { randomUUID } from "node:crypto";
 import type { Project } from "../types.js";
@@ -34,7 +34,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function projectName(requested: string | undefined, path: string): string {
   const trimmed = requested?.trim();
   if (trimmed !== undefined && trimmed !== "") return trimmed;
-  return path.split("/").filter((part) => part !== "").at(-1) ?? path;
+  return basename(path) || path;
 }
 
 export function defaultProjectStorePath(env: NodeJS.ProcessEnv = process.env, cwd = process.cwd()): string {

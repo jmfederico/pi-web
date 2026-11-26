@@ -100,8 +100,7 @@ export class ProjectController {
   }
 
   /** Rejects on failure so the rename dialog can show the error and stay open. */
-  async renameProject(projectId: string, name: string): Promise<void> {
-    const machineId = selectedMachineId(this.getState());
+  async renameProject(projectId: string, name: string, machineId: string): Promise<void> {
     const project = await this.api.renameProject(projectId, name, machineId);
     const state = this.getState();
     if (selectedMachineId(state) !== machineId) return;

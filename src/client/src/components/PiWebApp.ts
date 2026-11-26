@@ -202,7 +202,8 @@ export class PiWebApp extends LitElement {
   private legacyErrorRevision = 0;
   @query("chat-view") private chatView?: ChatView;
   @state() private machineNameEditTarget: Machine | undefined;
-  @state() private projectRenameTarget: Project | undefined;
+  /** Bound to the machine that listed the project, so a later machine switch cannot redirect the rename. */
+  @state() private projectRenameTarget: { project: Project; machineId: string } | undefined;
   @state() private questionActions: QuestionActions | undefined;
   private readonly handleQuestionActionsChange = (actions: QuestionActions | undefined) => { this.questionActions = actions; };
   private readonly handleChatMode = () => { this.promptEditor?.focusInput(); };
@@ -2413,7 +2414,7 @@ export class PiWebApp extends LitElement {
     toggleWorkspaces: () => { this.cancelAutomaticProjectNavigation(); this.navigationSections.toggle("workspaces"); },
     toggleSessions: () => { this.cancelAutomaticProjectNavigation(); this.navigationSections.toggle("sessions"); },
     selectProject: (project: Project) => this.selectNavigationItem("projects", "workspaces", () => this.selectProjectFromNavigation(project)),
-    renameProject: (project: Project) => { this.projectRenameTarget = project; },
+    renameProject: (project: Project) => { this.projectRenameTarget = { project, machineId: selectedMachineId(this.state) }; },
     closeProject: (project: Project) => this.projects.closeProject(project.id),
     selectWorkspace: (workspace: Workspace) => this.selectNavigationItem("workspaces", "sessions", () => this.selectWorkspaceFromNavigation(workspace)),
     deleteWorkspace: (workspace: Workspace) => { void this.deleteWorkspace(workspace); },
@@ -3825,10 +3826,10 @@ export class PiWebApp extends LitElement {
   }
 
   private readonly submitProjectRename = async (name: string): Promise<void> => {
-    const project = this.projectRenameTarget;
-    if (project === undefined) return;
-    await this.projects.renameProject(project.id, name);
-    if (this.projectRenameTarget === project) this.projectRenameTarget = undefined;
+    const target = this.projectRenameTarget;
+    if (target === undefined) return;
+    await this.projects.renameProject(target.project.id, name, target.machineId);
+    if (this.projectRenameTarget === target) this.projectRenameTarget = undefined;
   };
 
   private readonly closeProjectRename = (): void => { this.projectRenameTarget = undefined; };
@@ -4724,7 +4725,7 @@ export class PiWebApp extends LitElement {
         ${state.actionPaletteOpen ? html`<action-palette .actions=${this.getActions()} .onRun=${(action: AppAction) => { this.setState({ actionPaletteOpen: false }); this.runAction(action); }} .onCancel=${() => { this.setState({ actionPaletteOpen: false }); }}></action-palette>` : null}
         ${this.renderSessionTreeNavigator(state)}
         ${state.projectDialogOpen ? html`<project-dialog .machineId=${selectedMachineId(state)} .onSubmit=${(path: string, create: boolean, trust: ProjectTrustChoice | undefined) => this.projects.addProject(path, create, trust)} .onCancel=${() => { this.setState({ projectDialogOpen: false }); }}></project-dialog>` : null}
-        ${this.projectRenameTarget === undefined ? null : html`<project-rename-dialog .project=${this.projectRenameTarget} .onSubmit=${this.submitProjectRename} .onCancel=${this.closeProjectRename}></project-rename-dialog>`}
+        ${this.projectRenameTarget === undefined ? null : html`<project-rename-dialog .project=${this.projectRenameTarget.project} .onSubmit=${this.submitProjectRename} .onCancel=${this.closeProjectRename}></project-rename-dialog>`}
         ${state.machineDialogOpen ? html`<machine-dialog .machine=${this.machineNameEditTarget} .error=${state.error} .onSubmit=${(input: MachineDialogSubmit) => this.submitMachineDialog(input)} .onCancel=${() => { this.setState({ machineDialogOpen: false }); }}></machine-dialog>` : null}
         <restart-dialog .activityForMachine=${(machineId: string) => {
           const snapshot = state.machineStatusSnapshots[machineId];

@@ -559,16 +559,22 @@ describe("ProjectController", () => {
       { api: { projects: vi.fn(), addProject: vi.fn(), renameProject, closeProject: vi.fn(), workspaces: vi.fn(), setWorkspaceTrust: vi.fn() } },
     );
 
-    await controller.renameProject(renamed.id, "Billing");
+    await controller.renameProject(renamed.id, "Billing", "local");
 
     expect(renameProject).toHaveBeenCalledExactlyOnceWith(renamed.id, "Billing", "local");
     expect(state.projects).toEqual([{ ...renamed, name: "Billing" }, other]);
     expect(state.selectedProject).toEqual({ ...renamed, name: "Billing" });
     expect(refreshSelectedProjectTopology).toHaveBeenCalledOnce();
 
-    await controller.renameProject(other.id, "Other");
+    await controller.renameProject(other.id, "Other", "local");
     expect(state.projects).toEqual([{ ...renamed, name: "Billing" }, { ...other, name: "Other" }]);
     expect(state.selectedProject).toEqual({ ...renamed, name: "Billing" });
+    expect(refreshSelectedProjectTopology).toHaveBeenCalledOnce();
+
+    // A rename sent to the machine that listed the project does not touch another machine's list.
+    await controller.renameProject(renamed.id, "Elsewhere", "remote-a");
+    expect(renameProject).toHaveBeenLastCalledWith(renamed.id, "Elsewhere", "remote-a");
+    expect(state.projects).toEqual([{ ...renamed, name: "Billing" }, { ...other, name: "Other" }]);
     expect(refreshSelectedProjectTopology).toHaveBeenCalledOnce();
   });
 
@@ -583,7 +589,7 @@ describe("ProjectController", () => {
       { api: { projects: vi.fn(), addProject: vi.fn(), renameProject: vi.fn().mockRejectedValue(failure), closeProject: vi.fn(), workspaces: vi.fn(), setWorkspaceTrust: vi.fn() } },
     );
 
-    await expect(controller.renameProject(existing.id, "Billing")).rejects.toBe(failure);
+    await expect(controller.renameProject(existing.id, "Billing", "local")).rejects.toBe(failure);
     expect(state.projects).toEqual([existing]);
   });
 });
