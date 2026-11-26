@@ -70,9 +70,11 @@ export async function getLogoutProviderOptions(runtime: AuthProviderRuntime): Pr
 
 function truthfulProviderStatus(runtime: AuthProviderRuntime, providerId: string): AuthProviderStatus {
   const reported = runtime.getProviderAuthStatus(providerId);
-  // ModelRuntime reports any stored entry as configured before checking whether
-  // the provider can resolve all required credential and ambient fields.
-  return reported.configured && !runtime.hasConfiguredAuth(providerId) ? { configured: false } : reported;
+  // Pi 1.6.0 reports any stored entry as configured before checking whether the
+  // provider can resolve all required credential and ambient fields. Pi 1.6.1
+  // reports it unconfigured but keeps `source: "stored"`, which the dialog would
+  // label as configured. Both cases are reported as unconfigured without a source.
+  return reported.configured && runtime.hasConfiguredAuth(providerId) ? reported : { configured: false };
 }
 
 function filterAndSort(options: AuthProviderOption[], authType?: AuthType): AuthProviderOption[] {

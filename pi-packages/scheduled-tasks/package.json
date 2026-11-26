@@ -8,7 +8,7 @@
     "pi-package"
   ],
   "dependencies": {
-    "cron-parser": "^5.10.2"
+    "cron-parser": "^5.10.7"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
