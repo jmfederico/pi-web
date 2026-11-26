@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { DefaultResourceLoader, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { Window } from "happy-dom";
@@ -221,7 +222,7 @@ describe("plugin delivery artifacts", () => {
       serverModule: "server-plugin.js", browserRoot: "browser", module: "browser/pi-web-plugin.js" }]);
     const browserEntry = await readFile(join(source, "browser", "pi-web-plugin.js"), "utf8");
     expect(moduleSpecifiers(browserEntry)).toEqual([]);
-    expect(await readdir(join(source, "browser"))).toEqual(["pi-web-plugin.js"]);
+    expect((await readdir(join(source, "browser"))).sort()).toEqual(["pi-web-plugin.js", "pi-web-plugin.licenses.md"]);
     const standalone = join(tempDir, "private-input");
     await mkdir(join(standalone, "extensions"), { recursive: true });
     for (const path of ["package.json", "extensions/index.js", "server-plugin.js"]) await cp(join(source, path), join(standalone, path));
@@ -255,7 +256,7 @@ describe("plugin delivery artifacts", () => {
     expect(metadata).toMatchObject({ pi: { extensions: ["./extensions/index.js"], skills: ["./skills"] }, piWeb: { plugins: [{ id: "scheduled-tasks", defaultEnabled: false, browserRoot: "browser", module: "browser/pi-web-plugin.js" }] } });
     const browserEntry = await readFile(join(source, "browser", "pi-web-plugin.js"), "utf8");
     expect(moduleSpecifiers(browserEntry)).toEqual([]);
-    expect(await readdir(join(source, "browser"))).toEqual(["pi-web-plugin.js"]);
+    expect((await readdir(join(source, "browser"))).sort()).toEqual(["pi-web-plugin.js", "pi-web-plugin.licenses.md"]);
     const loader = new DefaultResourceLoader({
       cwd: tempDir, agentDir: tempDir,
       settingsManager: SettingsManager.inMemory({ packages: [source] }),
@@ -374,7 +375,7 @@ describe("plugin delivery artifacts", () => {
 
   it("ships Code highlighting as a self-contained, enabled portable browser plugin", async () => {
     const target = join(repoRoot, "dist/pi-web-plugins/code-highlight");
-    expect(await recursiveFiles(target)).toEqual(["browser/pi-web-plugin.js", "package.json"]);
+    expect(await recursiveFiles(target)).toEqual(["browser/pi-web-plugin.js", "browser/pi-web-plugin.licenses.md", "package.json"]);
     const entry = await readFile(join(target, "browser/pi-web-plugin.js"), "utf8");
     expect(moduleSpecifiers(entry)).toEqual([]);
     expect(Buffer.byteLength(entry)).toBeLessThan(PI_WEB_PLUGIN_ARTIFACT_MAX_BYTES);
@@ -389,11 +390,36 @@ describe("plugin delivery artifacts", () => {
     }));
   });
 
+  it("ships bundled third-party licenses beside each minified browser bundle", async () => {
+    // Minification strips upstream notices, so each bundle carries Vite's license file.
+    for (const [file, dependency] of [
+      ["dist/pi-web-plugins/files/browser/pi-web-plugin.licenses.md", "@codemirror/view"],
+      ["dist/pi-web-plugins/terminal/browser/pi-web-plugin.licenses.md", "@xterm/xterm"],
+      ["dist/pi-web-plugins/code-highlight/browser/pi-web-plugin.licenses.md", "highlight.js"],
+      ["dist/pi-web-plugins/mermaid/browser/pi-web-plugin.licenses.md", "lit"],
+      ["dist/pi-packages/mcp-manager/browser/pi-web-plugin.licenses.md", "lit"],
+      ["dist/pi-packages/private-input/browser/pi-web-plugin.licenses.md", "lit"],
+      ["dist/pi-packages/scheduled-tasks/browser/pi-web-plugin.licenses.md", "lit"],
+      ["dist/pi-packages/relays/markdownDocument.licenses.md", "marked"],
+    ]) expect(await readFile(join(repoRoot, file), "utf8"), file).toContain(`## ${dependency} - `);
+  });
+
   describe("Mermaid browser package build", () => {
     it("ships a self-contained sandbox engine and browser entry within artifact limits", { timeout: 60_000 }, async () => {
       const target = join(repoRoot, "dist/pi-web-plugins/mermaid");
       const files = await recursiveFiles(target);
-      expect(files).toEqual(["browser/mermaid-engine.js", "browser/pi-web-plugin.js", "package.json"]);
+      expect(files).toEqual(["browser/mermaid-engine.js", "browser/mermaid-engine.licenses.md", "browser/pi-web-plugin.js", "browser/pi-web-plugin.licenses.md", "package.json"]);
+      const notice = await readFile(join(target, "browser/mermaid-engine.licenses.md"), "utf8");
+      for (const name of ["mermaid", "dompurify", "d3-selection", "katex", "elkjs"]) expect(notice).toContain(`## ${name} - `);
+      const requireMermaid = createRequire(createRequire(join(repoRoot, "pi-web-plugins/mermaid/mermaid-engine.ts")).resolve("mermaid"));
+      const elkRoot = dirname(requireMermaid.resolve("elkjs/package.json"));
+      const { version } = JSON.parse(await readFile(join(elkRoot, "package.json"), "utf8"));
+      expect(notice).toContain(`https://github.com/kieler/elkjs/tree/${version}`);
+      expect(notice).toContain((await readFile(join(elkRoot, "LICENSE.md"), "utf8")).trim());
+      const upstream = await readFile(join(elkRoot, "lib/elk.bundled.js"), "utf8");
+      const copyrightHeaders = (upstream.match(/\/\*[\s\S]*?\*\//gu) ?? []).filter((comment) => /copyright/iu.test(comment));
+      expect(copyrightHeaders.length).toBeGreaterThan(0);
+      for (const header of copyrightHeaders) expect(notice).toContain(header);
       let bytes = 0;
       for (const file of files) bytes += (await stat(join(target, file))).size;
       expect(bytes).toBeLessThan(PI_WEB_PLUGIN_ARTIFACT_MAX_BYTES);
@@ -403,6 +429,7 @@ describe("plugin delivery artifacts", () => {
       const entry = await readFile(join(target, "browser/pi-web-plugin.js"), "utf8");
       expect(moduleSpecifiers(entry)).toEqual([]);
       expect(entry).toContain("./mermaid-engine.js");
+      expect(engine.split("\n", 1)[0]).toContain("./mermaid-engine.licenses.md");
       expect(entry).toContain("allow-scripts");
       expect(entry).not.toContain("allow-same-origin");
     });

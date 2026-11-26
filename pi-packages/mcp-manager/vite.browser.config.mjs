@@ -9,6 +9,7 @@ export default defineConfig({
       formats: ["es"],
       fileName: () => "pi-web-plugin.js",
     },
+    license: { fileName: "pi-web-plugin.licenses.md" },
     target: "es2022",
     minify: true,
   },

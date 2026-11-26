@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { watch } from "node:fs";
-import { copyFile, mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, copyFile, mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
 import { build as viteBuild } from "vite";
@@ -216,6 +217,8 @@ export function complexBrowserBuildConfig(sourceDir, targetDir) {
       cssMinify: true,
       sourcemap: false,
       assetsInlineLimit: 0,
+      // Minification strips upstream notices; ship bundled packages' licenses instead.
+      license: { fileName: "pi-web-plugin.licenses.md" },
       reportCompressedSize: false,
       rollupOptions: {
         input: resolve(sourceDir, "pi-web-plugin.ts"),
@@ -239,6 +242,15 @@ export async function buildFilesBrowserPackage(sourceDir, targetDir, buildBrowse
 }
 
 export async function buildMermaidPackage(sourceDir, targetDir, buildBrowser = viteBuild) {
+  // Resolve the elkjs that Mermaid bundles, not an unrelated top-level copy.
+  const requireMermaid = createRequire(createRequire(resolve(sourceDir, "mermaid-engine.ts")).resolve("mermaid"));
+  const elkRoot = dirname(requireMermaid.resolve("elkjs/package.json"));
+  const { version, license } = JSON.parse(await readFile(resolve(elkRoot, "package.json"), "utf8"));
+  // The appended statement describes EPL-2.0 terms; a relicensed release needs review.
+  if (license !== "EPL-2.0") throw new Error(`elkjs ${String(version)} is licensed ${String(license)}; update the Mermaid engine license notice.`);
+  // Minification drops these upstream headers; EPL-2.0 requires keeping them.
+  const headers = [...new Set((await readFile(resolve(elkRoot, "lib/elk.bundled.js"), "utf8")).match(/\/\*[\s\S]*?\*\//gu) ?? [])]
+    .filter((comment) => /copyright|@license|SPDX-License-Identifier/iu.test(comment));
   await buildFilesBrowserPackage(sourceDir, targetDir, buildBrowser);
   await buildBrowser({
     configFile: false,
@@ -251,9 +263,26 @@ export async function buildMermaidPackage(sourceDir, targetDir, buildBrowser = v
       target: "es2022",
       minify: true,
       reportCompressedSize: false,
+      license: { fileName: "mermaid-engine.licenses.md" },
       lib: { entry: resolve(sourceDir, "mermaid-engine.ts"), name: "MermaidEngine", formats: ["iife"], fileName: () => "mermaid-engine.js" },
     },
   });
+  // Added after minification so optimizer comment settings cannot remove it.
+  const enginePath = resolve(targetDir, "browser/mermaid-engine.js");
+  await writeFile(enginePath, `/*! Bundled dependency licenses, notices and source: ./mermaid-engine.licenses.md */\n${await readFile(enginePath, "utf8")}`);
+  // EPL-2.0 also requires saying where the source is available.
+  await appendFile(resolve(targetDir, "browser/mermaid-engine.licenses.md"), [
+    "",
+    `## elkjs - ${version}: source and upstream notices`,
+    "",
+    `elkjs ${version} is distributed under the Eclipse Public License 2.0. Its source code is available under that license at https://github.com/kieler/elkjs/tree/${version}`,
+    "",
+    "elkjs is built from the Eclipse Layout Kernel: https://github.com/eclipse-elk/elk",
+    "",
+    "Copyright notices retained from the elkjs bundle:",
+    "",
+    ...headers.flatMap((header) => [header, ""]),
+  ].join("\n"));
 }
 
 export async function buildTerminalPackage(sourceDir, targetDir, buildBrowser = viteBuild) {
