@@ -20,7 +20,24 @@ export function comparePackageVersions(leftVersion: string, rightVersion: string
   if (left.prerelease === right.prerelease) return 0;
   if (left.prerelease === undefined) return 1;
   if (right.prerelease === undefined) return -1;
-  return left.prerelease.localeCompare(right.prerelease);
+  return comparePrereleases(left.prerelease, right.prerelease);
+}
+
+/** SemVer precedence: numeric identifiers compare numerically and sort before alphanumeric ones. */
+function comparePrereleases(left: string, right: string): number {
+  const leftIds = left.split(".");
+  const rightIds = right.split(".");
+  for (let index = 0; index < Math.min(leftIds.length, rightIds.length); index += 1) {
+    const a = leftIds[index] ?? "";
+    const b = rightIds[index] ?? "";
+    if (a === b) continue;
+    const aNumeric = /^\d+$/u.test(a);
+    const bNumeric = /^\d+$/u.test(b);
+    if (aNumeric && bNumeric) return Number(a) - Number(b);
+    if (aNumeric !== bNumeric) return aNumeric ? -1 : 1;
+    return a < b ? -1 : 1;
+  }
+  return leftIds.length - rightIds.length;
 }
 
 function parsePackageVersion(version: string): PackageVersion | undefined {
