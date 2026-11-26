@@ -12,6 +12,6 @@ export default defineConfig({
     css: { include: [/\/theme\/base\/.*\.css/] },
     // TEMP(happy-dom-selectionchange): see docs/temporary-code.md
     setupFiles: ["src/client/src/happyDomSelectionChange.testSupport.ts"],
-    include: ["src/**/*.test.ts", "pi-web-plugins/**/*.test.ts", "pi-packages/**/*.test.ts", "scripts/**/*.test.mjs"],
+    include: ["src/**/*.test.ts", "pi-web-plugins/**/*.test.ts", "pi-packages/**/*.test.ts", "internal-packages/**/*.test.ts", "scripts/**/*.test.mjs"],
   },
 });

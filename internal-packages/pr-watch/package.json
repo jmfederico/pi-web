@@ -1,0 +1,24 @@
+{
+  "name": "@pi-web/pr-watch",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Internal PI WEB development tool: wake subscribed sessions when CodeRabbit acts on their pull requests.",
+  "keywords": ["pi-package"],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": ["./dist/extensions/index.js"]
+  },
+  "piWeb": {
+    "plugins": [
+      {
+        "id": "pr-watch",
+        "defaultEnabled": false,
+        "serverModule": "dist/server-plugin.js"
+      }
+    ]
+  }
+}
