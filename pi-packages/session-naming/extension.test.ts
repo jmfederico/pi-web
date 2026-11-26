@@ -56,7 +56,7 @@ describe("session naming extension", () => {
     await h.flush();
     expect(h.streamSimple).toHaveBeenCalledTimes(1);
     expect(h.streamSimple.mock.calls[0]?.[0]).toBe(model);
-    expect(h.streamSimple.mock.calls[0]?.[2]).toMatchObject({ maxTokens: 24, reasoning: "minimal" });
+    expect(h.streamSimple.mock.calls[0]?.[2]).toMatchObject({ maxTokens: 24, reasoning: "minimal", sessionId: h.manager.getSessionId() });
     h.finish('Title: "Fix login bug."');
     await h.flush();
     expect(h.setSessionName).toHaveBeenCalledWith("Fix login bug");
