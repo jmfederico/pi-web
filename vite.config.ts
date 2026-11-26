@@ -243,19 +243,23 @@ export default defineConfig({
     license: { fileName: "licenses/bundled-dependencies.md" },
     // Accept the measured ~1,570 kB main chunk, but flag growth beyond ~15%.
     chunkSizeWarningLimit: 1800,
-    rollupOptions: {
+    rolldownOptions: {
       external: installedBrowserModules.map(({ id }) => id),
       output: {
         // Imports resolve from dist/client/assets/, including behind a nested proxy.
         paths: Object.fromEntries(installedBrowserModules.map(({ id, path }) => [id, `../${path}`])),
-        manualChunks(id) {
-          if (!id.includes("node_modules")) return;
-          if (id.includes("@codemirror/legacy-modes")) return "vendor-editor-legacy";
-          if (id.includes("@lezer/common") || id.includes("@lezer/highlight") || id.includes("@lezer/lr")) return "vendor-editor-core";
-          if (id.includes("@codemirror/lang-") || id.includes("@lezer/")) return "vendor-editor-languages";
-          if (id.includes("@codemirror") || id.includes("codemirror")) return "vendor-editor-core";
-          if (id.includes("@xterm")) return "vendor-terminal";
-          return undefined;
+        codeSplitting: {
+          groups: [{
+            name(id) {
+              if (!id.includes("node_modules")) return null;
+              if (id.includes("@codemirror/legacy-modes")) return "vendor-editor-legacy";
+              if (id.includes("@lezer/common") || id.includes("@lezer/highlight") || id.includes("@lezer/lr")) return "vendor-editor-core";
+              if (id.includes("@codemirror/lang-") || id.includes("@lezer/")) return "vendor-editor-languages";
+              if (id.includes("@codemirror") || id.includes("codemirror")) return "vendor-editor-core";
+              if (id.includes("@xterm")) return "vendor-terminal";
+              return null;
+            },
+          }],
         },
       },
     },

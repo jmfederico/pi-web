@@ -11,7 +11,7 @@ export default defineConfig({
     emptyOutDir: true,
     // Fixtures are not shipped; their chunk sizes are not a production budget.
     chunkSizeWarningLimit: Infinity,
-    rollupOptions: {
+    rolldownOptions: {
       input: {
         shellViewport: fileURLToPath(new URL("shell-viewport.html", import.meta.url)),
         overlays: fileURLToPath(new URL("overlays.html", import.meta.url)),

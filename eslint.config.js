@@ -46,6 +46,10 @@ export default defineConfig([
       // override or fake intentionally ignores; this rule only tolerates void
       // on call operands, so it conflicts with the convention.
       "@typescript-eslint/no-meaningless-void-operator": "off",
+      // The rule only sees types, not where a value was constructed. It reports the
+      // ws `WebSocket`/`WebSocketServer` instances handed over by @fastify/websocket
+      // and structural test doubles, which are the intended use here.
+      "@typescript-eslint/no-unsafe-class-instance-assignment": "off",
     },
   },
 ]);
