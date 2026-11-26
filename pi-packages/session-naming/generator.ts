@@ -42,6 +42,11 @@ export async function generateShortSessionName(
         maxTokens: config.maxTokens,
         ...(config.thinkingLevel === "off" ? {} : { reasoning: config.thinkingLevel }),
         ...(sessionId === undefined ? {} : { sessionId }),
+        // A one-shot side request must not touch the conversation's session-keyed provider
+        // state: prompt-cache affinity, Anthropic message threads, or Codex WebSocket reuse.
+        // The session id then only feeds routing headers such as OpenCode's.
+        cacheRetention: "none",
+        disableContinuation: true,
         signal: controller.signal,
       });
       let streamedText = "";

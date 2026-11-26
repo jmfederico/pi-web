@@ -55,8 +55,7 @@ export function registerSessionNaming(pi: ExtensionAPI, dependencies: NamingDepe
           return ctx.modelRegistry.find(config.model.slice(0, slash), config.model.slice(slash + 1));
         })();
         if (!selected) throw new Error(`Session naming model unavailable: ${config.model ?? "session model"}`);
-        name = await generateShortSessionName(ctx.modelRegistry, selected, event.prompt, config, signal,
-          ctx.sessionManager.getSessionId());
+        name = await generateShortSessionName(ctx.modelRegistry, selected, event.prompt, config, signal, id);
         if (name === undefined) throw new Error("Session naming model returned an empty title");
       } catch (error) {
         if (!current()) return;

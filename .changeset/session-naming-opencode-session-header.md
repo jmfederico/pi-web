@@ -2,4 +2,4 @@
 "@jmfederico/pi-web": patch
 ---
 
-Fix session naming against OpenCode Go models. Automatic naming requests now carry the Pi session id, so OpenCode's required `x-opencode-session` routing header is sent instead of failing with `400 MissingSessionID`; naming falls back to the first request text as before when generation fails.
+Fix automatic session naming with OpenCode Go models. Naming requests now send the session id that OpenCode requires, instead of failing with `400 MissingSessionID` and falling back to the first request text.

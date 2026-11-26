@@ -23,7 +23,7 @@ describe("session title generation", () => {
     expect(call?.[1].messages).toMatchObject([{ role: "user", content: `Create a 2-6 word title for this request:\n\n${"x".repeat(4_000)}…` }]);
     expect(call?.[2]?.maxTokens).toBe(2048);
     expect(call?.[2]?.reasoning).toBe(level === "off" ? undefined : level);
-    expect(call?.[2]?.sessionId).toBe("session-1");
+    expect(call?.[2]).toMatchObject({ sessionId: "session-1", cacheRetention: "none", disableContinuation: true });
   });
 
   it("omits the session id when the caller provides none", async () => {
