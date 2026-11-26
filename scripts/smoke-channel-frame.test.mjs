@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { WebSocketServer } from "ws";
@@ -15,9 +16,9 @@ afterEach(async () => {
   await new Promise(resolve => server.close(resolve));
 });
 
-function rejection(url, { reqId = "probe-request", code = "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH", phase = "awaiting-open" } = {}) {
+function rejection(reqId, { code = "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH", phase = "awaiting-open" } = {}) {
   return [
-    JSON.stringify({ reqId: "probe-request", req: { url } }),
+    JSON.stringify({ reqId, msg: "unrelated log line" }),
     JSON.stringify({ reqId, msg: "plugin backend channel transport failed", err: { code }, phase }),
   ].join("\n");
 }
@@ -55,7 +56,7 @@ it.each(["open", "data"])("accepts a reset only with matching %s receiver eviden
       }
       socket.once("close", () => {
         // Model stdout delivery after the client has observed socket closure.
-        setImmediate(() => { receiver.output = rejection(request.url, { phase: phase === "open" ? "awaiting-open" : "ready" }); });
+        setImmediate(() => { receiver.output = rejection(request.headers["x-request-id"], { phase: phase === "open" ? "awaiting-open" : "ready" }); });
       });
       socket.terminate();
     });
@@ -63,15 +64,14 @@ it.each(["open", "data"])("accepts a reset only with matching %s receiver eviden
   await oversizedFrame(url, "revision", "terminal", phase, 128, receiver);
 });
 
-it.each(["different probe", "different request", "wrong error", "wrong phase", "missing evidence"])("does not accept a reset with %s", async scenario => {
+it.each(["different request", "wrong error", "wrong phase", "missing evidence"])("does not accept a reset with %s", async scenario => {
   let output = "";
   const readOutput = vi.fn(() => output);
   const receiver = { get output() { return readOutput(); }, set output(value) { output = value; }, done: false };
   server.on("connection", (socket, request) => socket.once("message", () => {
     receiver.output = scenario === "missing evidence" ? "" : rejection(
-      scenario === "different probe" ? "/channel?smokeProbe=previous" : request.url,
+      scenario === "different request" ? randomUUID() : request.headers["x-request-id"],
       {
-        reqId: scenario === "different request" ? "other-request" : "probe-request",
         code: scenario === "wrong error" ? "ECONNRESET" : "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH",
         phase: scenario === "wrong phase" ? "ready" : "awaiting-open",
       },
