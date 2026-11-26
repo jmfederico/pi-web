@@ -413,8 +413,9 @@ describe("plugin delivery artifacts", () => {
       for (const name of ["mermaid", "dompurify", "d3-selection", "katex", "elkjs"]) expect(notice).toContain(`## ${name} - `);
       const requireMermaid = createRequire(createRequire(join(repoRoot, "pi-web-plugins/mermaid/mermaid-engine.ts")).resolve("mermaid"));
       const elkRoot = dirname(requireMermaid.resolve("elkjs/package.json"));
-      const { version } = JSON.parse(await readFile(join(elkRoot, "package.json"), "utf8"));
+      const { version, license } = JSON.parse(await readFile(join(elkRoot, "package.json"), "utf8"));
       expect(notice).toContain(`https://github.com/kieler/elkjs/tree/${version}`);
+      if (license !== "EPL-2.0") expect(notice).toContain(`elkjs ${version} is offered under ${license}. PI WEB distributes it under the Eclipse Public License 2.0 option.`);
       expect(notice).toContain((await readFile(join(elkRoot, "LICENSE.md"), "utf8")).trim());
       const upstream = await readFile(join(elkRoot, "lib/elk.bundled.js"), "utf8");
       const copyrightHeaders = (upstream.match(/\/\*[\s\S]*?\*\//gu) ?? []).filter((comment) => /copyright/iu.test(comment));

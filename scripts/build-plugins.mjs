@@ -17,6 +17,8 @@ const mermaidPluginSourceDir = resolve(bundledPluginsSourceDir, "mermaid");
 const mermaidPluginOutputDir = resolve(bundledPluginsOutputDir, "mermaid");
 const codeHighlightSourceDir = resolve(bundledPluginsSourceDir, "code-highlight");
 const codeHighlightOutputDir = resolve(bundledPluginsOutputDir, "code-highlight");
+// elkjs 0.12 and later, bundled by Mermaid; PI WEB uses the EPL-2.0 option.
+const ELKJS_DUAL_LICENSE = "EPL-2.0 OR GPL-3.0-or-later";
 
 // Two independent source trees ship inside the npm package: bundled PI WEB
 // plugins (discovered by directory scan, see PiWebPluginCatalog) and Pi
@@ -246,8 +248,9 @@ export async function buildMermaidPackage(sourceDir, targetDir, buildBrowser = v
   const requireMermaid = createRequire(createRequire(resolve(sourceDir, "mermaid-engine.ts")).resolve("mermaid"));
   const elkRoot = dirname(requireMermaid.resolve("elkjs/package.json"));
   const { version, license } = JSON.parse(await readFile(resolve(elkRoot, "package.json"), "utf8"));
-  // The appended statement describes EPL-2.0 terms; a relicensed release needs review.
-  if (license !== "EPL-2.0") throw new Error(`elkjs ${String(version)} is licensed ${String(license)}; update the Mermaid engine license notice.`);
+  // The appended statement describes EPL-2.0 terms. From 0.12, elkjs is also offered under
+  // GPL-3.0-or-later; PI WEB distributes it under the EPL-2.0 option. Any other license needs review.
+  if (license !== "EPL-2.0" && license !== ELKJS_DUAL_LICENSE) throw new Error(`elkjs ${String(version)} is licensed ${String(license)}; update the Mermaid engine license notice.`);
   // Minification drops these upstream headers; EPL-2.0 requires keeping them.
   const headers = [...new Set((await readFile(resolve(elkRoot, "lib/elk.bundled.js"), "utf8")).match(/\/\*[\s\S]*?\*\//gu) ?? [])]
     .filter((comment) => /copyright|@license|SPDX-License-Identifier/iu.test(comment));
@@ -275,6 +278,9 @@ export async function buildMermaidPackage(sourceDir, targetDir, buildBrowser = v
     "",
     `## elkjs - ${version}: source and upstream notices`,
     "",
+    ...(license === ELKJS_DUAL_LICENSE
+      ? [`elkjs ${version} is offered under ${ELKJS_DUAL_LICENSE}. PI WEB distributes it under the Eclipse Public License 2.0 option.`, ""]
+      : []),
     `elkjs ${version} is distributed under the Eclipse Public License 2.0. Its source code is available under that license at https://github.com/kieler/elkjs/tree/${version}`,
     "",
     "elkjs is built from the Eclipse Layout Kernel: https://github.com/eclipse-elk/elk",
