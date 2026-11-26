@@ -1,12 +1,24 @@
 # CodeRabbit reviews and automatic merging
 
-CodeRabbit reviews non-draft pull requests to the default branch, including contributions from other authors, and reviews subsequent pushes. `.coderabbit.yaml` maps repository guides to the files they govern. Architecture guidance lives in [the architecture skill](../.agents/skills/code-quality-architecture/SKILL.md), including plugin/package-first placement.
+CodeRabbit reviews non-draft pull requests to the default branch, including contributions from other authors, and reviews subsequent pushes. On this repository's plan it skips PRs opened by bot accounts and does not respond to bot comments, so agents open PRs and interact with CodeRabbit through a human account. `.coderabbit.yaml` maps repository guides to the files they govern. Architecture guidance lives in [the architecture skill](../.agents/skills/code-quality-architecture/SKILL.md), including plugin/package-first placement.
 
 ## Actual review approval
 
 Automatic Approvals lets CodeRabbit submit GitHub `APPROVED` or `CHANGES_REQUESTED` reviews. A green CodeRabbit check or a comment saying there are no findings is not an approval.
 
-Normal approval requires a completed review of the current commit, resolved required findings, and passing CodeRabbit pre-merge checks. GitHub's CI requirements are separate. Author-issued blanket `approve` and `resolve` commands are disabled; address findings and request another review instead. Do not use those commands to clear unresolved findings on someone else's behalf either.
+Normal approval requires a completed review of the current commit, resolved required review threads, and passing CodeRabbit pre-merge checks. GitHub's CI requirements are separate. Author-issued blanket `approve` and `resolve` commands are disabled; respond to each finding individually instead. Do not use those commands to clear unresolved findings on someone else's behalf either.
+
+## Responding to findings
+
+The goal is a CodeRabbit approval, not adoption of every suggestion. Treat findings as review input and judge each one against [the architecture skill](../.agents/skills/code-quality-architecture/SKILL.md), especially its proportionality and edge-case guidance.
+
+- **Fix** findings that identify a real defect, a broken contract, or a risk worth handling now.
+- **Push back** on suggestions that add speculative abstraction, defensive handling for unlikely cases, or complexity out of proportion to the risk. For many edge cases, ordinary observable failure is better than special handling.
+- **Do not push back** on findings with a credible risk of corrupting durable state, weakening a security or authorization boundary, or failing silently without a practical recovery path.
+
+To push back, reply in the finding's thread with the concrete reason, such as how unlikely the case is and what happens when it fails. Then resolve the thread. If CodeRabbit answers with a new substantive argument, reconsider before resolving. Do not resolve a thread without either a fix or a stated reason.
+
+Resolving threads counts toward approval. CodeRabbit approves once the remaining requirements pass. If it does not re-evaluate, request another review with `@coderabbitai review`.
 
 The public-repository offer currently includes reviews and approvals without a paid subscription, subject to CodeRabbit's rate and file limits. This configuration does not enable paid overages. Account billing and optional products remain account-level settings, not guarantees made by this repository.
 
@@ -59,7 +71,7 @@ The workflow uses pinned actions and trusted default-branch code. It never check
 
 ## Agent management
 
-Agents can maintain `.coderabbit.yaml`, inspect actual GitHub reviews, discuss findings, and request reviews using existing GitHub access. Separate CodeRabbit credentials are not needed for those operations. Keep configuration changes reviewable, preserve the merge rules, and never manufacture approvals or bypass checks to clear a blocked PR.
+Agents can maintain `.coderabbit.yaml`, inspect actual GitHub reviews, fix or push back on findings as described in [Responding to findings](#responding-to-findings), resolve their threads, and request reviews using existing GitHub access. Separate CodeRabbit credentials are not needed for those operations. Keep configuration changes reviewable, preserve the merge rules, and never manufacture approvals or bypass checks to clear a blocked PR.
 
 CodeRabbit account billing, users, and optional direct API/MCP access are separate from this repository workflow.
 
