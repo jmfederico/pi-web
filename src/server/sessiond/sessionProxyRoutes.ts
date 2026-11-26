@@ -142,6 +142,7 @@ export function registerSessionProxyRoutes(
   app.get(`${prefix}/events`, { websocket: true }, (socket, request) => { connectEvents(socket, request, "/events"); });
 
   app.post(`${prefix}/projects`, (request, reply) => proxy(request, reply));
+  app.patch(`${prefix}/projects/:projectId`, (request, reply) => proxy(request, reply));
   app.delete(`${prefix}/projects/:projectId`, (request, reply) => proxy(request, reply));
 
   // Authority resolution can include provider I/O; forward browser cancellation.

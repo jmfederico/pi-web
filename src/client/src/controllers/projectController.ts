@@ -15,7 +15,7 @@ export interface ProjectTrustChoice {
 }
 
 export interface ProjectControllerDependencies {
-  api?: Pick<typeof defaultApi, "projects" | "addProject" | "closeProject" | "workspaces" | "setWorkspaceTrust">;
+  api?: Pick<typeof defaultApi, "projects" | "addProject" | "renameProject" | "closeProject" | "workspaces" | "setWorkspaceTrust">;
   navigateToProject?: (project: Project | undefined, options?: NavigationDestinationOptions) => Promise<boolean>;
   captureNavigation?: () => NavigationSelection;
 }
@@ -29,7 +29,7 @@ export class ProjectController {
   constructor(
     private readonly getState: GetState,
     private readonly setState: SetState,
-    private readonly workspaces: Pick<WorkspaceController, "selectProject" | "forgetProject" | "clearSelection">,
+    private readonly workspaces: Pick<WorkspaceController, "selectProject" | "forgetProject" | "clearSelection" | "refreshSelectedProjectTopology">,
     deps: ProjectControllerDependencies = {},
   ) {
     this.api = deps.api ?? defaultApi;
@@ -97,6 +97,20 @@ export class ProjectController {
     const mainWorkspace = workspaces.find((workspace) => workspace.projectId === project.id && workspace.isMain);
     if (mainWorkspace === undefined) throw new ProjectWorkspaceError(() => messages.t("trustUnavailable", { id: project.id }));
     await this.api.setWorkspaceTrust(project.id, mainWorkspace.id, trusted, machineId);
+  }
+
+  /** Rejects on failure so the rename dialog can show the error and stay open. */
+  async renameProject(projectId: string, name: string, machineId: string): Promise<void> {
+    const project = await this.api.renameProject(projectId, name, machineId);
+    const state = this.getState();
+    if (selectedMachineId(state) !== machineId) return;
+    const selected = state.selectedProject?.id === project.id;
+    this.setState({
+      projects: state.projects.map((candidate) => candidate.id === project.id ? project : candidate),
+      ...(selected ? { selectedProject: project } : {}),
+    });
+    // A plain folder's workspace is labeled with its project name.
+    if (selected) await this.workspaces.refreshSelectedProjectTopology();
   }
 
   async closeProject(projectId: string) {
