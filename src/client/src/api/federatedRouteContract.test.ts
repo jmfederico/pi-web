@@ -184,6 +184,7 @@ describe("federated route contract", () => {
       ignoreParseFailure(noticesApi.dismiss(machineId, "daemon-a", "notice-1")),
       ignoreParseFailure(projectsApi.projects(machineId)),
       ignoreParseFailure(projectsApi.addProject("/repo", "Repo", false, machineId)),
+      ignoreParseFailure(projectsApi.renameProject("p 1", "Repo", machineId)),
       ignoreParseFailure(projectsApi.closeProject("p 1", machineId)),
       ignoreParseFailure(projectsApi.projectDirectories("/r", machineId)),
       ignoreParseFailure(workspacesApi.workspaces("p 1", machineId)),

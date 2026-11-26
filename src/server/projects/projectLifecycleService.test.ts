@@ -187,6 +187,21 @@ describe("eventual project unread cleanup", () => {
     expect(fixture.unread.hasUnread()).toBe(false);
   });
 
+  it("serializes renames with other catalog writes", async () => {
+    const fixture = lifecycle([kept]);
+    let finishAdd: (() => void) | undefined;
+    fixture.projects.add.mockImplementationOnce((input) => new Promise((resolve) => {
+      finishAdd = () => { resolve(project("added", input.path)); };
+    }));
+    const adding = fixture.service.add({ path: removed.path });
+    const renaming = fixture.service.rename(kept.id, "Kept");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fixture.projects.rename).not.toHaveBeenCalled();
+    finishAdd?.();
+    await adding;
+    await expect(renaming).resolves.toMatchObject({ id: kept.id, name: "Kept" });
+  });
+
   it("cancels pending cleanup on shutdown", async () => {
     const fixture = lifecycle([root]);
     complete(fixture.unread, removed.path);
@@ -206,6 +221,11 @@ function lifecycle(initial: Project[], paths = new Map<string, string[]>()) {
       const added = project(`new-${String(registered.length)}`, input.path);
       registered.push(added);
       return Promise.resolve(added);
+    }),
+    rename: vi.fn((id: string, name: string) => {
+      const renamed = { ...registered.find((entry) => entry.id === id) ?? project(id, "/"), name };
+      registered = registered.map((entry) => entry.id === id ? renamed : entry);
+      return Promise.resolve(renamed);
     }),
     close: vi.fn((id: string) => {
       registered = registered.filter((entry) => entry.id !== id);

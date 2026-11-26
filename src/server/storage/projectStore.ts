@@ -31,6 +31,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function projectName(requested: string | undefined, path: string): string {
+  const trimmed = requested?.trim();
+  if (trimmed !== undefined && trimmed !== "") return trimmed;
+  return path.split("/").filter((part) => part !== "").at(-1) ?? path;
+}
+
 export function defaultProjectStorePath(env: NodeJS.ProcessEnv = process.env, cwd = process.cwd()): string {
   return join(piWebDataDir(env, cwd), "projects.json");
 }
@@ -54,11 +60,9 @@ export class ProjectStore {
     const existing = data.projects.find((p) => p.path === path);
     if (existing) return existing;
 
-    const trimmedName = input.name?.trim();
-    const leafName = path.split("/").filter((part) => part !== "").at(-1);
     const project: Project = {
       id: randomUUID(),
-      name: trimmedName !== undefined && trimmedName !== "" ? trimmedName : leafName ?? path,
+      name: projectName(input.name, path),
       path,
       createdAt: new Date().toISOString(),
     };
@@ -69,6 +73,16 @@ export class ProjectStore {
 
   async get(id: string): Promise<Project | undefined> {
     return (await this.list()).find((p) => p.id === id);
+  }
+
+  /** Changes only the display name; a blank name restores the folder name. */
+  async rename(id: string, name: string): Promise<Project | undefined> {
+    const data = await this.read();
+    const project = data.projects.find((p) => p.id === id);
+    if (project === undefined) return undefined;
+    project.name = projectName(name, project.path);
+    await this.write(data);
+    return project;
   }
 
   async remove(id: string): Promise<boolean> {

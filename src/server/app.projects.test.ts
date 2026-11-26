@@ -32,6 +32,26 @@ describe("buildApp project routes", () => {
     expect(emptyListResponse.json<Project[]>()).toEqual([]);
   });
 
+  it("renames a project and its folder workspace label through the HTTP contract", async () => {
+    const project = (await appTestContext.app.inject({
+      method: "POST",
+      url: "/api/projects",
+      payload: { path: appTestContext.projectDir, create: true },
+    })).json<Project>();
+
+    const renameResponse = await appTestContext.app.inject({ method: "PATCH", url: `/api/projects/${project.id}`, payload: { name: "Billing" } });
+    expect(renameResponse.statusCode).toBe(200);
+    expect(renameResponse.json<Project>()).toEqual({ ...project, name: "Billing" });
+
+    const listResponse = await appTestContext.app.inject({ method: "GET", url: "/api/projects" });
+    expect(listResponse.json<Project[]>()).toEqual([{ ...project, name: "Billing" }]);
+    const workspacesResponse = await appTestContext.app.inject({ method: "GET", url: `/api/projects/${project.id}/workspaces` });
+    expect(workspacesResponse.json<WorkspaceProviderResolution>().workspaces).toEqual([expect.objectContaining({ label: "Billing", isMain: true })]);
+
+    const missingResponse = await appTestContext.app.inject({ method: "PATCH", url: "/api/projects/does-not-exist", payload: { name: "Billing" } });
+    expect(missingResponse.statusCode).toBe(404);
+  });
+
   // The trust lookup (GET /projects/trust) trims the path before keying a
   // decision, so adding must trim too or the stored project keys differently
   // than the previewed decision (and create would mkdir a padded directory).
