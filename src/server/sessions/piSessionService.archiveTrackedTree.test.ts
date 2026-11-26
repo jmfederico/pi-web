@@ -1,3 +1,4 @@
+import * as fsPromises from "node:fs/promises";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -88,6 +89,9 @@ function fixture(options: { spawned?: boolean; sessionDir?: string } = {}) {
   }
   return { service, runtime, path, records, archived, archiveMany, toArchived, list, notifications, hub, onSessionArchived, restore, request };
 }
+
+// Builtin namespaces are frozen; a plain copy lets a test pause one write.
+vi.mock("node:fs/promises", async (importOriginal) => ({ ...(await importOriginal<typeof fsPromises>()) }));
 
 function deferred() {
   let release: () => void = () => undefined;
@@ -544,6 +548,39 @@ describe("tracked self-archive trees", () => {
     } finally {
       metadata.release();
       await archival?.catch(() => undefined);
+      await f.service.dispose();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses single and bulk archival of a child while its parent link is being removed", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-web-archive-detaching-"));
+    const f = fixture({ sessionDir: dir });
+    await writeFile(f.path("child"), `${JSON.stringify({ type: "session", version: 3, id: "child", timestamp: "2026-01-01T00:00:00Z", cwd: "/workspace", parentSession: f.path("root") })}\n`);
+    const rewrite = deferred();
+    const write = vi.spyOn(fsPromises, "writeFile").mockImplementationOnce(async (...args) => {
+      await rewrite.promise;
+      write.mockRestore();
+      await fsPromises.writeFile(...args);
+    });
+    let detach: Promise<void> | undefined;
+    try {
+      await f.service.status(sessionRef("child"));
+      detach = f.service.detachParent(sessionRef("child"));
+      await vi.waitFor(() => { expect(write).toHaveBeenCalledOnce(); });
+      await expect(f.service.archive(sessionRef("child"))).rejects.toThrow();
+      const bulk = await f.service.archiveMany([sessionRef("child")]);
+      expect(bulk.archivedSessionIds).toEqual([]);
+      expect(bulk.failures.map((failure) => failure.sessionId)).toEqual(["child"]);
+      expect(f.archiveMany).not.toHaveBeenCalled();
+      rewrite.release();
+      await detach;
+      await f.service.archive(sessionRef("child"));
+      expect(f.archiveMany).toHaveBeenCalledOnce();
+    } finally {
+      rewrite.release();
+      write.mockRestore();
+      await detach?.catch(() => undefined);
       await f.service.dispose();
       await rm(dir, { recursive: true, force: true });
     }

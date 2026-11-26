@@ -1272,7 +1272,6 @@ export class PiSessionService implements SessionRouteService {
   private readonly selfArchiveScheduled = new WeakSet<PiAgentSession>();
   private readonly archivingSessionIds = new Set<string>();
   private sessionLifecycleRevision = 0;
-  private parentDetachesInFlight = 0;
   private readonly selfArchiveOperations = new Set<Promise<void>>();
   private selfArchiveStopped = false;
   private readonly onSessionArchived: PiSessionServiceDependencies["onSessionArchived"];
@@ -3974,7 +3973,7 @@ export class PiSessionService implements SessionRouteService {
     // Discovery reads active and archived catalogs separately. Reject operations
     // already in flight as well as any that start or finish during discovery:
     // a moving session can temporarily be absent from both catalog snapshots.
-    if (this.treeExclusiveSessionOperationCounts.size > 0 || this.parentDetachesInFlight > 0 || revision !== this.sessionLifecycleRevision) {
+    if (this.treeExclusiveSessionOperationCounts.size > 0 || revision !== this.sessionLifecycleRevision) {
       throw new Error("Session lifecycle changed while preparing archival. Retry the request.");
     }
   }
@@ -4130,12 +4129,13 @@ export class PiSessionService implements SessionRouteService {
     const session = await this.getOrOpen(ref);
     const sessionFile = session.sessionFile;
     if (sessionFile === undefined || sessionFile === "") throw new Error("Session is not persisted");
-    // Tree archival selects children by parent. Refuse while this session is
-    // being archived, and invalidate any selection that overlaps the detach.
-    this.assertSessionArchiveInactive(session.sessionId);
-    if (this.isTreeExclusiveSessionIdentityActive(session.sessionId)) throw new Error("Wait for the current session lifecycle operation to finish before detaching");
+    // The header rewrite must not overlap archival. Reserve the identity, which
+    // archive operations refuse and which invalidates in-progress tree selection.
+    const { sessionId } = session;
+    this.assertSessionArchiveInactive(sessionId);
+    if (this.isTreeExclusiveSessionIdentityActive(sessionId)) throw new Error("Wait for the current session lifecycle operation to finish before detaching");
     this.sessionLifecycleRevision += 1;
-    this.parentDetachesInFlight += 1;
+    this.treeExclusiveSessionOperationCounts.set(sessionId, (this.treeExclusiveSessionOperationCounts.get(sessionId) ?? 0) + 1);
     try {
       await clearParentSession(sessionFile);
       // The header rewrite keeps the inode, and whenever it leaves the file's
@@ -4144,9 +4144,9 @@ export class PiSessionService implements SessionRouteService {
       // listing the old parent link until restart.
       this.sessionManager.invalidateSessionFile(sessionFile);
       clearParentSessionHeader(session.sessionManager);
-      this.unregisterSubsession(session.sessionId);
+      this.unregisterSubsession(sessionId);
     } finally {
-      this.parentDetachesInFlight -= 1;
+      decrementMapCount(this.treeExclusiveSessionOperationCounts, sessionId);
       this.sessionLifecycleRevision += 1;
     }
     await this.forgetUnreadSessions([{ sessionId: session.sessionId, cwd: session.sessionManager.getCwd() }]);
