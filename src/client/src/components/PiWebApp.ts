@@ -3541,6 +3541,7 @@ export class PiWebApp extends LitElement {
       navigate: (destination, options) => this.navigate(destination, options),
       selectWorkspaceTool: (tool) => { this.openWorkspaceTool(tool); },
       openTerminal: (options) => { this.openTerminal(options); },
+      // eslint-disable-next-line @typescript-eslint/no-deprecated -- The host keeps implementing the deprecated plugin API alias for existing plugins.
       refreshFiles: () => this.invalidateSelectedWorkspaceFiles(),
       refreshWorkspacePanels: (panelId) => this.invalidateWorkspacePanels(panelId),
       refreshAppData: () => this.refreshAppData(),
