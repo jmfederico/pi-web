@@ -78,6 +78,7 @@ export class PrWatchService {
     const existing = this.findExisting(sessionId, resolved);
     if (existing !== undefined) return { alreadySubscribed: true, subscription: describe(existing) };
     const snapshot = await this.deps.github.snapshot(resolved, signal);
+    if (snapshot.state !== "open") throw new Error(`${pullRequestLabel(resolved)} is already ${snapshot.state}`);
     const observation = observe(snapshot, this.deps.settings.authors);
     // A concurrent subscribe may have won while GitHub was read.
     const raced = this.findExisting(sessionId, resolved);
@@ -220,6 +221,7 @@ export class PrWatchService {
     if (subscription === undefined) return;
     if (subscription.outbox === null) {
       const recentWakes = subscription.wakes.filter((at) => now - at < HOUR_MS);
+      // The final message is exempt from the hourly cap: it cannot loop, because it ends the subscription.
       const due = subscription.ending !== null
         || (readyToNotify(subscription.progress, now, settings) && recentWakes.length < settings.maxWakesPerHour);
       if (!due) return;
@@ -228,7 +230,7 @@ export class PrWatchService {
         headSha: subscription.headSha, verdict: subscription.verdict, items: subscription.progress.pending,
         ...(subscription.ending === null ? {} : { ending: subscription.ending }),
       });
-      const outbox = { id: this.deps.randomId(), content, createdAt: now, attempts: 0, nextAttemptAt: now, reported: false };
+      const outbox = { id: this.deps.randomId(), content, createdAt: now, attempts: 0, nextAttemptAt: now, reported: false, final: subscription.ending !== null };
       subscription = store.update(id, (current) => ({ ...current, wakes: recentWakes, progress: clearPending(current.progress), outbox }));
     }
     const outbox = subscription?.outbox;
@@ -248,13 +250,15 @@ export class PrWatchService {
       }, signal);
     } catch (error) {
       signal.throwIfAborted();
+      // Includes rejections reported by the companion extension, with their cause.
       this.deps.logger.warn("PR watch delivery failed", { subscriptionId: id, error: error instanceof Error ? error.message : String(error) });
     }
     const after = this.deps.now();
     const current = store.find(id);
     if (current?.outbox?.id !== outbox.id) return;
     if (delivered) {
-      if (current.ending !== null) { this.remove(current, current.ending === "merged" ? "pr-merged" : "pr-closed"); return; }
+      // An ordinary message acknowledged after the PR ended leaves the final message still to send.
+      if (outbox.final && current.ending !== null) { this.remove(current, current.ending === "merged" ? "pr-merged" : "pr-closed"); return; }
       store.update(id, (latest) => ({ ...latest, outbox: null, wakes: [...latest.wakes.filter((at) => after - at < HOUR_MS), after] }));
       return;
     }

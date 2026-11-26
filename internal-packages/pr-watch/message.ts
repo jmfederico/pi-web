@@ -12,6 +12,8 @@ export interface NotificationInput {
 }
 
 const MAX_ITEMS = 30;
+/** Item lines stay well below the 48 KiB notification limit, leaving room for the header and footer. */
+const MAX_ITEM_CHARS = 32 * 1024;
 
 /** Short, linkable summary; the agent reads full content with `gh`. */
 export function composeNotification(input: NotificationInput): string {
@@ -26,10 +28,16 @@ export function composeNotification(input: NotificationInput): string {
     facts.push(`latest decisive review: ${input.verdict.state}${commit}${input.verdict.currentHead ? " (current head)" : " (not the current head)"}`);
   }
   lines.push(facts.join(" · "), "");
+  let budget = MAX_ITEM_CHARS;
+  let listed = 0;
   for (const item of input.items.slice(0, MAX_ITEMS)) {
-    lines.push(`- ${item.label}${item.excerpt === "" ? "" : `: ${item.excerpt}`}`, `  ${item.url}`);
+    const entry = `- ${item.label}${item.excerpt === "" ? "" : `: ${item.excerpt}`}\n  ${item.url}`;
+    if (entry.length > budget) break;
+    budget -= entry.length + 1;
+    lines.push(entry);
+    listed += 1;
   }
-  if (input.items.length > MAX_ITEMS) lines.push(`- …and ${String(input.items.length - MAX_ITEMS)} more; list them with gh.`);
+  if (input.items.length > listed) lines.push(`- …and ${String(input.items.length - listed)} more; list them with gh.`);
   if (input.items.length > 0) lines.push("");
   if (input.ending === undefined) {
     lines.push(

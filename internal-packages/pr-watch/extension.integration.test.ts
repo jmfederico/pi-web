@@ -94,7 +94,8 @@ describe("PR watch companion", () => {
       await session.waitForIdle();
       expect(modelInputs).toHaveLength(turnsAfterSubscribe + 1);
 
-      await expect(deliver(target, { ...message, sessionId: "another-session", notificationId: "note-2", details: { ...message.details, notificationId: "note-2" } }, signal)).resolves.toBe(false);
+      await expect(deliver(target, { ...message, sessionId: "another-session", notificationId: "note-2", details: { ...message.details, notificationId: "note-2" } }, signal)).rejects.toThrow("addressed to another session");
+      await expect(deliver(target, { ...message, content: "x".repeat(49 * 1024) }, signal)).rejects.toThrow("content must be");
       expect(modelInputs).toHaveLength(turnsAfterSubscribe + 1);
       expect(errors).toEqual([]);
     } finally {

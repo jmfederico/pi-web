@@ -16,6 +16,8 @@ export interface Outbox {
   readonly nextAttemptAt: number;
   /** Whether repeated failure has already been reported as a notice. */
   readonly reported: boolean;
+  /** The merged/closed message; only its acknowledgement ends the subscription. */
+  readonly final: boolean;
 }
 
 export interface Subscription {

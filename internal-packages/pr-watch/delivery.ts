@@ -6,8 +6,9 @@ export type Deliver = (target: PluginSessionSelection, message: Omit<NotifyPaylo
 
 /**
  * Hands one notification to the session's companion extension and waits for
- * its acknowledgement. `false` means unconfirmed, not necessarily undelivered;
- * the extension deduplicates retries by notification id.
+ * its acknowledgement. `false` means unconfirmed (no reply), not necessarily
+ * undelivered; the extension deduplicates retries by notification id. An
+ * explicit rejection throws with the extension's reported cause.
  */
 export function createSessionDelivery(
   state: PluginSessionStateV1,
@@ -22,17 +23,21 @@ export function createSessionDelivery(
     const connection = await events.connect(target);
     const nonce = randomUUID();
     try {
-      return await new Promise<boolean>((resolve) => {
+      return await new Promise<boolean>((resolve, reject) => {
         const combined = AbortSignal.any([signal, lifetime, connection.signal]);
-        const end = (accepted: boolean) => {
+        const end = (accepted: boolean, rejection?: string) => {
           clearTimeout(timer);
           off();
           combined.removeEventListener("abort", abort);
-          resolve(accepted);
+          if (rejection === undefined) resolve(accepted);
+          else reject(new Error(`Session companion rejected the notification: ${rejection}`));
         };
         const abort = () => { end(false); };
         const off = connection.on(REPLY_EVENT, (value) => {
-          if (typeof value === "object" && value !== null && Reflect.get(value, "nonce") === nonce) end(Reflect.get(value, "accepted") === true);
+          if (typeof value !== "object" || value === null || Reflect.get(value, "nonce") !== nonce) return;
+          if (Reflect.get(value, "accepted") === true) { end(true); return; }
+          const error: unknown = Reflect.get(value, "error");
+          end(false, typeof error === "string" ? error.slice(0, 300) : "no reason given");
         });
         const timer = setTimeout(() => { end(false); }, timeoutMs);
         combined.addEventListener("abort", abort, { once: true });

@@ -27,24 +27,27 @@ export default function prWatchExtension(pi: ExtensionAPI): void {
   });
 
   function receive(data: unknown): void {
-    let nonce: string | undefined;
-    let ok = false;
+    // Read the nonce leniently so that even a malformed payload gets a reasoned rejection.
+    const nonce: unknown = typeof data === "object" && data !== null ? Reflect.get(data, "nonce") : undefined;
+    let rejection: string | undefined;
     try {
       const payload = parseNotifyPayload(data);
-      nonce = payload.nonce;
       const ctx = current;
-      if (ctx?.sessionManager.getSessionId() !== payload.sessionId) return;
+      if (ctx === undefined) { rejection = "no active session"; return; }
+      if (ctx.sessionManager.getSessionId() !== payload.sessionId) { rejection = "addressed to another session"; return; }
       const persisted = ctx.sessionManager.getBranch().some((entry) => entry.type === "custom_message"
         && entry.customType === UPDATE_MESSAGE_TYPE && notificationIdOf(entry.details) === payload.notificationId);
       if (!accepted.has(payload.notificationId) && !persisted) {
         pi.sendMessage({ customType: UPDATE_MESSAGE_TYPE, content: payload.content, display: true, details: payload.details }, { triggerTurn: true, deliverAs: "followUp" });
         accepted.add(payload.notificationId);
       }
-      ok = true;
-    } catch {
-      // Reply with a negative acknowledgement; the backend retries later.
+    } catch (error) {
+      // The cause is bounded and never includes notification or review text.
+      rejection = (error instanceof Error ? error.message : String(error)).slice(0, 300);
     } finally {
-      if (nonce !== undefined) pi.events.emit(REPLY_EVENT, { nonce, accepted: ok });
+      if (typeof nonce === "string") {
+        pi.events.emit(REPLY_EVENT, rejection === undefined ? { nonce, accepted: true } : { nonce, accepted: false, error: rejection });
+      }
     }
   }
 
@@ -65,7 +68,7 @@ export default function prWatchExtension(pi: ExtensionAPI): void {
 
   register(
     "pr_watch_subscribe", "PR watch: subscribe",
-    "Subscribe this session to CodeRabbit activity on a GitHub pull request. When CodeRabbit finishes a review, comments, replies, or reports a rate limit, a follow-up message wakes this session. The subscription ends when the pull request is merged or closed, the session is archived or deleted, or after two weeks. Returns CodeRabbit activity that already exists.",
+    "Subscribe this session to CodeRabbit activity on a GitHub pull request. When CodeRabbit finishes a review, comments, replies, or reports a rate limit, a follow-up message wakes this session. The subscription ends when the pull request is merged or closed, when the session is archived or deleted, or when it expires (two weeks by default; configurable). Returns CodeRabbit activity that already exists.",
     Type.Object({
       pr: Type.String({ minLength: 1, maxLength: 512, description: "Pull request URL, number, or branch, resolved with gh in this workspace." }),
     }, { additionalProperties: false }),

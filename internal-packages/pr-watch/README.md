@@ -29,7 +29,7 @@ Set these in the normal PI WEB configuration under `plugins.pr-watch.settings`. 
 | `quietSeconds` | `60` | Wait after the last new item, so one burst becomes one message (0–3600). |
 | `maxHoldMinutes` | `30` | Send anyway if CodeRabbit's check stays in progress this long (1–1440). |
 | `authors` | `["coderabbitai[bot]"]` | Reviewer logins to watch. A `[bot]` login also selects that App's check runs. |
-| `maxWakesPerHour` | `12` | Limit on messages per subscription, to stop runaway agent/reviewer loops (1–120). Activity is held, not dropped. |
+| `maxWakesPerHour` | `12` | Limit on messages per subscription, to stop runaway agent/reviewer loops (1–120). Activity is held, not dropped. The final merged/closed message is exempt because it ends the subscription. |
 | `maxAgeDays` | `14` | Subscriptions end silently after this age (1–365). |
 
 ## Agent tools
@@ -56,12 +56,12 @@ Before each check, every subscription's session is verified through the PI WEB c
 
 - **Archived session:** removed at once.
 - **Deleted session, removed workspace, or unregistered project:** removed after two consecutive checks that successfully read the catalog and did not find it.
-- **Catalog read failure** (for example during daemon startup or workspace discovery): the subscription is kept. A failed read never counts as absence.
+- **Catalog read failure** (for example during daemon startup or workspace discovery): the subscription is kept. A failed read never counts as absence, and it does not reset a streak either: absent, failed, absent removes the subscription.
 
 The session is checked again just before each delivery. Unarchiving a session does not restore its subscriptions; subscribe again.
 
 ## Delivery and failures
 
-Delivery loads a saved session if needed and waits for the companion extension to acknowledge the message. Unacknowledged messages are retried with backoff, reusing the same ID so a retry never produces a second turn. Newer activity waits behind an unacknowledged message. After five failed attempts, or three consecutive GitHub read failures, PR watch records a warning notice on that session. The plugin's health is degraded while GitHub reads fail.
+Delivery loads a saved session if needed and waits for the companion extension to acknowledge the message. A rejection is logged with the extension's reason. Unacknowledged or rejected messages are retried with backoff, reusing the same ID so a retry never produces a second turn. Newer activity, including the final merged/closed message, waits behind an unacknowledged message. A message already sending when its subscription is removed may still arrive. After five failed attempts, or three consecutive GitHub read failures, PR watch records a warning notice on that session. The plugin's health is degraded while GitHub reads fail.
 
 State is stored in `subscriptions.json` in the plugin's data directory.

@@ -26,7 +26,7 @@ describe("GitHub reader", () => {
 
     const snapshot = await reader.snapshot(resolved, signal);
     expect(snapshot).toMatchObject({ state: "merged", headSha: "abc", reviews: [{ id: 1, state: "APPROVED" }], reviewComments: [], checkRuns: [] });
-    // Enterprise hosts need an explicit hostname; every list is paginated.
+    // Every API call names its host, so an inherited GH_HOST cannot redirect it; every list is paginated.
     for (const [request] of execFile.mock.calls.slice(1)) expect(request.args?.slice(0, 3)).toEqual(["api", "--hostname", "ghe.example"]);
     expect(execFile.mock.calls.filter(([request]) => request.args?.includes("--paginate") === true)).toHaveLength(4);
   });
@@ -39,5 +39,6 @@ describe("GitHub reader", () => {
     await expect(reader.resolve("7", "/work", signal)).rejects.toThrow("HTTP 401");
     execFile.mockResolvedValue({ ...ok("{}"), stdoutTruncated: true });
     await expect(reader.snapshot({ host: "github.com", owner: "o", repo: "r", number: 1 }, signal)).rejects.toThrow("exceeded");
+    expect(execFile.mock.calls.at(-1)?.[0].args?.slice(0, 3)).toEqual(["api", "--hostname", "github.com"]);
   });
 });

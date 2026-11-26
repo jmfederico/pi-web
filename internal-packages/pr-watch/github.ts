@@ -97,7 +97,8 @@ export function createGitHubReader(execFile: ExecFile, command: string): GitHubR
     return result.stdout;
   }
   const api = (ref: PullRequestRef, path: string, jq: string, signal: AbortSignal, paginate = true) => gh([
-    "api", ...(ref.host === "github.com" ? [] : ["--hostname", ref.host]), ...(paginate ? ["--paginate"] : []),
+    // Always explicit: an inherited GH_HOST must not redirect a github.com reference.
+    "api", "--hostname", ref.host, ...(paginate ? ["--paginate"] : []),
     `${path}${path.includes("?") ? "&" : "?"}per_page=100`, "--jq", jq,
   ], signal);
   const base = (ref: PullRequestRef) => `repos/${ref.owner}/${ref.repo}`;

@@ -207,6 +207,32 @@ describe("PR watch subscriptions", () => {
     await expect(f.call("list")).resolves.toMatchObject({ subscriptions: [], recentRemovals: [{ reason: "pr-merged" }] });
   });
 
+  it("keeps the subscription when an ordinary message is acknowledged after the pull request ends", async () => {
+    const f = await fixture();
+    await f.subscribe();
+    f.setSnapshot(snapshot({ reviewComments: [reviewComment(10)] }));
+    await f.cycle();
+    f.advance(MINUTE);
+    f.deliver.mockResolvedValueOnce(false);
+    await f.cycle();
+    f.setSnapshot(snapshot({ state: "closed", reviewComments: [reviewComment(10), reviewComment(11)] }));
+    f.advance(MINUTE);
+    await f.cycle(); // Retries the ordinary message; the pull request is now closed.
+    expect(f.delivered().map((message) => message.notificationId)).toEqual(["id-2", "id-2"]);
+    expect(f.store.list()).toHaveLength(1);
+    await f.cycle();
+    expect(f.delivered().at(-1)?.content).toContain("owner/repo#7 was closed");
+    expect(f.delivered().at(-1)?.content).toContain("discussion_r11");
+    expect(f.store.list()).toEqual([]);
+  });
+
+  it("rejects a subscription whose baseline shows the pull request already ended", async () => {
+    const f = await fixture();
+    f.setSnapshot(snapshot({ state: "merged" }));
+    await expect(f.subscribe()).rejects.toThrow("already merged");
+    expect(f.store.list()).toEqual([]);
+  });
+
   it("reports GitHub read failures once per failure streak", async () => {
     const f = await fixture();
     await f.subscribe();
@@ -258,6 +284,21 @@ describe("PR watch subscription validation", () => {
     await f.cycle();
     expect(f.store.list()).toEqual([]);
     await expect(f.call("list")).resolves.toMatchObject({ recentRemovals: [{ reason }] });
+  });
+
+  it("does not let an inconclusive check interrupt an absence streak", async () => {
+    const f = await fixture();
+    await f.subscribe();
+    f.host.sessions = [];
+    await f.cycle();
+    f.host.sessionsError = new Error("stale or unavailable");
+    f.host.projectsError = new Error("daemon starting");
+    await f.cycle();
+    expect(f.store.list()).toMatchObject([{ missing: { count: 1 } }]);
+    delete f.host.sessionsError;
+    delete f.host.projectsError;
+    await f.cycle();
+    expect(f.store.list()).toEqual([]);
   });
 
   it("resets the absence count when the session reappears", async () => {
