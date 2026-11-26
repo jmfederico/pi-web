@@ -175,6 +175,12 @@ Pi's managed installer (`https://pi.dev/install.sh`) uses a different layout. It
 
 Standalone application code imports SDK values through `src/piSdk.ts` and AI helpers through `src/piAi.ts`. Their shared loader, `src/piRuntime.ts`, resolves the selected installation's public package exports using `import-meta-resolve`. It does not register a Node loader hook, rewrite other modules' imports, or assume private SDK file paths. Pi's own dependencies and extension loader retain their ordinary resolution and module identity. Keep runtime imports behind this boundary; canonical type-only imports are safe because they disappear from emitted JavaScript. The canonical SDK peers are optional with `"*"` ranges, and there is no runtime version gate. Development dependencies support the checkout's tests and typechecking rather than provisioning a published runtime.
 
+### Pi support policy
+
+PI WEB supports only the latest Pi minor line it was tested with. The floor of the `@earendil-works/pi-coding-agent` development dependency range in `package.json` is the single source of truth for the supported minimum. If the tests need a specific Pi patch, raise the floor to that patch, for example from `^1.6.0` to `^1.6.3`. A maintainer evaluates a new Pi major version before PI WEB adopts it.
+
+The policy is advisory and keeps the peer and runtime decisions above: peers stay `"*"` and nothing is blocked. `package.json`, including its development dependencies, ships in the published package; `src/shared/piSupport.ts` reads the floor from it at runtime. When the Pi loaded by the session daemon, or by the web process if the daemon is unavailable, is older than the floor, the status response adds a `pi-unsupported` warning that the Updates panel shows. `pi-web doctor` reports the same check as a warning without failing. Newer and unrecognized Pi versions produce no warning. Keep the range a single comparator such as `^1.6.0`; a compound range has no floor and would silently disable the warning, which `src/shared/piSupport.test.ts` guards against.
+
 Upgrading or downgrading Pi in place takes effect when services restart. If Pi moves to another path, reinstall the PI WEB service definitions from that Pi instance. The startup environment selects an installation, not a frozen copy of its version.
 
 ## Server-only TypeBox
