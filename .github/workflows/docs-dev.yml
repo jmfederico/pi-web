@@ -34,11 +34,12 @@ jobs:
         env:
           GIT_SHA: ${{ github.sha }}
 
+      # Run the pinned Wrangler directly. wrangler-action's install probe logs a
+      # spurious npm error and installs every project dependency to get Wrangler.
+      # Wrangler 4 is required: v3 rejects path-based routes for assets workers.
+      # Keep the version in sync with publish.yml and docs-hotfix.yml.
       - name: Deploy dev docs worker
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          # Wrangler 4 is required: v3 rejects path-based routes for assets workers.
-          wranglerVersion: "4.119.0"
-          command: deploy --config docs/wrangler.dev.jsonc
+        run: npx --yes wrangler@4.119.0 deploy --config docs/wrangler.dev.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
