@@ -11,7 +11,7 @@ export function localMarkdownImage(reference: string, root: string): { path: str
     || (/^[a-z][a-z\d+.-]*:/iu.test(reference) && !driveReference)) return undefined;
   let path: string;
   try { path = decodeURIComponent(reference.split(/[?#]/u, 1)[0] ?? ""); } catch { return undefined; }
-  // eslint-disable-next-line no-control-regex -- Filesystem references cannot contain control characters.
+  // oxlint-disable-next-line no-control-regex -- Filesystem references cannot contain control characters.
   if (path === "" || /[\\\u0000-\u001f\u007f]/u.test(path)) return undefined;
   if (path.startsWith("~/")) return { path, outside: true };
   // Keep Windows drive/share anchors outside traversal normalization, using

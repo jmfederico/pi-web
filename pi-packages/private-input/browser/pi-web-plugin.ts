@@ -9,7 +9,7 @@ const stylesCapability: PluginCapability<StylesheetIntegrationCapabilityV1> = {
       || !("registerRoot" in value) || typeof value.registerRoot !== "function"
       || !("createController" in value) || typeof value.createController !== "function"
       || !("subscribe" in value) || typeof value.subscribe !== "function") throw new Error("Stylesheet integration unavailable");
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Public capability validated above.
+    // oxlint-disable-next-line typescript/consistent-type-assertions -- Public capability validated above.
     return value as StylesheetIntegrationCapabilityV1;
   },
 };

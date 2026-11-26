@@ -88,7 +88,7 @@ function readNotices(value: unknown): string[] {
 function nullable<T>(value: unknown, parse: (input: unknown) => T): T | null { return value === null ? null : parse(value); }
 function record(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Invalid object");
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Narrowed JSON object.
+  // oxlint-disable-next-line typescript/consistent-type-assertions -- Narrowed JSON object.
   return value as Record<string, unknown>;
 }
 function string(value: unknown): string { if (typeof value !== "string") throw new Error("Invalid string"); return value; }

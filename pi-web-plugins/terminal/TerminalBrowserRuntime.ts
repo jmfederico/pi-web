@@ -42,6 +42,7 @@ export class TerminalBrowserRuntime {
     if (this.badgeTarget?.state !== state) this.resetBadgePolling();
     this.badgeTarget = { state, context, url: browserUrl() };
     const now = this.now();
+    // oxlint-disable-next-line typescript/prefer-optional-chain -- typeof guards an undeclared global outside browsers; optional chaining would throw.
     if (typeof document !== "undefined" && document.hidden) {
       this.scheduleBadgeWake(state, now + ACTIVE_TERMINAL_REFRESH_MS);
     } else if (now >= state.retryAt && now - state.refreshedAt >= ACTIVE_TERMINAL_REFRESH_MS) {
@@ -195,6 +196,7 @@ export class TerminalBrowserRuntime {
         this.resetBadgePolling();
         return;
       }
+      // oxlint-disable-next-line typescript/prefer-optional-chain -- typeof guards an undeclared global outside browsers; optional chaining would throw.
       if (typeof document !== "undefined" && document.hidden) {
         this.scheduleBadgeWake(state, this.now() + ACTIVE_TERMINAL_REFRESH_MS);
         return;

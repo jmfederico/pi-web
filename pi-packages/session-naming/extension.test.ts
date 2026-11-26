@@ -29,10 +29,10 @@ function harness(config: unknown = {}) {
   const streamSimple = vi.fn<ExtensionContext["modelRegistry"]["streamSimple"]>(() => stream);
   const find = vi.fn<ExtensionContext["modelRegistry"]["find"]>();
   // Deliberately partial SDK boundary: only methods the extension consumes are supplied.
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- partial public SDK test boundary.
+  // oxlint-disable-next-line typescript/consistent-type-assertions -- partial public SDK test boundary.
   const ctx = { model, sessionManager: manager, modelRegistry: { streamSimple, find } } as unknown as ExtensionContext;
   const setSessionName = vi.fn((name: string) => manager.appendSessionInfo(name));
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- capture overloaded SDK event registrations without implementing unrelated APIs.
+  // oxlint-disable-next-line typescript/consistent-type-assertions -- capture overloaded SDK event registrations without implementing unrelated APIs.
   const pi = { on: (event: string, handler: Handler) => handlers.set(event, handler),
     getSessionName: () => manager.getSessionName(), setSessionName } as unknown as ExtensionAPI;
   const warn = vi.fn();

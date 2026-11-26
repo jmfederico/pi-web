@@ -233,7 +233,7 @@ function optionalPlainText(value: unknown, maxLength: number): string | undefine
 
 function plainText(value: string): string {
   // Browser previews should not retain non-whitespace C0/C1 controls.
-  // eslint-disable-next-line no-control-regex
+  // oxlint-disable-next-line no-control-regex
   return value.replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ").replace(/\s+/gu, " ").trim();
 }
 

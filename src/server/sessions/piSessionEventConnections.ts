@@ -40,7 +40,7 @@ export class PiSessionEventConnections {
         if (typeof handler !== "function") throw new Error("PI event handler must be a function");
         // Native Pi awaits/catches handler results despite its void callback type.
         // Return async work to that error boundary instead of dropping rejections.
-        // eslint-disable-next-line @typescript-eslint/no-misused-promises
+        // oxlint-disable-next-line typescript/no-misused-promises
         const detach = hosted.bus.on(channel, (data) => {
           if (!controller.signal.aborted) return handler(data);
         });

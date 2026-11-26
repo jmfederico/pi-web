@@ -1,45 +1,30 @@
 {
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
-    "strict": true,
-    "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": true,
-    "noImplicitOverride": true,
-    "noPropertyAccessFromIndexSignature": true,
-    "noImplicitReturns": true,
-    "noFallthroughCasesInSwitch": true,
-    "forceConsistentCasingInFileNames": true,
-    "allowUnreachableCode": false,
-    "allowUnusedLabels": false,
-    "noEmit": true,
-    "skipLibCheck": true,
-    "experimentalDecorators": true,
-    "useDefineForClassFields": false,
-    "lib": [
-      "ES2022",
-      "DOM",
-      "DOM.Iterable"
-    ],
-    "types": [
-      "node"
-    ],
-    "paths": {
-      "@jmfederico/pi-web/plugin-api": ["./src/plugin-api.ts"],
-      "@jmfederico/pi-web/server-plugin-api": ["./src/server-plugin-api.ts"]
+  "extends": "./tsconfig.base.json",
+  "files": [],
+  "references": [
+    {
+      "path": "./tsconfig/client.json"
+    },
+    {
+      "path": "./tsconfig/client.test.json"
+    },
+    {
+      "path": "./tsconfig/server.json"
+    },
+    {
+      "path": "./tsconfig/server.test.json"
+    },
+    {
+      "path": "./tsconfig/server-sessions.test.json"
+    },
+    {
+      "path": "./tsconfig/plugins.json"
+    },
+    {
+      "path": "./tsconfig/plugins.test.json"
+    },
+    {
+      "path": "./tsconfig/tooling.json"
     }
-  },
-  "include": [
-    "src/**/*.ts",
-    "vite.config.ts",
-    "vitest.config.ts",
-    "vitest.windows.config.ts",
-    "vitest.artifacts.config.ts",
-    "playwright.config.ts",
-    "test-fixtures/browser/**/*.ts",
-    "extensions/**/*.ts",
-    "pi-web-plugins/**/*.ts",
-    "pi-packages/**/*.ts"
   ]
 }

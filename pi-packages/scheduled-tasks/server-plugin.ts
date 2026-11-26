@@ -83,7 +83,7 @@ export function activateTasks(context: ServerPluginActivationContextV5, now: () 
         if (service === undefined) throw new Error("Scheduled tasks has not started");
         const result = await service.request(operation, input, signal);
         // Domain records contain JSON only; detach them at the transport boundary.
-        // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Plugin-owned domain output, not external input.
+        // oxlint-disable-next-line typescript/consistent-type-assertions -- Plugin-owned domain output, not external input.
         return JSON.parse(JSON.stringify(result)) as JsonValue;
       },
     },

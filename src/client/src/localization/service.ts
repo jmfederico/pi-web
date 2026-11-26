@@ -377,7 +377,7 @@ export class LocalizationService {
       if (!formatter) {
         const formatters: Formatters = {
           // FormatJS includes newer Intl option types than our ES2022 lib; pass them through to native Intl.
-          // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+          // oxlint-disable-next-line typescript/consistent-type-assertions
           getNumberFormat: (_locale, options) => new Intl.NumberFormat(this.current.formatLocale, options as Intl.NumberFormatOptions),
           getDateTimeFormat: (_locale, options) => new Intl.DateTimeFormat(this.current.formatLocale, this.dateOptions(options ?? {})),
           getPluralRules: (pluralLocale, options) => new Intl.PluralRules(pluralLocale, options),

@@ -68,7 +68,7 @@ import type { PluginCatalogV1 } from "./shared/pluginCatalogTypes.js";
 export type { PluginSessionLifecycleV1, PluginSessionLifecycleV2, PluginSessionLifecycleState, PluginSessionLifecycleOptions } from "./shared/pluginSessionLifecycleTypes.js";
 import type { PluginSessionLifecycleV1, PluginSessionLifecycleV2 } from "./shared/pluginSessionLifecycleTypes.js";
 
-// eslint-disable-next-line @typescript-eslint/no-deprecated -- The host intentionally accepts supported legacy entries.
+// oxlint-disable-next-line typescript/no-deprecated -- The host intentionally accepts supported legacy entries.
 export type PiWebPlugin = LegacyPiWebPlugin | PiWebPluginV5;
 
 /** Current browser entrypoint. Existing contribution kinds and lifecycle behavior are unchanged. */
@@ -750,7 +750,7 @@ export interface MessageActionFeedback {
   readonly icon?: TemplateResult;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- Preserve existing void callbacks while allowing opt-in feedback.
+// oxlint-disable-next-line typescript/no-invalid-void-type -- Preserve existing void callbacks while allowing opt-in feedback.
 export type MessageActionResult = void | MessageActionFeedback;
 
 interface MessageActionDefinition<AvailabilityContext, Context> {

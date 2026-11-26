@@ -263,7 +263,7 @@ test("save failures are visible inside the open dialog and clear after recovery"
   await page.setViewportSize({ width: 360, height: 740 });
   await open(page);
   // Preserve the native method for restoration, not for an unbound invocation.
-  // eslint-disable-next-line @typescript-eslint/unbound-method
+  // oxlint-disable-next-line typescript/unbound-method
   const originalSetItem = await page.evaluateHandle(() => Storage.prototype.setItem);
   await page.evaluate(() => {
     Storage.prototype.setItem = () => { throw new DOMException("Storage full", "QuotaExceededError"); };
