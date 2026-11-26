@@ -5,6 +5,7 @@ import { LocalizationService } from "../../src/client/src/localization/service";
 import { createPluginLocalization } from "../../src/client/src/plugins/localization";
 import { MermaidPreview } from "./MermaidPreview";
 import { createMermaidContent } from "./mermaidLocalization";
+import type { MermaidDrawing, MermaidRenderer } from "./mermaidEngine";
 import plugin from "./pi-web-plugin";
 
 customElements.define("pi-web-mermaid-preview", MermaidPreview);
@@ -16,13 +17,14 @@ function owner(service: LocalizationService, id = "mermaid") {
   return { localization, lifetime };
 }
 
-it("updates pending status and iframe names without reloading the engine or modifying diagram source", async () => {
+it("updates pending status and image names without redrawing or modifying diagram source", async () => {
   const service = new LocalizationService({ development: true });
   const { localization, lifetime } = owner(service);
   const element = new MermaidPreview();
   element.content = createMermaidContent(localization);
-  let resolve: (engine: string) => void = () => { throw new Error("Missing resolver"); };
-  element.loadEngine = vi.fn(() => new Promise<string>((done) => { resolve = done; }));
+  let resolve: (drawing: MermaidDrawing) => void = () => { throw new Error("Missing resolver"); };
+  const render = vi.fn<MermaidRenderer["render"]>(() => new Promise((done) => { resolve = done; }));
+  element.engine = { render };
   const input = { text: "graph TD; A[User text]-->B[مرحبا]", signal: new AbortController().signal, fail: vi.fn() };
   element.input = input;
   document.body.append(element);
@@ -31,21 +33,18 @@ it("updates pending status and iframe names without reloading the engine or modi
   await service.setPreferences({ language: "en-XA", formatLocale: "en" });
   await element.updateComplete;
   expect(element.shadowRoot?.querySelector('[role="status"]')?.textContent).toContain("Rëndërïng");
-  resolve("/* trusted engine */");
-  await vi.waitFor(() => { expect(element.shadowRoot?.querySelector("iframe")).not.toBeNull(); });
-  const frame = element.shadowRoot?.querySelector("iframe");
-  if (frame?.contentWindow === undefined || frame.contentWindow === null) throw new Error("Missing frame");
-  const originalDocument = frame.srcdoc;
-  expect(frame.title).toContain("Mërmáïd");
+  resolve({ svg: "<svg xmlns=\"http://www.w3.org/2000/svg\"/>", width: 10, height: 10 });
+  await vi.waitFor(() => { expect(element.shadowRoot?.querySelector("img")).not.toBeNull(); });
+  const image = element.shadowRoot?.querySelector("img");
+  const source = image?.src;
+  expect(image?.alt).toContain("Mërmáïd");
   await service.setPreferences({ language: "ar-XB", formatLocale: "en" });
   await element.updateComplete;
-  expect(frame.title).toContain("\u202e");
-  expect(element.shadowRoot?.querySelector("iframe")).toBe(frame);
-  expect(frame.srcdoc).toBe(originalDocument);
-  expect(element.loadEngine).toHaveBeenCalledOnce();
-  const post = vi.spyOn(frame.contentWindow, "postMessage").mockImplementation(() => undefined);
-  window.dispatchEvent(new MessageEvent("message", { source: frame.contentWindow, data: { type: "mermaid-ready" } }));
-  expect(post).toHaveBeenCalledWith({ type: "mermaid-render", text: input.text }, "*");
+  expect(image?.alt).toContain("\u202e");
+  expect(element.shadowRoot?.querySelector("img")).toBe(image);
+  expect(image?.src).toBe(source);
+  expect(render).toHaveBeenCalledOnce();
+  expect(render.mock.calls[0]?.[0].text).toBe(input.text);
   expect(input.fail).not.toHaveBeenCalled();
   element.remove();
   lifetime.abort();
@@ -98,6 +97,8 @@ it("exposes a live translated renderer title and passes activation content to th
   render(renderer?.render({ text: "source", signal: new AbortController().signal, fail: vi.fn() }), container);
   const preview = container.querySelector<MermaidPreview>("pi-web-mermaid-preview");
   expect(preview?.content?.messages.t("rendering")).toBe("Création du schéma…");
+  expect(preview?.engine).toBeDefined();
   remove();
+  result.dispose();
   lifetime.abort();
 });

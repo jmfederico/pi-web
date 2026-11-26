@@ -63,9 +63,10 @@ it("offers Highlighted, Diagram, and Raw for the same Mermaid source without loa
   await settleDeferredContent(host);
   const diagram = host.renderRoot.querySelector<MermaidPreview>("pi-web-mermaid-preview");
   if (diagram === null) throw new Error("Expected diagram renderer");
-  await vi.waitFor(() => { expect(diagram.renderRoot.querySelector("iframe")).not.toBeNull(); });
+  // Diagrams share one sandboxed engine frame rather than embedding one each.
+  await vi.waitFor(() => { expect(document.querySelector("iframe")).not.toBeNull(); });
   expect(diagram.input?.text).toBe(text);
-  expect(diagram.renderRoot.querySelector("iframe")?.getAttribute("sandbox")).toBe("allow-scripts");
+  expect(document.querySelector("iframe")?.getAttribute("sandbox")).toBe("allow-scripts");
   expect(fetchEngine).toHaveBeenCalledOnce();
 
   viewButton(host, "Highlighted").click();
