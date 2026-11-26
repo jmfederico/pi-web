@@ -123,12 +123,15 @@ export function installedSupportedPiMinimum(): string | undefined {
 
 /**
  * Doctor's advisory Pi support check. Running services report the Pi they
- * loaded; without one, this command's own Pi is what newly started services
- * would select. An older Pi is a warning, never a failed check.
+ * loaded; when no session daemon is running, this command's own Pi is what
+ * newly started services would select. An older Pi is a warning, never a
+ * failed check.
  */
 export function piSupportCheckLines(info: RunningVersionInfo, cliPiVersion: string | undefined, minimum: string | undefined): string[] {
+  // A running daemon that does not report its Pi stays unknown; this command's
+  // Pi only stands in when no daemon is running.
   const loaded: LoadedPiVersion | undefined = loadedPiVersion(info)
-    ?? (cliPiVersion === undefined ? undefined : { source: "cli", version: cliPiVersion });
+    ?? (info.sessiond?.available === true || cliPiVersion === undefined ? undefined : { source: "cli", version: cliPiVersion });
   if (minimum === undefined) return ["? Supported Pi version unknown: package metadata does not declare it"];
   if (loaded === undefined) return [`? Pi version unknown; PI WEB supports Pi ${minimum} or later`];
   if (comparePackageVersions(loaded.version, minimum) === undefined) return [`? Pi version ${loaded.version} not recognized; PI WEB supports Pi ${minimum} or later`];

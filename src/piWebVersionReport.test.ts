@@ -29,6 +29,11 @@ describe("piSupportCheckLines", () => {
     expect(piSupportCheckLines(notRunning, "1.6.1", "1.6.0")[0]).toMatch(/^✓ /u);
     expect(piSupportCheckLines(notRunning, "1.5.0", "1.6.0")[0]).toMatch(/^! /u);
   });
+
+  it("keeps the Pi version unknown when a running daemon does not report it", () => {
+    const legacy: RunningVersionInfo = { web: componentStatus({ piVersion: "1.6.1" }), sessiond: sessiondStatus() };
+    expect(piSupportCheckLines(legacy, "1.5.0", "1.6.0")).toEqual(["? Pi version unknown; PI WEB supports Pi 1.6.0 or later"]);
+  });
 });
 
 describe("probeRunningComponentReady", () => {
