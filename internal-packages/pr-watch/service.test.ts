@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -134,6 +134,26 @@ describe("PR watch subscriptions", () => {
     expect(reopened.list()).toMatchObject([{ id: "id-1", outbox: null, progress: { pending: [] } }]);
   });
 
+  it("rejects malformed persisted entries at open without changing the file", async () => {
+    const f = await fixture();
+    await f.subscribe();
+    await f.store.flush();
+    const subscription = f.store.list()[0];
+    if (subscription === undefined) throw new Error("Expected a persisted subscription");
+    const invalid = [
+      { subscriptions: [null], removals: [] },
+      { subscriptions: [], removals: [null] },
+      { subscriptions: [{ ...subscription, progress: { ...subscription.progress, seen: { review: null } } }], removals: [] },
+      { subscriptions: [{ ...subscription, outbox: { id: "note" } }], removals: [] },
+    ];
+    for (const data of invalid) {
+      const text = JSON.stringify({ version: 1, ...data });
+      await writeFile(f.path, text);
+      await expect(SubscriptionStore.open(f.path, (error) => { throw error; })).rejects.toThrow(`Unrecognized PR watch state in ${f.path}; move it aside to start empty`);
+      expect(await readFile(f.path, "utf8")).toBe(text);
+    }
+  });
+
   it("rejects sessions outside registered workspaces and pull requests that are no longer open", async () => {
     const f = await fixture();
     await expect(f.call("subscribe", { cwd: "/elsewhere", pr: "7" })).rejects.toThrow("not a registered PI WEB workspace");
@@ -174,6 +194,26 @@ describe("PR watch subscriptions", () => {
     expect(f.delivered().at(-1)?.notificationId).toBe("id-3");
     expect(f.delivered().at(-1)?.content).toContain("discussion_r11");
     expect(f.notice).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps busy deliveries pending without failure backoff or warnings", async () => {
+    const f = await fixture();
+    await f.subscribe();
+    f.setSnapshot(snapshot({ reviewComments: [reviewComment(10)] }));
+    await f.cycle();
+    f.deliver.mockResolvedValue("busy");
+    for (let poll = 0; poll < 6; poll++) {
+      f.advance(MINUTE);
+      await f.cycle();
+    }
+    expect(f.deliver).toHaveBeenCalledTimes(6);
+    expect(f.store.list()[0]?.outbox).toMatchObject({ id: "id-2", attempts: 0 });
+    expect(f.notice).not.toHaveBeenCalled();
+    f.deliver.mockResolvedValue(true);
+    f.advance(MINUTE);
+    await f.cycle();
+    expect(f.delivered().at(-1)?.notificationId).toBe("id-2");
+    expect(f.store.list()[0]?.outbox).toBeNull();
   });
 
   it("caps wakes per hour without dropping activity", async () => {

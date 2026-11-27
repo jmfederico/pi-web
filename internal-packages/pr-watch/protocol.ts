@@ -1,5 +1,6 @@
 /** Wire contract shared by the session-daemon backend and the companion extension. */
 export const PLUGIN_ID = "pr-watch";
+export const DELIVERY_TIMEOUT_MS = 5000;
 /** Backend → extension: deliver one notification into the conversation. */
 export const NOTIFY_EVENT = "pr-watch:notify";
 /** Extension → backend: acknowledge one notify by nonce. */

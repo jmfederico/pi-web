@@ -43,6 +43,7 @@ describe("PR watch companion", () => {
       const errors: unknown[] = [];
       await session.bindExtensions({ onError: (error) => errors.push(error) });
       const modelInputs: Message[][] = [];
+      let holdResponse: ((finish: () => void) => void) | undefined;
       session.agent.streamFunction = (_model, context) => {
         modelInputs.push(structuredClone(context.messages));
         const first = modelInputs.length === 1;
@@ -53,13 +54,14 @@ describe("PR watch companion", () => {
           stopReason: first ? "toolUse" : "stop", timestamp: Date.now(),
         };
         const stream = createAssistantMessageEventStream();
-        queueMicrotask(() => { stream.push({ type: "done", reason: message.stopReason === "toolUse" ? "toolUse" : "stop", message }); stream.end(message); });
+        const finish = () => { stream.push({ type: "done", reason: message.stopReason === "toolUse" ? "toolUse" : "stop", message }); stream.end(message); };
+        if (holdResponse === undefined) queueMicrotask(finish);
+        else holdResponse(finish);
         return stream;
       };
 
       await session.prompt("Open the pull request and watch it");
       expect(requests).toHaveBeenCalledWith("subscribe", { pr: "7", sessionId: manager.getSessionId(), cwd }, expect.anything());
-      const turnsAfterSubscribe = modelInputs.length;
 
       const state: PluginSessionStateV1 = {
         version: 1,
@@ -83,20 +85,35 @@ describe("PR watch companion", () => {
       };
       const signal = new AbortController().signal;
 
+      // Hold a real run open, then clear Pi's queue before the run can drain it.
+      const responseHeld = new Promise<() => void>((resolve) => { holdResponse = resolve; });
+      const busyRun = session.prompt("Do other work first");
+      const finish = await responseHeld;
+      holdResponse = undefined;
+      try {
+        const result = await deliver(target, message, signal);
+        session.clearQueue();
+        expect(result).toBe("busy");
+      } finally {
+        finish();
+        await busyRun;
+      }
+      expect(manager.getBranch().some((entry) => entry.type === "custom_message" && entry.customType === UPDATE_MESSAGE_TYPE)).toBe(false);
+      const turnsBeforeDelivery = modelInputs.length;
       await expect(deliver(target, message, signal)).resolves.toBe(true);
-      await session.waitForIdle();
-      expect(modelInputs).toHaveLength(turnsAfterSubscribe + 1);
-      expect(JSON.stringify(modelInputs.at(-1))).toContain("CodeRabbit activity on owner/repo#7");
       expect(manager.getBranch().filter((entry) => entry.type === "custom_message" && entry.customType === UPDATE_MESSAGE_TYPE)).toHaveLength(1);
+      await session.waitForIdle();
+      expect(modelInputs).toHaveLength(turnsBeforeDelivery + 1);
+      expect(JSON.stringify(modelInputs.at(-1))).toContain("CodeRabbit activity on owner/repo#7");
 
       // A retry of an acknowledged notification is accepted without another turn.
       await expect(deliver(target, message, signal)).resolves.toBe(true);
       await session.waitForIdle();
-      expect(modelInputs).toHaveLength(turnsAfterSubscribe + 1);
+      expect(modelInputs).toHaveLength(turnsBeforeDelivery + 1);
 
       await expect(deliver(target, { ...message, sessionId: "another-session", notificationId: "note-2", details: { ...message.details, notificationId: "note-2" } }, signal)).rejects.toThrow("addressed to another session");
       await expect(deliver(target, { ...message, content: "x".repeat(49 * 1024) }, signal)).rejects.toThrow("content must be");
-      expect(modelInputs).toHaveLength(turnsAfterSubscribe + 1);
+      expect(modelInputs).toHaveLength(turnsBeforeDelivery + 1);
       expect(errors).toEqual([]);
     } finally {
       await session?.abort();

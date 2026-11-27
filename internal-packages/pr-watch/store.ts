@@ -1,11 +1,16 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { Type, type Static } from "pi-web-typebox";
+import { Check } from "pi-web-typebox/value";
 import type { Verdict, WatchProgress } from "./activity.js";
 import type { PullRequestRef } from "./github.js";
 
-export type RemovalReason =
-  | "unsubscribed" | "session-archived" | "session-deleted" | "workspace-removed" | "project-removed"
-  | "pr-merged" | "pr-closed" | "expired";
+const removalReason = Type.Union([
+  Type.Literal("unsubscribed"), Type.Literal("session-archived"), Type.Literal("session-deleted"),
+  Type.Literal("workspace-removed"), Type.Literal("project-removed"), Type.Literal("pr-merged"),
+  Type.Literal("pr-closed"), Type.Literal("expired"),
+]);
+export type RemovalReason = Static<typeof removalReason>;
 
 /** One notification awaiting acknowledgement. Times are epoch milliseconds. */
 export interface Outbox {
@@ -53,6 +58,38 @@ interface StoreData {
   subscriptions: Subscription[];
   removals: Removal[];
 }
+
+const nullableString = Type.Union([Type.String(), Type.Null()]);
+const nullableTime = Type.Union([Type.Number(), Type.Null()]);
+const storeSchema = Type.Object({
+  version: Type.Literal(1),
+  subscriptions: Type.Array(Type.Object({
+    id: Type.String(), sessionId: Type.String(), projectId: Type.String(), workspaceId: Type.String(),
+    pr: Type.Object({
+      host: Type.String(), owner: Type.String(), repo: Type.String(), url: Type.String(), title: Type.String(),
+      number: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+    }),
+    createdAt: Type.Number(),
+    progress: Type.Object({
+      seen: Type.Record(Type.String(), Type.String()),
+      pending: Type.Array(Type.Object({ key: Type.String(), label: Type.String(), excerpt: Type.String(), url: Type.String() })),
+      firstPendingAt: nullableTime, lastActivityAt: nullableTime, reviewInProgress: Type.Boolean(),
+    }),
+    headSha: nullableString,
+    verdict: Type.Union([Type.Null(), Type.Object({ state: Type.String(), commitId: nullableString, currentHead: Type.Boolean() })]),
+    ending: Type.Union([Type.Null(), Type.Literal("merged"), Type.Literal("closed")]),
+    outbox: Type.Union([Type.Null(), Type.Object({
+      id: Type.String(), content: Type.String(), createdAt: Type.Number(),
+      attempts: Type.Integer({ minimum: 0 }), nextAttemptAt: Type.Number(), reported: Type.Boolean(), final: Type.Boolean(),
+    })]),
+    wakes: Type.Array(Type.Number()),
+    missing: Type.Union([Type.Null(), Type.Object({ count: Type.Integer({ minimum: 0 }), reason: removalReason })]),
+    fetchFailures: Type.Integer({ minimum: 0 }),
+  })),
+  removals: Type.Array(Type.Object({
+    subscriptionId: Type.String(), sessionId: Type.String(), pullRequest: Type.String(), reason: removalReason, at: Type.Number(),
+  })),
+});
 
 const MAX_REMOVALS = 50;
 
@@ -133,11 +170,9 @@ export class SubscriptionStore {
 }
 
 function parseStore(text: string, path: string): StoreData {
-  const value: unknown = JSON.parse(text);
-  if (typeof value !== "object" || value === null || Reflect.get(value, "version") !== 1
-    || !Array.isArray(Reflect.get(value, "subscriptions")) || !Array.isArray(Reflect.get(value, "removals"))) {
-    throw new Error(`Unrecognized PR watch state in ${path}; move it aside to start empty`);
-  }
-  // oxlint-disable-next-line typescript/consistent-type-assertions -- Plugin-owned file written by this module.
-  return value as StoreData;
+  const diagnosis = `Unrecognized PR watch state in ${path}; move it aside to start empty`;
+  let value: unknown;
+  try { value = JSON.parse(text); } catch (error) { throw new Error(diagnosis, { cause: error }); }
+  if (!Check(storeSchema, value)) throw new Error(diagnosis);
+  return value;
 }

@@ -242,7 +242,7 @@ export class PrWatchService {
     if (presence?.kind === "archived") { this.remove(subscription, "session-archived"); return; }
     if (presence?.kind !== "present") return;
 
-    let delivered = false;
+    let delivered: Awaited<ReturnType<Deliver>> = false;
     try {
       delivered = await this.deps.deliver({ ...selection, sessionId: subscription.sessionId }, {
         sessionId: subscription.sessionId, notificationId: outbox.id, content: outbox.content,
@@ -253,6 +253,8 @@ export class PrWatchService {
       // Includes rejections reported by the companion extension, with their cause.
       this.deps.logger.warn("PR watch delivery failed", { subscriptionId: id, error: error instanceof Error ? error.message : String(error) });
     }
+    // An active session is not a failed delivery. Try again on the normal poll cadence.
+    if (delivered === "busy") return;
     const after = this.deps.now();
     const current = store.find(id);
     if (current?.outbox?.id !== outbox.id) return;

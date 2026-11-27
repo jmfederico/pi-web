@@ -2,7 +2,7 @@
 
 Development tool for working on PI WEB. Not part of the PI WEB release: `internal-packages/` is outside the npm `files` allowlist, and its build output stays in each package's own `dist/`.
 
-A session subscribes to a GitHub pull request. When CodeRabbit reviews, comments, replies, or reports a rate limit, PR watch sends the session a follow-up message. An idle session starts a new turn; a busy one receives the message after its current run.
+A session subscribes to a GitHub pull request. When CodeRabbit reviews, comments, replies, or reports a rate limit, PR watch sends the session a follow-up message. An idle session starts a new turn. If the session is busy, PR watch retries on the next poll.
 
 ## Install
 
@@ -62,6 +62,6 @@ The session is checked again just before each delivery. Unarchiving a session do
 
 ## Delivery and failures
 
-Delivery loads a saved session if needed and waits for the companion extension to acknowledge the message. A rejection is logged with the extension's reason. Unacknowledged or rejected messages are retried with backoff, reusing the same ID so a retry never produces a second turn. Newer activity, including the final merged/closed message, waits behind an unacknowledged message. A message already sending when its subscription is removed may still arrive. After five failed delivery attempts, PR watch records a warning notice on that session. After three consecutive GitHub read failures for a pull request, it records a warning notice and reports degraded health until a read succeeds; individual failures are logged.
+Delivery loads a saved session if needed and waits for the companion extension to confirm the message appears in the session transcript. Busy sessions are retried without counting as delivery failures. A rejection is logged with the extension's reason. Unacknowledged or rejected messages are retried with backoff, reusing the same ID so a retry never produces a second turn. Newer activity, including the final merged/closed message, waits behind an unacknowledged message. A message already sending when its subscription is removed may still arrive. After five failed delivery attempts, PR watch records a warning notice on that session. After three consecutive GitHub read failures for a pull request, it records a warning notice and reports degraded health until a read succeeds; individual failures are logged.
 
 State is stored in `subscriptions.json` in the plugin's data directory.

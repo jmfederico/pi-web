@@ -1,24 +1,22 @@
+import { setTimeout as delay } from "node:timers/promises";
 import { Type, type TSchema } from "typebox";
 import { defineTool, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createCompanionBackend, type JsonValue } from "@jmfederico/pi-web/server-plugin-api";
-import { NOTIFY_EVENT, parseNotifyPayload, PLUGIN_ID, REPLY_EVENT, UPDATE_MESSAGE_TYPE } from "../protocol.js";
+import { DELIVERY_TIMEOUT_MS, NOTIFY_EVENT, parseNotifyPayload, PLUGIN_ID, REPLY_EVENT, UPDATE_MESSAGE_TYPE } from "../protocol.js";
 
 /**
  * Thin companion: tools forward to the session-daemon backend, which owns all
- * subscription state. The NOTIFY handler turns a backend notification into a
- * follow-up message that wakes an idle session or queues behind current work.
+ * subscription state. The NOTIFY handler starts a turn in an idle session and
+ * confirms delivery only once the notification appears in its transcript.
  */
 export default function prWatchExtension(pi: ExtensionAPI): void {
   let current: ExtensionContext | undefined;
   let unsubscribe: (() => void) | undefined;
-  // Retries reuse the notification id. Queued follow-ups are not yet in the
-  // branch, so remember accepted ids for this runtime as well.
-  const accepted = new Set<string>();
 
   pi.on("session_start", (_event, ctx) => {
     unsubscribe?.();
     current = ctx;
-    unsubscribe = pi.events.on(NOTIFY_EVENT, (data) => { receive(data); });
+    unsubscribe = pi.events.on(NOTIFY_EVENT, (data) => { void receive(data); });
   });
   pi.on("session_shutdown", () => {
     unsubscribe?.();
@@ -26,28 +24,31 @@ export default function prWatchExtension(pi: ExtensionAPI): void {
     current = undefined;
   });
 
-  function receive(data: unknown): void {
+  async function receive(data: unknown): Promise<void> {
     // Read the nonce leniently so that even a malformed payload gets a reasoned rejection.
     const nonce: unknown = typeof data === "object" && data !== null ? Reflect.get(data, "nonce") : undefined;
-    let rejection: string | undefined;
+    if (typeof nonce !== "string") return;
     try {
       const payload = parseNotifyPayload(data);
       const ctx = current;
-      if (ctx === undefined) { rejection = "no active session"; return; }
-      if (ctx.sessionManager.getSessionId() !== payload.sessionId) { rejection = "addressed to another session"; return; }
-      const persisted = ctx.sessionManager.getBranch().some((entry) => entry.type === "custom_message"
+      if (ctx === undefined) throw new Error("no active session");
+      if (ctx.sessionManager.getSessionId() !== payload.sessionId) throw new Error("addressed to another session");
+      const persisted = () => ctx.sessionManager.getBranch().some((entry) => entry.type === "custom_message"
         && entry.customType === UPDATE_MESSAGE_TYPE && notificationIdOf(entry.details) === payload.notificationId);
-      if (!accepted.has(payload.notificationId) && !persisted) {
-        pi.sendMessage({ customType: UPDATE_MESSAGE_TYPE, content: payload.content, display: true, details: payload.details }, { triggerTurn: true, deliverAs: "followUp" });
-        accepted.add(payload.notificationId);
+      if (!persisted()) {
+        // Pi can clear queued follow-ups. Leave the durable outbox in charge until the session is idle.
+        if (!ctx.isIdle()) { pi.events.emit(REPLY_EVENT, { nonce, accepted: false, busy: true }); return; }
+        pi.sendMessage({ customType: UPDATE_MESSAGE_TYPE, content: payload.content, display: true, details: payload.details }, { triggerTurn: true });
+        // sendMessage returns before Pi writes the message. Wait only within the reply window.
+        const deadline = performance.now() + DELIVERY_TIMEOUT_MS;
+        while (current === ctx && !persisted() && performance.now() < deadline) await delay(25);
+        if (current !== ctx || !persisted()) return;
       }
+      pi.events.emit(REPLY_EVENT, { nonce, accepted: true });
     } catch (error) {
       // The cause is bounded and never includes notification or review text.
-      rejection = (error instanceof Error ? error.message : String(error)).slice(0, 300);
-    } finally {
-      if (typeof nonce === "string") {
-        pi.events.emit(REPLY_EVENT, rejection === undefined ? { nonce, accepted: true } : { nonce, accepted: false, error: rejection });
-      }
+      const rejection = (error instanceof Error ? error.message : String(error)).slice(0, 300);
+      pi.events.emit(REPLY_EVENT, { nonce, accepted: false, error: rejection });
     }
   }
 
