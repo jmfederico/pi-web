@@ -48,6 +48,7 @@
     "server-plugin-api.d.ts"
   ],
   "scripts": {
+    "predev": "node -e \"require('node:fs').rmSync('dist/.plugins-ready', { force: true })\"",
     "dev": "node scripts/dev-services.mjs dev:sessiond dev:web dev:client",
     "dev:ui": "node scripts/dev-services.mjs dev:web dev:client",
     "dev:sessiond": "node scripts/dev-sessiond.mjs --watch",
