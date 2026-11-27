@@ -5,7 +5,8 @@
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { lintBatches, packageBin, readTypeScriptAreas } from "./typescriptAreas.mjs";
+import { packageBin } from "./packageBin.mjs";
+import { lintBatches, readTypeScriptAreas } from "./typescriptAreas.mjs";
 
 const require = createRequire(import.meta.url);
 const rootDir = fileURLToPath(new URL("..", import.meta.url));

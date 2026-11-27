@@ -2,8 +2,7 @@
 // tsconfig.json is a solution that references smaller area projects, so the
 // typecheck and lint scripts can process one area at a time and keep peak
 // memory bounded by the largest area instead of the whole repository.
-import { readFileSync } from "node:fs";
-import { basename, dirname, relative, resolve } from "node:path";
+import { basename, relative, resolve } from "node:path";
 import ts from "typescript";
 
 /**
@@ -51,17 +50,6 @@ export function lintBatches(areas, maxArgumentLength = 24_000) {
     if (files.length > 0) batches.push({ area: area.name, files });
   }
   return batches;
-}
-
-/**
- * Resolves an executable script from a package manifest path, as returned by
- * `require.resolve("<package>/package.json")`, so it can run with the current Node.
- */
-export function packageBin(manifestPath, binName) {
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  const bin = typeof manifest.bin === "string" ? manifest.bin : manifest.bin?.[binName];
-  if (typeof bin !== "string") throw new Error(`${manifestPath} does not provide the ${binName} executable.`);
-  return resolve(dirname(manifestPath), bin);
 }
 
 function parseConfig(configPath) {

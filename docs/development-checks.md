@@ -43,9 +43,9 @@ The first cached typecheck still pays for a full check; subsequent runs reuse th
 
 Type-aware checks hold a whole TypeScript program in memory. To keep them runnable on small machines and CI runners, the root `tsconfig.json` is a solution that references smaller area projects under `tsconfig/`: production code and tests for the client, server, and plugins, plus build and browser-fixture tooling. Shared compiler options live in `tsconfig.base.json`.
 
-`npm run typecheck` and `npm run lint` run one process per area, so peak memory follows the largest area rather than the whole repository. Type checking uses TypeScript 7 (`tsc`) with two checkers per area. Linting uses Oxlint with type-aware rules, configured in `.oxlintrc.json`. Rules from Oxlint's nursery tier, such as `typescript/no-unnecessary-condition`, are experimental and can report false positives; disable such a report with an `oxlint-disable-next-line` comment that explains why.
+`npm run typecheck` and `npm run lint` run one process per area, so peak memory follows the largest area rather than the whole repository. Type checking uses TypeScript 7 with two checkers per area. Linting uses Oxlint with type-aware rules, configured in `.oxlintrc.json`. Rules from Oxlint's nursery tier, such as `typescript/no-unnecessary-condition`, are experimental and can report false positives; disable such a report with an `oxlint-disable-next-line` comment that explains why.
 
-TypeScript 7 has no programmatic API. The `typescript` dependency is an alias for `@typescript/typescript6`, which provides the TypeScript 6 API to build scripts and tests and the `tsc6` executable.
+TypeScript 7 has no programmatic API. It is installed as `@typescript/native`, and the `typescript` dependency is an alias for `@typescript/typescript6`, which provides the TypeScript 6 API to build scripts and tests. Both packages install a `tsc` executable and npm may link either, so package scripts run TypeScript 7 through `node scripts/tsc.mjs`.
 
 Every checked file must belong to an area. When adding a source directory outside the existing ones, add it to the matching area, or add a new area and reference it from `tsconfig.json`. If one area grows much larger than the others, split it the same way.
 

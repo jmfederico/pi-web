@@ -379,7 +379,7 @@ function fakeSessionDaemon(projects: ProjectService): SessionProxyDaemon & { clo
       if (method === "GET" && path === "/runtime") {
         return { statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify({ component: "sessiond", label: "Session daemon", available: true, capabilities: SESSIOND_RUNTIME_CAPABILITIES }) };
       }
-      if ((method === "POST" && path === "/projects") || (method === "DELETE" && path.startsWith("/projects/"))) {
+      if ((method === "POST" && path === "/projects") || ((method === "PATCH" || method === "DELETE") && path.startsWith("/projects/"))) {
         const response = await daemonApp.inject({ method, url: path, ...(body === undefined ? {} : { payload: JSON.stringify(body), headers: { "content-type": "application/json" } }) });
         return { statusCode: response.statusCode, headers: { "content-type": "application/json" }, body: response.body };
       }

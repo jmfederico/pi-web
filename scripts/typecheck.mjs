@@ -3,7 +3,8 @@
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { packageBin, readTypeScriptAreas } from "./typescriptAreas.mjs";
+import { packageBin } from "./packageBin.mjs";
+import { readTypeScriptAreas } from "./typescriptAreas.mjs";
 
 // Two checkers keep the largest area near 1.2 GB; the TypeScript 7 default of
 // four checkers needs about 1.5 GB for little time saved.
