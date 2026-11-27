@@ -1,5 +1,5 @@
 import { execFile as nodeExecFile, execFileSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -39,6 +39,7 @@ async function fixture(exec?: ServerPluginActivationContextV5["execFile"]) {
   const execFile = vi.fn(exec ?? (({ args }) => {
     if (args?.includes("--is-inside-work-tree") === true) return Promise.resolve(success("true\n"));
     if (args?.includes("--is-bare-repository") === true) return Promise.resolve(success("false\n"));
+    if (args?.includes("--show-toplevel") === true) return Promise.resolve(success(`${main.path}\n`));
     if (args?.includes("for-each-ref") === true) return Promise.resolve(success("refs/heads/main\nrefs/remotes/origin/main\nrefs/heads/main\n"));
     if (args?.includes("--abbrev-ref") === true) return Promise.resolve(success("main\n"));
     return Promise.resolve(success("commit\n"));
@@ -75,7 +76,7 @@ describe("Workflows v5 project peer", () => {
     const f = await fixture();
     expect(plugin.apiVersion).toBe(5);
     await expect(f.request("prepare")).resolves.toEqual({
-      workspaceId: main.id, workspacePath: main.path, branches: ["main", "origin/main"], defaultBase: "main",
+      workspaceId: main.id, workspacePath: main.path, branches: ["main", "origin/main"], defaultBase: "main", manual: null,
     });
     expect(f.list).toHaveBeenCalledWith(project.id, { signal });
     for (const [command] of f.execFile.mock.calls) {
@@ -130,6 +131,27 @@ describe("Workflows v5 project peer", () => {
     await expect(f.request("dispatch", input)).rejects.toThrow();
     expect(f.run).not.toHaveBeenCalled();
     expect(f.execFile).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-absolute destinations and branch options before executing Git", async () => {
+    const f = await fixture();
+    for (const input of [
+      { destination: "relative/worktree", branch: "feature", base: "HEAD" },
+      { destination: main.path, branch: "--force", base: "HEAD" },
+      { destination: main.path, branch: "feature", base: "HEAD", workspaceId: "ignored" },
+    ]) {
+      await expect(f.request("createWorktree", input)).rejects.toThrow();
+    }
+    expect(f.execFile).not.toHaveBeenCalled();
+    expect(f.run).not.toHaveBeenCalled();
+  });
+
+  it("rejects manual creation outside the registered checkout root", async () => {
+    const f = await fixture();
+    await expect(f.request("createWorktree", { destination: main.path, branch: "feature", base: "HEAD" }))
+      .rejects.toThrow("registered at a Git checkout root");
+    expect(f.execFile.mock.calls.some(([command]) => command.args?.[0] === "worktree")).toBe(false);
+    expect(f.run).not.toHaveBeenCalled();
   });
 
   it("rejects wrong scopes and unknown operations", async () => {
@@ -187,7 +209,7 @@ describe("Workflows v5 project peer", () => {
   });
 });
 
-// Real Git owns detached HEAD, bare detection, and revision-option semantics.
+// Real Git owns detached HEAD, bare detection, revision-option and worktree-add semantics.
 const execAsync = promisify(nodeExecFile);
 async function realGit(request: ServerPluginExecFileRequest): Promise<ServerPluginExecFileResult> {
   const env: NodeJS.ProcessEnv = { ...process.env, GIT_DIR: "/poisoned", GIT_WORK_TREE: "/poisoned" };
@@ -199,6 +221,42 @@ async function realGit(request: ServerPluginExecFileRequest): Promise<ServerPlug
     return { ...success(), exitCode: 128, stderr: error instanceof Error ? error.message : String(error) };
   }
 }
+
+it("creates a new branch at the selected commit without starting a session or moving existing branches", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "manual-worktree-test-")));
+  roots.push(root);
+  const repo = join(root, "registered repo");
+  const destination = join(root, "worktree parent", "my checkout");
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) if (key.startsWith("GIT_")) Reflect.deleteProperty(env, key);
+  const gitAt = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, env, encoding: "utf8" }).trim();
+  const git = (...args: string[]) => gitAt(repo, ...args);
+  gitAt(root, "init", "-b", "main", repo);
+  const commit = (message: string) => git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", message);
+  commit("starting point");
+  const baseCommit = git("rev-parse", "HEAD");
+  git("update-ref", "refs/remotes/origin/main", baseCommit);
+  commit("later commit");
+  git("branch", "existing");
+  const existingCommit = git("rev-parse", "refs/heads/existing");
+  const f = await fixture(realGit);
+  f.list.mockResolvedValue([{ ...main, path: repo }]);
+  const scope = { kind: "project", project: { ...project, path: repo } } as const;
+  const base = "refs/remotes/origin/main";
+  await expect(f.request("prepare", null, scope)).resolves.toMatchObject({
+    manual: { startingRefs: ["refs/heads/existing", "refs/heads/main", base] },
+  });
+  for (const branch of ["existing", "@{-1}"]) {
+    await expect(f.request("createWorktree", { destination, branch, base }, scope)).rejects.toThrow("Git command failed");
+    await expect(stat(destination)).rejects.toMatchObject({ code: "ENOENT" });
+  }
+  expect(git("rev-parse", "refs/heads/existing")).toBe(existingCommit);
+  await expect(f.request("createWorktree", { destination, branch: "topic/new", base }, scope)).resolves.toEqual({ path: destination });
+  expect(gitAt(destination, "symbolic-ref", "HEAD")).toBe("refs/heads/topic/new");
+  expect(gitAt(destination, "rev-parse", "HEAD")).toBe(baseCommit);
+  expect(git("rev-parse", "HEAD")).toBe(existingCommit);
+  expect(f.run).not.toHaveBeenCalled();
+});
 
 it("supports detached HEAD and remote branches, rejects missing/malicious bases and bare/non-Git directories", async () => {
   const root = await mkdtemp(join(tmpdir(), "workflows-test-"));

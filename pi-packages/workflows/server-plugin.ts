@@ -1,3 +1,4 @@
+import { isAbsolute, resolve } from "node:path";
 import {
   PI_WEB_HOST_CATALOG_CAPABILITY,
   PI_WEB_HOST_PI_SESSIONS_CAPABILITY,
@@ -32,8 +33,11 @@ const plugin: PiWebServerPluginV5 = {
       peer: {
         async request({ scope, operation, input, signal }) {
           if (scope.kind !== "project") throw new Error("Workflows requires project scope");
-          if (operation !== "prepare" && operation !== "dispatch") throw new Error("Unknown Workflows operation");
+          if (operation !== "prepare" && operation !== "dispatch" && operation !== "createWorktree") {
+            throw new Error("Unknown Workflows operation");
+          }
           const details = operation === "dispatch" ? dispatchInput(input) : undefined;
+          const creation = operation === "createWorktree" ? createWorktreeInput(input) : undefined;
           if (catalog === undefined || sessions === undefined) throw new Error("Workflows has not started");
           // Always discover current authority, including when dispatch follows prepare.
           const workspaces = await catalog.workspaces.list(scope.project.id, { signal });
@@ -48,13 +52,20 @@ const plugin: PiWebServerPluginV5 = {
             || (await git(["rev-parse", "--is-bare-repository"])).trim() !== "false") {
             throw new Error("Main workspace must be a non-bare Git worktree");
           }
+          if (creation !== undefined) {
+            if (!(await isCheckoutRoot(git, scope.project.path, main.path))) {
+              throw new Error("Manual worktree creation requires a project registered at a Git checkout root");
+            }
+            return createWorktree(git, main.path, creation, signal);
+          }
           if (details === undefined) {
-            const refs = await git(["for-each-ref", "--format=%(refname)", "refs/heads/", "refs/remotes/"]);
-            const branches = [...new Set(refs.split(/\r?\n/u).filter(Boolean).map((ref) =>
-              ref.replace(/^refs\/(?:heads|remotes)\//u, "")))].sort();
+            const refs = (await git(["for-each-ref", "--format=%(refname)", "refs/heads/", "refs/remotes/"]))
+              .split(/\r?\n/u).filter(Boolean);
+            const branches = [...new Set(refs.map((ref) => ref.replace(/^refs\/(?:heads|remotes)\//u, "")))].sort();
             const current = (await git(["rev-parse", "--abbrev-ref", "HEAD"])).trim();
             if (current === "") throw new Error("Git returned an empty current branch");
-            return { workspaceId: main.id, workspacePath: main.path, branches, defaultBase: current };
+            const manual = await isCheckoutRoot(git, scope.project.path, main.path) ? { startingRefs: refs } : null;
+            return { workspaceId: main.id, workspacePath: main.path, branches, defaultBase: current, manual };
           }
           await git(["rev-parse", "--verify", "--end-of-options", `${details.base}^{commit}`]);
           signal.throwIfAborted();
@@ -93,6 +104,44 @@ function dispatchInput(input: JsonValue): { base: string; description: string } 
     base: boundedString(Reflect.get(input, "base"), "base", 1024),
     description: boundedString(Reflect.get(input, "description"), "description", 16 * 1024),
   };
+}
+
+interface WorktreeCreation {
+  destination: string;
+  branch: string;
+  base: string;
+}
+
+function createWorktreeInput(input: JsonValue): WorktreeCreation {
+  if (typeof input !== "object" || input === null || Array.isArray(input)
+    || Object.keys(input).some((key) => key !== "destination" && key !== "branch" && key !== "base")) {
+    throw new Error("Create worktree input must contain only destination, branch and base");
+  }
+  const destination = boundedString(Reflect.get(input, "destination"), "destination", 4096);
+  if (!isAbsolute(destination)) throw new Error("Worktree destination must be an absolute path on the project machine");
+  const branch = boundedString(Reflect.get(input, "branch"), "branch", 1024);
+  if (branch.startsWith("-") || branch === "HEAD") throw new Error("Invalid new branch name");
+  return { destination, branch, base: boundedString(Reflect.get(input, "base"), "base", 1024) };
+}
+
+type Git = (args: readonly string[]) => Promise<string>;
+
+async function isCheckoutRoot(git: Git, projectPath: string, workspacePath: string): Promise<boolean> {
+  const root = (await git(["rev-parse", "--show-toplevel"])).replace(/\r?\n$/u, "");
+  return isAbsolute(root) && resolve(root) === resolve(projectPath) && resolve(root) === resolve(workspacePath);
+}
+
+async function createWorktree(git: Git, cwd: string, input: WorktreeCreation, signal: AbortSignal): Promise<JsonValue> {
+  // Check the literal ref: `check-ref-format --branch` can expand @{-1}.
+  await git(["check-ref-format", `refs/heads/${input.branch}`]);
+  const commit = (await git(["rev-parse", "--verify", "--end-of-options", `${input.base}^{commit}`])).trim();
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(commit)) throw new Error("Git returned an invalid starting commit");
+  const destination = resolve(cwd, input.destination);
+  signal.throwIfAborted();
+  // Git owns the atomic branch collision check. Never use -B, --force or a
+  // branch-less add, all of which can change or reuse an existing branch.
+  await git(["worktree", "add", "--no-track", "-b", input.branch, "--", destination, commit]);
+  return { path: destination };
 }
 
 function boundedString(value: unknown, name: string, maxBytes: number): string {
