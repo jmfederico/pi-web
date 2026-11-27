@@ -1980,6 +1980,7 @@ function parsePiWebCommands(value: unknown): PiWebStatusResponse["commands"] {
     ...optionalField("restartWeb", optionalString(record, "restartWeb")),
     ...optionalField("restartSessiond", optionalString(record, "restartSessiond")),
     ...optionalField("status", optionalString(record, "status")),
+    ...optionalField("updatePi", optionalString(record, "updatePi")),
   };
 }
 
@@ -1990,7 +1991,6 @@ function parsePiWebStatusMessage(value: unknown): PiWebStatusMessage {
     severity: parsePiWebStatusSeverity(record["severity"]),
     title: requireString(record, "title"),
     body: requireString(record, "body"),
-    ...optionalField("command", optionalString(record, "command")),
   };
 }
 

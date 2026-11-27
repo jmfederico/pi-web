@@ -255,7 +255,6 @@ describe("Updates plugin panel behavior", () => {
         severity: "info",
         title: "PI WEB update available",
         body: "PI WEB 1.202605.9 is available; installed version is 1.202605.8. Run the update command to update PI WEB and restart its services.",
-        command: update,
       }],
     }));
 
@@ -282,7 +281,6 @@ describe("Updates plugin panel behavior", () => {
         severity: "warning",
         title: "Web/UI service restart needed",
         body: "The Web/UI service is running 1.202605.8, but 1.202605.9 is installed. Restart the service to use the installed version.",
-        command: restartWeb,
       }],
     }));
 
@@ -293,6 +291,25 @@ describe("Updates plugin panel behavior", () => {
     expect(notice?.querySelector("code")).toBeNull();
     // The notice's command shows up exactly once, as the recommended action.
     expect(commandTexts(container).filter((text) => text === restartWeb)).toHaveLength(1);
+  });
+
+  it("runs the recommended Pi update in the maintenance terminal and leaves the restart to the user", async () => {
+    const runCommand = vi.fn<MaintenanceTerminal["runCommand"]>((input) => Promise.resolve(commandRunHandle(input)));
+    const requestRestart = vi.fn<MachineLifecycle["requestRestart"]>(() => Promise.resolve<RestartResult>("launched"));
+    const container = renderPanel(status({
+      commands: { restart: "pi-web restart", updatePi: "pi update" },
+      messages: [{ id: "pi-unsupported", severity: "warning", title: "Pi update recommended", body: "Update Pi, then restart PI WEB." }],
+    }), { open: () => undefined, runCommand }, { lifecycle: { requestRestart } });
+
+    const recommended = container.querySelector(".updates-recommended");
+    expect(recommended?.querySelector("code")?.textContent).toBe("pi update");
+    // Restart stays available as its own action.
+    expect(commandTexts(container)).toContain("pi-web restart");
+    [...(recommended?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((button) => button.textContent === "Run")?.click();
+    await Promise.resolve();
+
+    expect(runCommand.mock.calls.map(([input]) => input.command)).toEqual(["pi update"]);
+    expect(requestRestart).not.toHaveBeenCalled();
   });
 
   it("shows the quiet state without a recommended action when everything is current", () => {
@@ -444,7 +461,6 @@ describe("Updates plugin panel behavior", () => {
         severity: "info",
         title: "PI WEB update available",
         body: "PI WEB 1.202605.9 is available. Run the update command to update PI WEB and restart its services.",
-        command: update,
       }],
     }), { open: () => undefined, runCommand });
 

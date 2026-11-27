@@ -109,6 +109,19 @@ describe("recommendedCommand", () => {
     }))).toEqual({ kind: "restart", services: "web", label: "Restart Web/UI", command: "pi-web-docker --dev restart-web" });
   });
 
+  it("recommends updating Pi only after a PI WEB update and stale restarts", () => {
+    const commands = { update: "pi-web update", restart: "pi-web restart", updatePi: "pi update" };
+    expect(recommendedCommand(status({ commands }))).toEqual({ kind: "updatePi", label: "Update Pi", command: "pi update" });
+    expect(recommendedCommand(status({
+      components: { web: component({ stale: true }), sessiond: component({ component: "sessiond", stale: true }) },
+      commands,
+    }))).toMatchObject({ kind: "restart", services: "both" });
+    expect(recommendedCommand(status({
+      release: { packageName: "@jmfederico/pi-web", updateAvailable: true },
+      commands,
+    }))).toMatchObject({ kind: "update" });
+  });
+
   it("does not fabricate a restart command when one is not configured", () => {
     const result = recommendedCommand(status({
       components: {

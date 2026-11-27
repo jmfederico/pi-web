@@ -1816,6 +1816,8 @@ const catalogs: Record<string, Record<string, string>> = {
     "failed": "Falló la comprobación remota de versiones: {error}",
     "update": "Actualizar PI WEB",
     "updateOptional": "Actualizar",
+    "updatePi": "Actualizar Pi",
+    "updatePiWarning": "Actualizar Pi no reinicia PI WEB. Reinicia todos los servicios en cuanto termine; hasta entonces, las sesiones activas pueden fallar al cargar partes de Pi.",
     "restartAll": "Reiniciar todos",
     "restartWeb": "Reiniciar web/interfaz",
     "restartSessiond": "Reiniciar demonio de sesiones",
