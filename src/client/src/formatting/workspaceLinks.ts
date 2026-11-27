@@ -29,7 +29,7 @@ export function workspaceMarkdownFilePath(href: string, context: MarkdownWorkspa
     return undefined;
   }
   // Reject URL paths containing control characters or platform-specific separators.
-  // eslint-disable-next-line no-control-regex -- Explicitly reject control characters in file references.
+  // oxlint-disable-next-line no-control-regex -- Explicitly reject control characters in file references.
   if (path === "" || /[\\\u0000-\u001f\u007f]/.test(path)) return undefined;
   if (path.startsWith("/")) {
     const prefix = `${trimTrailingSlashes(context.root)}/`;

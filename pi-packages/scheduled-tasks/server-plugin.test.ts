@@ -233,13 +233,13 @@ describe("scheduled task daemon integration", () => {
       const tool = tools.find((tool) => tool.name === `scheduled_tasks_${operation}`);
       if (tool === undefined) throw new Error("Tool missing");
       // The adapter does not use the extension context; real Pi supplies it in hosted sessions.
-      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+      // oxlint-disable-next-line typescript/consistent-type-assertions
       return tool.execute("call", input, signal, undefined, {} as ExtensionToolContext);
     };
     await expect(call("overview")).rejects.toThrow("hosted PI WEB");
     events.on("pi-web:companion-backend:discover", (data) => {
       // This fixture is the host side of the documented in-process discovery envelope.
-      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+      // oxlint-disable-next-line typescript/consistent-type-assertions
       const envelope = data as { pluginId: string; accept: (discover: () => ReturnType<typeof createCompanionBackend>) => void };
       expect(envelope.pluginId).toBe("scheduled-tasks");
       envelope.accept(() => ({ machineId: "local", forScope(scope) {

@@ -36,7 +36,7 @@ export default function relayExtension(pi: ExtensionAPI): void {
       requireRelayLeg(leg);
       // Guard identity before Pi's coercion. Its schema validation checks the
       // remaining fields next; retain the raw object, including unknown keys.
-      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+      // oxlint-disable-next-line typescript/consistent-type-assertions
       return args as Static<typeof DispatchParams>;
     },
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {

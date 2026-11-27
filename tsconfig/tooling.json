@@ -1,0 +1,15 @@
+{
+  "extends": "../tsconfig.base.json",
+  "files": [
+    "../src/client/src/vite-env.d.ts",
+    "../pi-web-plugins/files/assets.d.ts"
+  ],
+  "include": [
+    "../test-fixtures/browser/**/*.ts",
+    "../vite.config.ts",
+    "../vitest.config.ts",
+    "../vitest.windows.config.ts",
+    "../vitest.artifacts.config.ts",
+    "../playwright.config.ts"
+  ]
+}

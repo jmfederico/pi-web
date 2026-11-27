@@ -18,7 +18,7 @@ export function installTerminalRendererFake() {
     }
   }
   // The fake implements only the external rendering boundary exercised here.
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  // oxlint-disable-next-line typescript/consistent-type-assertions
   vi.spyOn(xterm, "Terminal").mockImplementation(FakeTerminal as unknown as typeof Terminal);
   vi.stubGlobal("IntersectionObserver", undefined);
   return terminals;

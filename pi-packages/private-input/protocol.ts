@@ -19,7 +19,7 @@ export interface PrivateInputRecord {
 
 export function recordObject(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Invalid private input request");
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Object guard; individual fields are validated by callers.
+  // oxlint-disable-next-line typescript/consistent-type-assertions -- Object guard; individual fields are validated by callers.
   return value as Record<string, unknown>;
 }
 

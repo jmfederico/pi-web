@@ -32,12 +32,22 @@ Known runtime-read asset owners include the Docker tests under `src/docker/`, `s
 Run the completion checks once against the final changes before committing or handing off a completed code batch. If relevant files change afterward, rerun the affected checks; committing alone does not invalidate an earlier result. For TypeScript code changes, run the relevant tests, lint only the changed TypeScript files, and use the cached whole-project typecheck:
 
 ```sh
-npm exec -- eslint src/shared/themePreference.ts src/shared/themePreference.test.ts
+npm exec -- oxlint src/shared/themePreference.ts src/shared/themePreference.test.ts
 npm run typecheck:cached
 git diff --check
 ```
 
-The first cached typecheck still pays for a full check; subsequent runs reuse `node_modules/.cache/pi-web/typecheck.tsbuildinfo`. Scoped ESLint is type-aware and still loads the TypeScript project, so it belongs at a meaningful checkpoint rather than after every keystroke. Focused tests/watch mode are the innermost loop.
+The first cached typecheck still pays for a full check; subsequent runs reuse the per-area build info under `node_modules/.cache/pi-web/typecheck/`. Scoped Oxlint is type-aware and still loads the TypeScript project for each area the files belong to, so it belongs at a meaningful checkpoint rather than after every keystroke. Focused tests/watch mode are the innermost loop.
+
+### Type-checking areas
+
+Type-aware checks hold a whole TypeScript program in memory. To keep them runnable on small machines and CI runners, the root `tsconfig.json` is a solution that references smaller area projects under `tsconfig/`: production code and tests for the client, server, and plugins, plus build and browser-fixture tooling. Shared compiler options live in `tsconfig.base.json`.
+
+`npm run typecheck` and `npm run lint` run one process per area, so peak memory follows the largest area rather than the whole repository. Type checking uses TypeScript 7 with two checkers per area. Linting uses Oxlint with type-aware rules, configured in `.oxlintrc.json`. Rules from Oxlint's nursery tier, such as `typescript/no-unnecessary-condition`, are experimental and can report false positives; disable such a report with an `oxlint-disable-next-line` comment that explains why.
+
+TypeScript 7 has no programmatic API. It is installed as `@typescript/native`, and the `typescript` dependency is an alias for `@typescript/typescript6`, which provides the TypeScript 6 API to build scripts and tests. Both packages install a `tsc` executable and npm may link either, so package scripts run TypeScript 7 through `node scripts/tsc.mjs`.
+
+Every checked file must belong to an area. When adding a source directory outside the existing ones, add it to the matching area, or add a new area and reference it from `tsconfig.json`. If one area grows much larger than the others, split it the same way.
 
 Documentation/comment-only changes need link/path review, relevant documentation or asset tests, and `git diff --check`; they do not need a local typecheck or whole-project lint. Use [testing policy](testing.md#choose-the-smallest-useful-boundary) to choose the smallest boundary that proves the behavior.
 
@@ -75,7 +85,7 @@ These tests prove browser painting, hit targeting, anchoring, and focus/dismissa
 | Stage | Required checks | Where they run |
 | --- | --- | --- |
 | Local iteration | Focused tests, optionally in watch mode | Developer/agent workspace |
-| Local completion | Relevant tests; scoped ESLint and cached typecheck for TypeScript changes; diff/link checks as applicable | Developer/agent workspace |
+| Local completion | Relevant tests; scoped Oxlint and cached typecheck for TypeScript changes; diff/link checks as applicable | Developer/agent workspace |
 | Commit | `git diff --cached --check` only, through the pre-commit hook | Local workspace after `npm install`/`npm ci` configures `.githooks` |
 | Pull request | Linux: full ordinary suite, static checks, build, artifact checks, and browser contracts. Windows: `npm run test:windows` | GitHub Actions CI |
 | Merge/push to `main` | Same CI checks; installed-package and runtime smoke checks on Linux | GitHub Actions CI |
@@ -84,7 +94,7 @@ These tests prove browser painting, hit targeting, anchoring, and focus/dismissa
 
 Pre-commit checks only the staged diff for whitespace errors and introduced conflict markers. It starts no npm/Node process and runs no typecheck, lint, Knip, tests, or build. Agents choose and run the scoped completion checks explicitly, then commit without repeating them. A successful commit proves hygiene only; CI independently checks the code.
 
-`npm run verify` runs uncached typechecking, whole-project ESLint, Knip unused-code analysis, and the ordinary test suite. Run it locally when a change's affected surface cannot be bounded, validation configuration changes, or a user explicitly requests full verification. A shared helper with identifiable consumers can still use related tests; a final handoff alone is not a reason to rerun every check. CI provides the mandatory broad PR/merge gate.
+`npm run verify` runs uncached typechecking, whole-project Oxlint, Knip unused-code analysis, and the ordinary test suite. Run it locally when a change's affected surface cannot be bounded, validation configuration changes, or a user explicitly requests full verification. A shared helper with identifiable consumers can still use related tests; a final handoff alone is not a reason to rerun every check. CI provides the mandatory broad PR/merge gate.
 
 CI runs these independent jobs in parallel:
 

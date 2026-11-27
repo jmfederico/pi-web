@@ -80,7 +80,7 @@ export function cleanSessionName(value: string): string | undefined {
     .replace(/^\s*(title|session title)\s*:\s*/i, "")
     .replace(/^\s*["'`]+|["'`.]+\s*$/g, "")
     // Provider output and fallback names must remain safe session metadata.
-    // eslint-disable-next-line no-control-regex -- remove unsafe metadata characters.
+    // oxlint-disable-next-line no-control-regex -- remove unsafe metadata characters.
     .replace(/[\u0000-\u001f\u007f]/gu, " ")
     .replace(/\s+/g, " ").trim().slice(0, 60).trim();
   return title === "" ? undefined : title;

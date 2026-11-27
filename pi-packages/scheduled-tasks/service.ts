@@ -121,7 +121,7 @@ function parseThinkingLevel(value: unknown): ThinkingLevel {
 
 function object(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Expected an input object");
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Narrowed JSON transport object.
+  // oxlint-disable-next-line typescript/consistent-type-assertions -- Narrowed JSON transport object.
   return value as Record<string, unknown>;
 }
 function only(args: Record<string, unknown>, allowed: string[]): void {

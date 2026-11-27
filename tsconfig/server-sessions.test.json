@@ -1,0 +1,11 @@
+{
+  "extends": "../tsconfig.base.json",
+  "files": [
+    "../src/client/src/vite-env.d.ts",
+    "../pi-web-plugins/files/assets.d.ts"
+  ],
+  "include": [
+    "../src/server/sessions/**/*.test.ts",
+    "../src/server/sessions/**/*.testSupport.ts"
+  ]
+}

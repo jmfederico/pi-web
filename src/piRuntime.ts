@@ -203,7 +203,7 @@ export async function resolvePiRuntimeImport(specifier: string): Promise<string>
 
 export function loadPiSdk(): Promise<typeof import("@earendil-works/pi-coding-agent")> {
   return sdkPromise ??= resolvePiRuntimeImport(SDK_PACKAGE).then(async (entry) => {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- The selected package supplies the public SDK interface used for development types.
+    // oxlint-disable-next-line typescript/no-unsafe-assignment -- The selected package supplies the public SDK interface used for development types.
     const sdk: typeof import("@earendil-works/pi-coding-agent") = await import(entry);
     return sdk;
   });
@@ -211,7 +211,7 @@ export function loadPiSdk(): Promise<typeof import("@earendil-works/pi-coding-ag
 
 export function loadPiAi(): Promise<typeof import("@earendil-works/pi-ai")> {
   return aiPromise ??= resolvePiRuntimeImport("@earendil-works/pi-ai").then(async (entry) => {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Resolve the AI package from the selected SDK, keeping its runtime identity.
+    // oxlint-disable-next-line typescript/no-unsafe-assignment -- Resolve the AI package from the selected SDK, keeping its runtime identity.
     const ai: typeof import("@earendil-works/pi-ai") = await import(entry);
     return ai;
   });

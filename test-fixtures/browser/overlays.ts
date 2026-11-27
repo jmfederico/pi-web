@@ -231,7 +231,7 @@ window.overlayFixture = {
       localization.registerCatalog({
         id: "notification-pseudo", namespace: "core.sessionNotifications", locale: "de",
         load: () => Promise.resolve(Object.fromEntries(Object.entries(notificationMessages).map(([key, definition]) => {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-enum-assignment -- FormatJS's public printer redeclares the parser's numeric TYPE enum.
+          // oxlint-disable-next-line typescript/no-unsafe-enum-assignment -- FormatJS's public printer redeclares the parser's numeric TYPE enum.
           return [key, printAST(pseudoLocalize(parse(definition.message), false))];
         }))),
       });

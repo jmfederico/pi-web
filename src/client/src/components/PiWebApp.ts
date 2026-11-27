@@ -1169,9 +1169,9 @@ export class PiWebApp extends LitElement {
       machineId: route.machineId ?? "local",
       // Retain omitted raw URL values in patch mode, including unavailable IDs/views.
       // Restoration resolves or explains them, rather than silently dropping them.
-      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+      // oxlint-disable-next-line typescript/consistent-type-assertions
       tool: route.tool as QualifiedContributionId | undefined,
-      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+      // oxlint-disable-next-line typescript/consistent-type-assertions
       view: route.view as AppState["mainView"] | undefined,
       surface: { contributionQuery },
     }, { replace: options?.history === "replace" });
@@ -3546,7 +3546,7 @@ export class PiWebApp extends LitElement {
       navigate: (destination, options) => this.navigate(destination, options),
       selectWorkspaceTool: (tool) => { this.openWorkspaceTool(tool); },
       openTerminal: (options) => { this.openTerminal(options); },
-      // eslint-disable-next-line @typescript-eslint/no-deprecated -- The host keeps implementing the deprecated plugin API alias for existing plugins.
+      // oxlint-disable-next-line typescript/no-deprecated -- The host keeps implementing the deprecated plugin API alias for existing plugins.
       refreshFiles: () => this.invalidateSelectedWorkspaceFiles(),
       refreshWorkspacePanels: (panelId) => this.invalidateWorkspacePanels(panelId),
       refreshAppData: () => this.refreshAppData(),

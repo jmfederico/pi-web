@@ -285,7 +285,7 @@ describe("public server plugin API", () => {
   it("exposes general-purpose byte resources only on v5 peers", () => {
     type Resource = NonNullable<ServerPluginPeerV5["resource"]>;
     type ResourceOnlyIsValid = { resource: Resource } extends ServerPluginPeerV5 ? true : false;
-    // eslint-disable-next-line @typescript-eslint/no-generated-empty-object-type -- Empty peers must remain invalid.
+    // oxlint-disable-next-line typescript/no-generated-empty-object-type -- Empty peers must remain invalid.
     type EmptyPeerIsValid = Record<never, never> extends ServerPluginPeerV5 ? true : false;
     expectTypeOf<ResourceOnlyIsValid>().toEqualTypeOf<true>();
     expectTypeOf<EmptyPeerIsValid>().toEqualTypeOf<false>();
@@ -326,10 +326,10 @@ describe("public server plugin API", () => {
       "fallback" | "probe" | "list" | "prepareRemove" | "integration"
     >();
     expectTypeOf<keyof ServerPluginPeer>().toEqualTypeOf<"request" | "openChannel">();
-    // eslint-disable-next-line @typescript-eslint/no-generated-empty-object-type -- Record<never, never> deliberately probes that an empty scope object satisfies the notice-scope contract.
+    // oxlint-disable-next-line typescript/no-generated-empty-object-type -- Record<never, never> deliberately probes that an empty scope object satisfies the notice-scope contract.
     type EmptyNoticeScopeIsValid = Record<never, never> extends ServerPluginNoticeScope ? true : false;
     type ProjectNoticeScopeIsValid = { readonly projectId: string } extends ServerPluginNoticeScope ? true : false;
-    // eslint-disable-next-line @typescript-eslint/no-generated-empty-object-type -- Record<never, never> deliberately probes that an empty object does not satisfy the peer contract.
+    // oxlint-disable-next-line typescript/no-generated-empty-object-type -- Record<never, never> deliberately probes that an empty object does not satisfy the peer contract.
     type EmptyPeerIsValid = Record<never, never> extends ServerPluginPeer ? true : false;
     type PeerRequest = NonNullable<ServerPluginPeer["request"]>;
     type PeerChannel = NonNullable<ServerPluginPeer["openChannel"]>;

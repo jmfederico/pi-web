@@ -138,7 +138,7 @@ class FakeBrowserSocket extends EventTarget {
 
   asWebSocket(): WebSocket {
     // Deliberately model only the browser methods exercised by the channel helper.
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- structural test double for a browser-only WebSocket boundary.
+    // oxlint-disable-next-line typescript/consistent-type-assertions -- structural test double for a browser-only WebSocket boundary.
     return this as unknown as WebSocket;
   }
 

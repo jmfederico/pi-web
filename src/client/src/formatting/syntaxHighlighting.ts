@@ -64,7 +64,7 @@ export async function runSyntaxHighlighter(highlighter: SyntaxHighlighterContrib
   const cancelled = new Promise<never>((_resolve, reject) => {
     onAbort = () => {
       // AbortSignal deliberately permits non-Error reasons; preserve the caller's reason.
-      // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+      // oxlint-disable-next-line typescript/prefer-promise-reject-errors
       reject(signal.reason);
     };
     signal.addEventListener("abort", onAbort, { once: true });
