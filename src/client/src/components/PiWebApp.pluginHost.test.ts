@@ -2316,7 +2316,7 @@ describe("PiWebApp plugin host", () => {
       messages, mainView: "chat", workspaceTool: TERMINAL_PANEL_ID });
     // Match the external loader's public-to-internal callback boundary; the adapter
     // supplies detached public state before invoking the real package contribution.
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    // oxlint-disable-next-line typescript/consistent-type-assertions
     await appPluginRegistry(app).register({ id: "relay", plugin: adaptPublicPlugin(relayPlugin as unknown as PiWebPlugin) });
     const clearSession = vi.spyOn(sessions, "clearActiveSession");
     const selectSession = vi.spyOn(sessions, "selectSession");

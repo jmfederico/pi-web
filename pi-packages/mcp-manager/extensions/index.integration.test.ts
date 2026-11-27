@@ -122,7 +122,7 @@ async function fixture(options: { project?: boolean; savedTrust?: boolean; piTru
     return new Promise((resolve) => {
       const off = bus.on(MCP_MANAGER_RESPONSE, (data) => {
         // The bus is deliberately untyped; this test consumes only the package response channel.
-        // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+        // oxlint-disable-next-line typescript/consistent-type-assertions
         const response = data as McpManagerResponse;
         if (response.id !== id) return;
         off(); resolve(response);

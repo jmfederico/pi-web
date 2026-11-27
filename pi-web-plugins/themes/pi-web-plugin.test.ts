@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 
 it("ships stable built-in theme identities and pairs without executable entrypoints", async () => {
   // The checked-in manifest is test input, not an untrusted catalog parser boundary.
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+  // oxlint-disable-next-line typescript/no-unsafe-assignment
   const manifest: {
     piWeb: { plugins: [{ id: string; browserRoot: string; module?: string; serverModule?: string;
       themes: { id: string; colorScheme: string; stylesheets: { id: string; path: string }[] }[];

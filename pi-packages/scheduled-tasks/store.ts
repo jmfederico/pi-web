@@ -229,9 +229,9 @@ function decodeExecution(row: Record<string, unknown>): Execution {
   return { ...execution, notices: execution.notices ?? [] };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- The store owns the versioned schema and all JSON writes; callers select the table record type.
+// oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- The store owns the versioned schema and all JSON writes; callers select the table record type.
 function decode<T>(row: Record<string, unknown>): T {
   if (typeof row["body"] !== "string") throw new Error("Invalid scheduled tasks database record");
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Only read plugin-owned records written by this schema version, not transport input.
+  // oxlint-disable-next-line typescript/consistent-type-assertions -- Only read plugin-owned records written by this schema version, not transport input.
   return JSON.parse(row["body"]) as T;
 }

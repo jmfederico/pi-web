@@ -215,7 +215,7 @@ describe("public browser plugin API", () => {
     type PeerChannel = NonNullable<PluginPeer["openChannel"]>;
     type PeerResource = NonNullable<PluginPeer["resourceUrl"]>;
     type ResourceOnlyIsValid = { resourceUrl: PeerResource } extends PluginPeer ? true : false;
-    // eslint-disable-next-line @typescript-eslint/no-generated-empty-object-type -- Record<never, never> deliberately probes that an empty object does not satisfy the peer contract.
+    // oxlint-disable-next-line typescript/no-generated-empty-object-type -- Record<never, never> deliberately probes that an empty object does not satisfy the peer contract.
     type EmptyPeerIsValid = Record<never, never> extends PluginPeer ? true : false;
     type RequestOnlyIsValid = { request: PeerRequest } extends PluginPeer ? true : false;
     type ChannelOnlyIsValid = { openChannel: PeerChannel } extends PluginPeer ? true : false;

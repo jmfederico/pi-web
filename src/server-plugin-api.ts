@@ -75,7 +75,7 @@ export function createCompanionBackend(
 type MaybePromise<T> = T | Promise<T>;
 
 /** Public server entry exported by a package's `serverModule`. */
-// eslint-disable-next-line @typescript-eslint/no-deprecated -- The host intentionally accepts supported legacy entries.
+// oxlint-disable-next-line typescript/no-deprecated -- The host intentionally accepts supported legacy entries.
 export type PiWebServerPlugin = LegacyPiWebServerPlugin | PiWebServerPluginV5;
 
 export interface PiWebServerPluginV5 {

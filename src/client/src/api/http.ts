@@ -58,7 +58,7 @@ export async function request<T>(url: string, parse: (value: unknown) => T, opti
       new Promise<never>((_resolve, reject) => {
         onAbort = () => {
           // AbortSignal reasons may be arbitrary caller-provided values.
-          // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+          // oxlint-disable-next-line typescript/prefer-promise-reject-errors
           reject(signal.reason);
         };
         signal.addEventListener("abort", onAbort, { once: true });

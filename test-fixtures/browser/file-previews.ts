@@ -18,7 +18,7 @@ const registry = new PluginRegistry({
 });
 const filesEntry: unknown = filesPlugin;
 // The real loader validates opaque external callbacks; this fixture supplies a known public-v5 entry at that boundary.
-// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Public-v5 callbacks are adapted to internal services by PluginRegistry at runtime.
+// oxlint-disable-next-line typescript/consistent-type-assertions -- Public-v5 callbacks are adapted to internal services by PluginRegistry at runtime.
 await registry.register({ id: "pi-web.files", plugin: adaptPublicPlugin(filesEntry as InternalPlugin) });
 await registry.register({ id: "pi-web.audio", sourcePluginId: "pi-web.audio", backendRevision: "audio-fixture-r1", pairedResourceVersion: 1, plugin: adaptPublicPlugin(audioPlugin) });
 const viewer = new WorkspaceFileViewer();

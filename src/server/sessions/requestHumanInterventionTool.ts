@@ -19,7 +19,7 @@ export function createRequestHumanInterventionToolDefinition() {
       "Call request_human_intervention alone and last; it marks the session as needing attention and ends the run.",
     ],
     parameters: Parameters,
-    // eslint-disable-next-line @typescript-eslint/require-await -- Tool execution is promise-shaped.
+    // oxlint-disable-next-line typescript/require-await -- Tool execution is promise-shaped.
     async execute(_toolCallId, params) {
       const reason = params.reason.trim();
       if (reason.length === 0) throw new Error("Intervention reason must not be empty");

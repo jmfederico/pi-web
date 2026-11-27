@@ -1,9 +1,10 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setImmediate } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import { PiSessionService } from "./piSessionService.js";
-import { CapturingSessionEventHub, fakeRuntime, runtimeCreator, sessionGateway, sessionRef, testModelRuntime } from "./piSessionService.testSupport.js";
+import { CapturingSessionEventHub, fakeRuntime, runtimeCreator, sessionGateway, sessionRef, testModelRuntime, type RuntimeCreator } from "./piSessionService.testSupport.js";
 
 describe("PiSessionService shared activity status", () => {
   it("publishes changing foreign activity through heartbeats for an already-open idle chat", async () => {
@@ -42,6 +43,53 @@ describe("PiSessionService shared activity status", () => {
     } finally {
       await service.dispose();
       vi.useRealTimers();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a busy session's marker until its teardown finishes when another teardown fails", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-web-activity-dispose-"));
+    const sessionFile = join(dir, "busy.jsonl");
+    const markerFile = `${sessionFile}.pi-web-activity.json`;
+    const failed = fakeRuntime("failed");
+    const busy = fakeRuntime("busy", { sessionFile, isStreaming: true });
+    const hub = new CapturingSessionEventHub();
+    const createAgentRuntime = vi.fn<RuntimeCreator>()
+      .mockResolvedValueOnce(failed.runtime)
+      .mockResolvedValueOnce(busy.runtime);
+    const service = new PiSessionService(hub, {
+      agentDir: dir,
+      modelRuntime: testModelRuntime,
+      sessionManager: sessionGateway([]),
+      createAgentRuntime,
+      heartbeatIntervalMs: 60_000,
+    });
+    let finishBusyTeardown!: () => void;
+    const busyTeardown = new Promise<void>((resolve) => { finishBusyTeardown = resolve; });
+    const failure = new Error("runtime teardown failed");
+    let disposal: Promise<unknown> | undefined;
+    try {
+      await writeFile(sessionFile, '{"type":"session","id":"busy"}\n');
+      await service.start("/workspace");
+      await service.start("/workspace");
+      await service.status(sessionRef("busy"));
+      const ownedMarker = await readFile(markerFile, "utf8");
+      failed.runtime.dispose = () => Promise.reject(failure);
+      busy.runtime.dispose = () => busyTeardown;
+      const clearMediaIndex = vi.spyOn(hub.mediaIndex, "clear");
+      disposal = service.dispose().catch((error: unknown) => error);
+
+      // Let the failing teardown reach the shared cleanup boundary while the other is blocked.
+      await setImmediate();
+      expect(clearMediaIndex).not.toHaveBeenCalled();
+      expect(await readFile(markerFile, "utf8")).toBe(ownedMarker);
+
+      finishBusyTeardown();
+      expect(await disposal).toBe(failure);
+      await expect(readFile(markerFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      finishBusyTeardown();
+      await (disposal ?? service.dispose());
       await rm(dir, { recursive: true, force: true });
     }
   });

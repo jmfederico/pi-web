@@ -48,7 +48,7 @@ afterEach(() => {
 });
 
 // Mirror querySelector's caller-selected element type while failing on missing controls.
-// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters
+// oxlint-disable-next-line typescript/no-unnecessary-type-parameters
 function query<T extends Element>(root: ParentNode, selector: string): T {
   const element = root.querySelector<T>(selector);
   if (element === null) throw new Error(`Missing ${selector}`);

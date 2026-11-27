@@ -150,7 +150,7 @@ function terminalCustomElementOwners(): Map<string, CustomElementConstructor> {
   if (existing instanceof Map) {
     // The Symbol.for key is private to this bundled source and all values are
     // written only by defineCustomElement above.
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Reflect.get cannot preserve this private registry's value type.
+    // oxlint-disable-next-line typescript/consistent-type-assertions -- Reflect.get cannot preserve this private registry's value type.
     return existing as Map<string, CustomElementConstructor>;
   }
   const owners = new Map<string, CustomElementConstructor>();

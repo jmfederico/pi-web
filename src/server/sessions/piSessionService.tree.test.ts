@@ -226,7 +226,7 @@ describe("PiSessionService session-tree behavior", () => {
     const navigateTree = vi.fn<NavigateTree>().mockRejectedValue(new Error("navigation failed"));
     const { service, fake } = treeHarness({ getBranch: () => [selected, notice, leaf] }, { navigateTree });
     const manager = fake.session.sessionManager;
-    // eslint-disable-next-line @typescript-eslint/unbound-method -- Capture identity for restoration assertions, never invoke these methods.
+    // oxlint-disable-next-line typescript/unbound-method -- Capture identity for restoration assertions, never invoke these methods.
     const { branch, resetLeaf } = manager;
     try {
       await expect(service.navigateTree(sessionRef(SESSION_ID), {

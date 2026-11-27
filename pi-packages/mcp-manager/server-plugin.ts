@@ -27,7 +27,7 @@ const plugin: PiWebServerPluginV5 = {
           if (service === undefined) throw new Error("MCP manager has not started");
           const result = await service.request(request);
           // Project only the package's browser-safe DTO. Definitions never leave the server.
-          // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Owned JSON DTO, not untrusted input.
+          // oxlint-disable-next-line typescript/consistent-type-assertions -- Owned JSON DTO, not untrusted input.
           return JSON.parse(JSON.stringify(result)) as JsonValue;
         },
       },

@@ -107,7 +107,7 @@ export function createAskUserToolDefinition(options: AskUserRequestOptions = {})
       "Answers return as a follow-up message identifying unanswered questions.",
     ],
     parameters: AskUserParams,
-    // eslint-disable-next-line @typescript-eslint/require-await -- Tool execution is promise-shaped; validation failures reject before a successful result exists.
+    // oxlint-disable-next-line typescript/require-await -- Tool execution is promise-shaped; validation failures reject before a successful result exists.
     async execute(_toolCallId, params) {
       const ask = createAskUserRequest(params.questions.map(toQuestion), options);
       return {

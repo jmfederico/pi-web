@@ -28,6 +28,7 @@ function browserClipboardTextWriteHost(): ClipboardTextWriteHost {
 }
 
 function browserIsSecureContext(): boolean {
+  // oxlint-disable-next-line typescript/prefer-optional-chain -- typeof guards an undeclared global outside browsers; optional chaining would throw.
   return typeof window !== "undefined" && window.isSecureContext;
 }
 
@@ -62,7 +63,7 @@ function writeClipboardTextWithSelectionFallback(text: string): boolean {
   textarea.setSelectionRange(0, textarea.value.length);
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-deprecated -- Required for HTTP/private-network pages where navigator.clipboard is unavailable.
+    // oxlint-disable-next-line typescript/no-deprecated -- Required for HTTP/private-network pages where navigator.clipboard is unavailable.
     return document.execCommand("copy");
   } catch {
     return false;

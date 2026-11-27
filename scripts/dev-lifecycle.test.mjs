@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,6 +43,39 @@ process.exit(Number(process.argv[3]));
       } catch (error) { result = error.code; }
       expect(result).toBe(exit);
       expect((await readFile(join(cwd, "order"), "utf8")).trim().split("\n")).toEqual(expected);
+    } finally { await rm(cwd, { recursive: true, force: true }); }
+  });
+
+  it.each(["stale", "missing", "not removable as a file"])("only enters the dev group after clearing readiness (%s)", async (marker) => {
+    const cwd = await mkdtemp(join(tmpdir(), "pi-web-dev-readiness-"));
+    try {
+      const { scripts } = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+      // Use the repository's actual prerequisite and observe its effect at
+      // group entry, before any child (including the builder) can run.
+      await writeFile(join(cwd, "package.json"), JSON.stringify({
+        private: true,
+        scripts: { predev: scripts.predev, dev: "node enter.cjs" },
+      }));
+      await writeFile(join(cwd, "enter.cjs"), `
+const fs = require('node:fs');
+fs.writeFileSync('observed-readiness', String(fs.existsSync('dist/.plugins-ready')));
+`);
+      const readyPath = join(cwd, "dist", ".plugins-ready");
+      if (marker === "stale") {
+        await mkdir(join(cwd, "dist"));
+        await writeFile(readyPath, "ready\n");
+      } else if (marker === "not removable as a file") {
+        await mkdir(readyPath, { recursive: true });
+      }
+      const running = exec(process.execPath, [npmCli, "run", "dev"], { cwd, timeout: 15_000 });
+      const observed = () => readFile(join(cwd, "observed-readiness"), "utf8");
+      if (marker === "not removable as a file") {
+        await expect(running).rejects.toMatchObject({ stderr: expect.stringContaining(".plugins-ready") });
+        await expect(observed()).rejects.toMatchObject({ code: "ENOENT" });
+      } else {
+        await running;
+        expect(await observed()).toBe("false");
+      }
     } finally { await rm(cwd, { recursive: true, force: true }); }
   });
 

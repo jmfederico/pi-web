@@ -10,7 +10,7 @@ const stylesCapability: PluginCapability<StylesheetIntegrationCapabilityV1, 1> =
       || !("registerRoot" in value) || typeof value.registerRoot !== "function"
       || !("subscribe" in value) || typeof value.subscribe !== "function"
       || !("createController" in value) || typeof value.createController !== "function") throw new Error("Invalid stylesheet integration capability v1");
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Public host capability validated above.
+    // oxlint-disable-next-line typescript/consistent-type-assertions -- Public host capability validated above.
     return value as StylesheetIntegrationCapabilityV1;
   },
 };

@@ -6,5 +6,5 @@ When a hold is resolved, remove its entry in the same change that upgrades the d
 
 | Dependency | Current | Tried | Status | Reason |
 | --- | --- | --- | --- | --- |
-| `typescript` | `^6.0.3` | `7.0.2` | Retry with a newer `typescript` or `typescript-eslint` | `typescript-eslint` 8.74.0 requires `typescript >=4.8.4 <6.1.0`, so npm cannot resolve the install. |
+| `typescript` | `npm:@typescript/typescript6@^6.0.2` | — | Keep until TypeScript 7 provides a stable programmatic API | Build scripts and tests use the TypeScript 6 API, which TypeScript 7.0 does not provide. TypeScript 7 is installed separately as `@typescript/native` and runs type checking and builds through `scripts/tsc.mjs`. |
 | `typebox` (devDependency) | `1.3.27` | — | Keep in step with Pi | Matches the exact `typebox` version that `@earendil-works/pi-coding-agent` depends on, which is the TypeBox Pi provides to extensions. Change it only together with Pi. The server-only `pi-web-typebox` alias is not covered by this entry. |

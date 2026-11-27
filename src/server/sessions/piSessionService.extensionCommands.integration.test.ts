@@ -306,7 +306,7 @@ describe("message history shortcuts with native Pi", () => {
     const laterId = f.manager.appendMessage(later);
     f.session().refreshContext();
     const originalBytes = await readFile(f.originalFile, "utf8");
-    // eslint-disable-next-line @typescript-eslint/unbound-method -- Capture identity for restoration assertions, never invoke these methods.
+    // oxlint-disable-next-line typescript/unbound-method -- Capture identity for restoration assertions, never invoke these methods.
     const { branch: originalBranch, resetLeaf: originalResetLeaf } = f.manager;
     const request = { targetId: selectedId, expectedLeafId: laterId, retainCheckpoint: true, summary: { mode: "none" as const } };
 
@@ -371,7 +371,7 @@ describe("message history shortcuts with native Pi", () => {
     const noticeId = f.manager.appendCustomMessageEntry("root-checkpoint", "Retain the root notice", true);
     const laterId = f.manager.appendMessage(assistant("Later reply"));
     f.session().refreshContext();
-    // eslint-disable-next-line @typescript-eslint/unbound-method -- Capture identity for restoration assertions, never invoke these methods.
+    // oxlint-disable-next-line typescript/unbound-method -- Capture identity for restoration assertions, never invoke these methods.
     const { branch, resetLeaf } = f.manager;
 
     for (const expectedLeafId of [laterId, noticeId]) {

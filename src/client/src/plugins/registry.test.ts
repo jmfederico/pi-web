@@ -124,7 +124,7 @@ function createContext(statePatch: Partial<AppState> = {}) {
     selectMainView: vi.fn((view: AppState["mainView"]) => { calls.push(`selectMainView:${view}`); }),
     selectWorkspaceTool: vi.fn((tool: QualifiedContributionId) => { calls.push(`selectWorkspaceTool:${tool}`); }),
     openTerminal: vi.fn((options?: { terminalId?: string | undefined }) => { calls.push(`openTerminal:${options?.terminalId ?? ""}`); }),
-    // eslint-disable-next-line @typescript-eslint/no-deprecated -- Fakes implement the full host action contract, including the deprecated alias.
+    // oxlint-disable-next-line typescript/no-deprecated -- Fakes implement the full host action contract, including the deprecated alias.
     refreshFiles: vi.fn(() => { calls.push("refreshFiles"); }),
     refreshWorkspacePanels: vi.fn(() => { calls.push("refreshWorkspacePanels"); }),
     refreshAppData: vi.fn(() => { calls.push("refreshAppData"); }),

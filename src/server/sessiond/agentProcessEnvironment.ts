@@ -56,7 +56,7 @@ export function scrubNonAgentVisibleEnvKeys(env: NodeJS.ProcessEnv): string[] {
   for (const key of scrubbed) {
     // process.env is a dynamic key/value bag; deleting the daemon-only keys is
     // the whole point of the scrub, and the keys cannot be known statically.
-    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+    // oxlint-disable-next-line typescript/no-dynamic-delete
     delete env[key];
   }
   return scrubbed.sort();
