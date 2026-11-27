@@ -171,7 +171,7 @@ describe("createSubsessionToolDefinitions", () => {
 
     expect(spawnTool.parameters).toMatchObject({
       properties: {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- stringMatching yields `any` against the loosely typed tool schema.
+        // oxlint-disable-next-line typescript/no-unsafe-assignment -- stringMatching yields `any` against the loosely typed tool schema.
         model: { description: expect.stringMatching(/provider\/model-id.*only when instructed.*specific model.*choose an appropriate one.*omit it to inherit.*unknown value is rejected/si) },
       },
     });
@@ -205,7 +205,7 @@ describe("createSubsessionToolDefinitions", () => {
   it("spawn_subsession makes thinking overrides instruction-only and rejects invalid levels in the tool schema", () => {
     const { spawn: tool } = tools({});
     expect(tool.parameters).toMatchObject({ properties: { thinkingLevel: {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- asymmetric matcher against the tool schema.
+      // oxlint-disable-next-line typescript/no-unsafe-assignment -- asymmetric matcher against the tool schema.
       description: expect.stringMatching(/only when instructed.*specific thinking level.*choose an appropriate one.*omit it to inherit.*clamped/),
     } } });
     expect(Check(tool.parameters, { prompt: "work" })).toBe(true);

@@ -11,7 +11,7 @@ export default defineConfig({
       formats: ["es"],
       fileName: () => "extensions/index.js",
     },
-    rollupOptions: { external: [/^node:/u, "@earendil-works/pi-coding-agent", "typebox"] },
+    rolldownOptions: { external: [/^node:/u, "@earendil-works/pi-coding-agent", "typebox"] },
     target: "es2022",
     minify: false,
   },

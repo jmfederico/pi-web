@@ -330,13 +330,13 @@ export function stubReadonlySessionManager(
  * `ExtensionToolContext` surface which extends `ExtensionContext` with
  * `tools` and `executeTool`, and adds ui, mode, signal, etc.
  */
-// eslint-disable @typescript-eslint/consistent-type-assertions
+// oxlint-disable typescript/consistent-type-assertions
 export function stubExtensionToolContext(
   patch: { sessionManager?: Partial<LocalReadonlySessionManager> } & Record<string, unknown> = {},
 ): import("../../piSdk.js").ExtensionToolContext {
   const { sessionManager, model, thinkingLevel, ...rest } = patch;
   // @ts-expect-error -- pi 0.99+ ExtensionToolContext uses unique-symbol-based TranscriptContext from a nested pi-coding-agent dependency.
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  // oxlint-disable-next-line typescript/consistent-type-assertions
   return {
     ui: {},
     mode: "tui",

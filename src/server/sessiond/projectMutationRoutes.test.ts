@@ -4,7 +4,7 @@ import type { ProjectService } from "../projects/projectService.js";
 import { registerProjectMutationRoutes } from "./projectMutationRoutes.js";
 
 let app: FastifyInstance;
-const projects = { add: vi.fn<ProjectService["add"]>(), close: vi.fn<ProjectService["close"]>() };
+const projects = { add: vi.fn<ProjectService["add"]>(), rename: vi.fn<ProjectService["rename"]>(), close: vi.fn<ProjectService["close"]>() };
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -39,6 +39,28 @@ describe("daemon project mutations", () => {
     const response = await app.inject({ method: "POST", url: "/projects", payload: { path: "/repo" } });
     expect(response.statusCode).toBe(status);
     expect(response.json()).toEqual({ error: error.message });
+  });
+
+  it("delegates rename and returns the project", async () => {
+    const project = { id: "project 1", name: "Billing", path: "/repo", createdAt: "2026-01-01T00:00:00.000Z" };
+    projects.rename.mockResolvedValue(project);
+    const response = await app.inject({ method: "PATCH", url: "/projects/project%201", payload: { name: "Billing" } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(project);
+    expect(projects.rename).toHaveBeenCalledExactlyOnceWith("project 1", "Billing");
+  });
+
+  it.each([{}, { name: 3 }, { name: null }])("rejects invalid rename input %j before calling the service", async (payload) => {
+    const response = await app.inject({ method: "PATCH", url: "/projects/project-1", payload });
+    expect(response.statusCode).toBe(400);
+    expect(projects.rename).not.toHaveBeenCalled();
+  });
+
+  it.each([["Project not found", 404], ["Catalog unreadable", 500]])("maps rename error %s to %s", async (message, status) => {
+    projects.rename.mockRejectedValue(new Error(message));
+    const response = await app.inject({ method: "PATCH", url: "/projects/project-1", payload: { name: "Billing" } });
+    expect(response.statusCode).toBe(status);
+    expect(response.json()).toEqual({ error: message });
   });
 
   it("delegates close and confirms completion", async () => {

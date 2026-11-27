@@ -188,7 +188,7 @@ function createRuntimeContext(overrides: Partial<PluginRuntimeContextV5> = {}): 
     selectMainView: vi.fn(),
     selectWorkspaceTool: vi.fn(),
     openTerminal: vi.fn(),
-    // eslint-disable-next-line @typescript-eslint/no-deprecated -- Fakes implement the full host action contract, including the deprecated alias.
+    // oxlint-disable-next-line typescript/no-deprecated -- Fakes implement the full host action contract, including the deprecated alias.
     refreshFiles: vi.fn(),
     refreshWorkspacePanels: vi.fn(),
     refreshAppData: vi.fn(),

@@ -13,6 +13,7 @@ import type { AutocompleteMenu } from "./AutocompleteMenu";
 afterEach(() => {
   document.body.replaceChildren();
   localStorage.clear();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -98,6 +99,68 @@ describe("PromptEditor completion reset lifecycle", () => {
     expect(view.state.doc.toString()).toBe("Hello");
   });
 
+  it("starts the command request immediately, shares it while in flight, and then filters locally", async () => {
+    let resolveCommands!: (commands: SlashCommand[]) => void;
+    const pending = new Promise<SlashCommand[]>((resolve) => { resolveCommands = resolve; });
+    const commands = vi.spyOn(api, "commands").mockReturnValue(pending);
+    const editor = new PromptEditor();
+    editor.sessionId = "session-a";
+    editor.cwd = "/repo";
+    document.body.append(editor);
+    await editor.updateComplete;
+    editDocument(editor, "/");
+    expect(commands).toHaveBeenCalledOnce();
+    editDocument(editor, "/t");
+    editDocument(editor, "/tre");
+    expect(commands).toHaveBeenCalledOnce();
+    resolveCommands([{ name: "tree", source: "builtin" }, { name: "trim", source: "prompt" }]);
+    await pending;
+    await Promise.resolve();
+    await editor.updateComplete;
+    expect(completionMenu(editor).items.map((item) => item.insertText)).toEqual(["/tree"]);
+
+    editDocument(editor, "/tri");
+    await editor.updateComplete;
+    expect(completionMenu(editor).items).toEqual([
+      { kind: "command", replaceFrom: 0, replaceTo: 4, insertText: "/trim", detail: "prompt" },
+    ]);
+    expect(commands).toHaveBeenCalledOnce();
+  });
+
+  it("reuses the command list across searches and refreshes it only on a new search after expiry", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(0);
+    const commands = vi.spyOn(api, "commands")
+      .mockResolvedValueOnce([{ name: "tree", source: "builtin" }])
+      .mockResolvedValueOnce([{ name: "trim", source: "prompt" }]);
+    const editor = new PromptEditor();
+    editor.sessionId = "session-a";
+    editor.cwd = "/repo";
+    document.body.append(editor);
+    await editor.updateComplete;
+    editDocument(editor, "/tr");
+    await vi.waitFor(() => {
+      expect(completionMenu(editor).items.map((item) => item.insertText)).toEqual(["/tree"]);
+    });
+
+    vi.setSystemTime(30_000);
+    editDocument(editor, "");
+    editDocument(editor, "/t");
+    await editor.updateComplete;
+    expect(completionMenu(editor).items.map((item) => item.insertText)).toEqual(["/tree"]);
+    expect(commands).toHaveBeenCalledOnce();
+
+    vi.setSystemTime(61_000);
+    editDocument(editor, "/tr");
+    expect(commands).toHaveBeenCalledOnce();
+    editDocument(editor, "");
+    editDocument(editor, "/tr");
+    expect(commands).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => {
+      expect(completionMenu(editor).items.map((item) => item.insertText)).toEqual(["/trim"]);
+    });
+  });
+
   it.each(["document", "session", "machine"] as const)("invalidates an in-flight command request when the %s changes to a no-trigger draft", async (change) => {
     let resolveCommands!: (commands: SlashCommand[]) => void;
     const pending = new Promise<SlashCommand[]>((resolve) => { resolveCommands = resolve; });
@@ -121,7 +184,6 @@ describe("PromptEditor completion reset lifecycle", () => {
 
     resolveCommands([{ name: "tree", source: "builtin" }]);
     await pending;
-    // Allow the real async refresh continuation to apply or discard its response.
     await Promise.resolve();
     expect(await editor.updateComplete).toBe(true);
     await completionMenu(editor).updateComplete;

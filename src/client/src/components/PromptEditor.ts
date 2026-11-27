@@ -9,7 +9,7 @@ import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, html, nothing, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import { api, DEFAULT_WORKSPACE_ATTACHMENTS_FOLDER, type FileSuggestion, type PromptAttachment, type SessionModel, type SessionStatus, type SlashCommand } from "../api";
-import type { PromptAttachmentDelivery } from "../../../shared/apiTypes";
+import type { PromptAttachmentDelivery, SessionRef } from "../../../shared/apiTypes";
 import { capturePromptAttachments, effectivePromptAttachmentDelivery, isInlinePromptAttachment, promptAttachmentsCanUseInlineDelivery } from "../promptAttachmentCapture";
 import { inputModeForDraft, inputModesEqual, type InputMode } from "../inputModes";
 import { machineSessionKey } from "../machineKeys";
@@ -27,6 +27,12 @@ import { renderAttachIcon, renderCameraIcon, renderPhotosIcon, renderSendIcon, r
 import { AnchoredPopupController } from "./anchoredPopup";
 import { thinkingGauge, thinkingLevelLabel } from "../../../shared/thinkingLevels";
 import "./AutocompleteMenu";
+
+const COMMAND_COMPLETION_CACHE_MS = 60_000;
+
+interface CommandCompletionLookup {
+  result?: { commands: SlashCommand[]; expiresAt: number };
+}
 
 function shouldShowAttachSourceMenu(): boolean {
   // Android needs an image-only input to offer photo-library sources. Other
@@ -117,6 +123,8 @@ export class PromptEditor extends LitElement {
   });
   private attachmentSeq = 0;
   private requestVersion = 0;
+  private commandCompletionLookup: CommandCompletionLookup | undefined;
+  private commandCompletionActive = false;
   private editor: EditorView | undefined;
   private editorLabelsDirty = true;
   private readonly editorLabelsCompartment = new Compartment();
@@ -129,8 +137,11 @@ export class PromptEditor extends LitElement {
   private focusWhenReady = false;
 
   protected override willUpdate(changed: PropertyValues<this>) {
-    if (this.busy || changed.has("sessionId") || changed.has("machineId")) this.attachSourceOpen = false;
-    if (!changed.has("sessionId") && !changed.has("machineId")) return;
+    const conversationChanged = changed.has("sessionId") || changed.has("machineId");
+    if (this.busy || conversationChanged) this.attachSourceOpen = false;
+    if (conversationChanged || changed.has("cwd")) this.commandCompletionLookup = undefined;
+    if (conversationChanged || (this.commandCompletionActive && (changed.has("cwd") || this.disabled))) this.closeCompletions();
+    if (!conversationChanged) return;
     const previousSessionId = changed.has("sessionId") ? changed.get("sessionId") : this.sessionId;
     const previousMachineId = changed.has("machineId") ? changed.get("machineId") : this.machineId;
     const previousKey = draftStorageKey(previousMachineId, previousSessionId);
@@ -144,8 +155,6 @@ export class PromptEditor extends LitElement {
     this.attachmentError = undefined;
     this.chipError = undefined;
     this.currentInputMode = inputModeForDraft(this.draft);
-    this.completions = [];
-    this.selectedIndex = 0;
   }
 
   protected override shouldUpdate(changed: PropertyValues<this>): boolean {
@@ -196,6 +205,8 @@ export class PromptEditor extends LitElement {
     this.mobilePromptEnterMedia?.removeEventListener("change", this.handleShortcutMediaChange);
     this.attachSourceOpen = false;
     this.focusWhenReady = false;
+    this.closeCompletions();
+    this.commandCompletionLookup = undefined;
     this.editor?.destroy();
     this.editor = undefined;
     super.disconnectedCallback();
@@ -271,10 +282,8 @@ export class PromptEditor extends LitElement {
 
     // Invalidate completion requests started for either the previous document or
     // the replacement dispatch, then return the editor to a clean completion state.
-    this.requestVersion += 1;
+    this.closeCompletions();
     this.currentInputMode = inputModeForDraft(text);
-    this.completions = [];
-    this.selectedIndex = 0;
   }
 
   /** Get the underlying CM6 EditorView, or undefined if not yet mounted. */
@@ -438,7 +447,10 @@ export class PromptEditor extends LitElement {
           EditorView.contentAttributes.of((view) => inputAssistanceContentAttributes(view.state.sliceDoc(0, view.state.selection.main.head))),
           EditorView.domEventHandlers({
             keyup: (event) => this.handleEditorKeyUp(event),
-            blur: () => this.resetEditorModifierState(),
+            blur: () => {
+              if (this.commandCompletionActive) this.closeCompletions();
+              return this.resetEditorModifierState();
+            },
           }),
           this.editorLabelsCompartment.of(this.editorLabels()),
           promptArgumentHintExtension,
@@ -503,25 +515,14 @@ export class PromptEditor extends LitElement {
     const trigger = this.currentTrigger();
     const version = ++this.requestVersion;
     this.selectedIndex = 0;
-    if (trigger === undefined) {
-      if (this.completions.length > 0) this.completions = [];
+    if (trigger?.kind === "command" && !this.disabled && this.sessionId !== undefined && this.sessionId !== "" && this.cwd !== undefined && this.cwd !== "") {
+      await this.refreshCommandCompletions(trigger, { id: this.sessionId, cwd: this.cwd }, this.machineId);
       return;
     }
-    if (trigger.kind === "command" && this.sessionId !== undefined && this.sessionId !== "" && this.cwd !== undefined && this.cwd !== "") {
-      const commands = await api.commands({ id: this.sessionId, cwd: this.cwd }, this.machineId).catch(emptySlashCommands);
-      if (version !== this.requestVersion) return;
-      this.completions = commands
-        .filter((command) => command.name.toLowerCase().includes(trigger.query.toLowerCase()))
-        .map((command) => ({
-          kind: "command",
-          replaceFrom: trigger.from,
-          replaceTo: trigger.to,
-          insertText: `/${command.name}`,
-          detail: command.source,
-          ...(command.description === undefined ? {} : { description: command.description }),
-          ...(command.argumentHint === undefined ? {} : { argumentHint: command.argumentHint }),
-        }));
-    } else if (trigger.kind === "file" && this.projectId !== undefined && this.workspaceId !== undefined) {
+    this.commandCompletionActive = false;
+    if (this.completions.length > 0 && (trigger === undefined || trigger.kind === "command" || this.completions[0]?.kind === "command")) this.completions = [];
+    if (trigger === undefined) return;
+    if (trigger.kind === "file" && this.projectId !== undefined && this.workspaceId !== undefined) {
       const files = await api.files(trigger.query, { scope: trigger.fileScope, machineId: this.machineId, projectId: this.projectId, workspaceId: this.workspaceId }).catch(emptyFileSuggestions);
       if (version !== this.requestVersion) return;
       this.completions = files
@@ -549,6 +550,54 @@ export class PromptEditor extends LitElement {
     }
   }
 
+  private async refreshCommandCompletions(trigger: Extract<PromptCompletionTrigger, { kind: "command" }>, session: SessionRef, machineId: string) {
+    const cached = this.commandCompletionLookup?.result;
+    // Check freshness when a search starts, not while the user is typing.
+    if (!this.commandCompletionActive && cached !== undefined && Date.now() >= cached.expiresAt) {
+      this.commandCompletionLookup = undefined;
+    }
+    this.commandCompletionActive = true;
+    const existing = this.commandCompletionLookup;
+    if (existing?.result !== undefined) {
+      this.showCommandCompletions(trigger, existing.result.commands);
+      return;
+    }
+    if (this.completions.length > 0) this.completions = [];
+    if (existing !== undefined) return; // Share the in-flight list request.
+
+    const lookup: CommandCompletionLookup = {};
+    this.commandCompletionLookup = lookup;
+    await this.loadCommandCompletions(lookup, session, machineId);
+  }
+
+  private async loadCommandCompletions(lookup: CommandCompletionLookup, session: SessionRef, machineId: string) {
+    const commands = await api.commands(session, machineId).catch(() => undefined);
+    if (lookup !== this.commandCompletionLookup) return;
+    lookup.result = {
+      commands: commands ?? [],
+      // A failure retries on the next search; a successful empty list is cached.
+      expiresAt: Date.now() + (commands === undefined ? 0 : COMMAND_COMPLETION_CACHE_MS),
+    };
+    if (!this.commandCompletionActive) return;
+    const latest = this.currentTrigger();
+    if (latest?.kind === "command") this.showCommandCompletions(latest, lookup.result.commands);
+  }
+
+  private showCommandCompletions(trigger: Extract<PromptCompletionTrigger, { kind: "command" }>, commands: SlashCommand[]) {
+    const query = trigger.query.toLowerCase();
+    this.completions = commands
+      .filter((command) => command.name.toLowerCase().includes(query))
+      .map((command) => ({
+        kind: "command",
+        replaceFrom: trigger.from,
+        replaceTo: trigger.to,
+        insertText: `/${command.name}`,
+        detail: command.source,
+        ...(command.description === undefined ? {} : { description: command.description }),
+        ...(command.argumentHint === undefined ? {} : { argumentHint: command.argumentHint }),
+      }));
+  }
+
   private currentTrigger(): PromptCompletionTrigger | undefined {
     return detectPromptCompletionTrigger(this.draft, this.editor?.state.selection.main.head ?? this.draft.length);
   }
@@ -560,12 +609,12 @@ export class PromptEditor extends LitElement {
   }
 
   private closeCompletions(): boolean {
-    // Dismissal also invalidates loads started while the previous menu was
-    // visible, so a late response cannot reopen it after focus moved away.
+    const handled = this.completions.length > 0 || (this.commandCompletionActive && this.commandCompletionLookup?.result === undefined);
+    this.commandCompletionActive = false;
     this.requestVersion += 1;
-    if (!this.completions.length) return false;
-    this.completions = [];
-    return true;
+    if (this.completions.length > 0) this.completions = [];
+    this.selectedIndex = 0;
+    return handled;
   }
 
   /** The capture-phase app dispatcher must leave composer-owned keys to CodeMirror. */
@@ -711,7 +760,7 @@ export class PromptEditor extends LitElement {
       clearDraft(key);
       clearStagedAttachments(key);
     }
-    this.completions = [];
+    this.closeCompletions();
     this.attachments = [];
     this.attachmentError = undefined;
     // `draft` is not reactive, so the cleared text will not flow to CodeMirror
@@ -739,10 +788,6 @@ function draftStorageKey(machineId: unknown, sessionId: unknown): string | undef
   if (typeof machineId !== "string" || machineId === "") return undefined;
   if (typeof sessionId !== "string" || sessionId === "") return undefined;
   return machineSessionKey(machineId, sessionId);
-}
-
-function emptySlashCommands(): SlashCommand[] {
-  return [];
 }
 
 function emptyFileSuggestions(): FileSuggestion[] {

@@ -48,10 +48,11 @@
     "server-plugin-api.d.ts"
   ],
   "scripts": {
+    "predev": "node -e \"require('node:fs').rmSync('dist/.plugins-ready', { force: true })\"",
     "dev": "node scripts/dev-services.mjs dev:sessiond dev:web dev:client",
     "dev:ui": "node scripts/dev-services.mjs dev:web dev:client",
     "dev:sessiond": "node scripts/dev-sessiond.mjs --watch",
-    "dev:web": "tsc -p tsconfig.plugins.json && node scripts/dev-web.mjs",
+    "dev:web": "node scripts/tsc.mjs -p tsconfig.plugins.json && node scripts/dev-web.mjs",
     "dev:server": "npm run dev:web",
     "predev:client": "npm run generate:material-icons",
     "dev:client": "node scripts/dev-client.mjs --host 0.0.0.0",
@@ -59,16 +60,16 @@
     "build:internal": "node scripts/build-internal-packages.mjs",
     "generate:material-icons": "node scripts/import-material-file-icons.mjs",
     "prebuild": "npm run generate:material-icons",
-    "build": "npm run clean && tsc -p tsconfig.build.json && node scripts/build-launchers.mjs && npm run build:plugin-api && npm run build:plugins && vite build",
-    "build:plugin-api": "tsc -p tsconfig.plugin-api.json",
-    "build:plugins": "tsc -p tsconfig.plugins.json && node scripts/build-plugins.mjs",
+    "build": "npm run clean && node scripts/tsc.mjs -p tsconfig.build.json && node scripts/build-launchers.mjs && npm run build:plugin-api && npm run build:plugins && vite build",
+    "build:plugin-api": "node scripts/tsc.mjs -p tsconfig.plugin-api.json",
+    "build:plugins": "node scripts/tsc.mjs -p tsconfig.plugins.json && node scripts/build-plugins.mjs",
     "capture:screenshots": "node scripts/capture-screenshots.mjs",
     "pretypecheck": "npm run generate:material-icons",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "node scripts/typecheck.mjs",
     "pretypecheck:cached": "npm run generate:material-icons",
-    "typecheck:cached": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/pi-web/typecheck.tsbuildinfo",
+    "typecheck:cached": "node scripts/typecheck.mjs --cached",
     "knip": "knip",
-    "lint": "eslint \"src/**/*.ts\" \"extensions/**/*.ts\" \"pi-web-plugins/**/*.ts\" \"pi-packages/**/*.ts\" \"internal-packages/**/*.ts\" \"test-fixtures/browser/**/*.ts\" vite.config.ts vitest.config.ts vitest.windows.config.ts vitest.artifacts.config.ts playwright.config.ts",
+    "lint": "node scripts/lint.mjs",
     "pretest": "npm run generate:material-icons",
     "test": "vitest run --config vitest.config.ts",
     "pretest:windows": "npm run generate:material-icons",
@@ -93,14 +94,14 @@
   },
   "dependencies": {
     "@fastify/compress": "^9.3.0",
-    "@fastify/static": "^10.1.12",
+    "@fastify/static": "^11.0.0",
     "@fastify/websocket": "^11.3.7",
     "@formatjs/icu-messageformat-parser": "3.5.23",
     "cron-parser": "^5.10.7",
     "css-tree": "^3.2.1",
     "diff": "^9.0.0",
     "fastify": "^5.12.8",
-    "image-size": "^2.1.0",
+    "image-size": "^2.2.0",
     "import-meta-resolve": "^4.2.0",
     "intl-messageformat": "12.2.1",
     "lit": "^3.3.3",
@@ -119,29 +120,28 @@
     "@codemirror/lang-markdown": "^6.5.2",
     "@codemirror/language": "^6.13.1",
     "@codemirror/state": "^6.7.6",
-    "@codemirror/view": "6.44.0",
+    "@codemirror/view": "6.44.2",
     "@earendil-works/pi-agent-core": "^1.6.1",
     "@earendil-works/pi-ai": "^1.6.1",
     "@earendil-works/pi-coding-agent": "^1.6.1",
-    "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.65.1",
     "@types/css-tree": "^3.2.0",
     "@types/node": "^26.6.11",
     "@types/ws": "^8.18.2",
+    "@typescript/native": "npm:typescript@^7.0.2",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "dompurify": "^3.5.0",
-    "eslint": "^10.15.0",
-    "globals": "^17.14.0",
     "happy-dom": "^21.0.4",
     "highlight.js": "^11.12.0",
     "knip": "^6.48.0",
     "mermaid": "^12.3.0",
+    "oxlint": "^1.95.0",
+    "oxlint-tsgolint": "^7.0.2009",
     "tsx": "^4.23.15",
     "typebox": "1.3.27",
-    "typescript": "^6.0.3",
-    "typescript-eslint": "^8.74.0",
-    "vite": "^8.3.8",
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "vite": "^8.4.0",
     "vitest": "^5.1.2"
   },
   "publishConfig": {
@@ -165,9 +165,15 @@
     "@earendil-works/pi-coding-agent": "*"
   },
   "peerDependenciesMeta": {
-    "@earendil-works/pi-agent-core": { "optional": true },
-    "@earendil-works/pi-ai": { "optional": true },
-    "@earendil-works/pi-coding-agent": { "optional": true }
+    "@earendil-works/pi-agent-core": {
+      "optional": true
+    },
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
   },
   "keywords": [
     "pi-package",

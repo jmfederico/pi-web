@@ -24,7 +24,7 @@ export function relayIdentityFromMetadata(metadata: SessionUiMetadata | undefine
 }
 
 export function isRelayPacketPath(value: string): boolean {
-  // eslint-disable-next-line no-control-regex -- packet paths must not contain control characters.
+  // oxlint-disable-next-line no-control-regex -- packet paths must not contain control characters.
   return value.length > 0 && value.length <= 4096 && !/[\\\u0000-\u001f\u007f]/u.test(value)
     && value.split("/").every((segment) => segment !== "" && segment !== "." && segment !== ".." && segment === segment.trim());
 }

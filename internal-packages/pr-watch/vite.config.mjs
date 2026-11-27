@@ -11,7 +11,7 @@ export default defineConfig({
       formats: ["es"],
       fileName: () => "server-plugin.js",
     },
-    rollupOptions: { external: [/^node:/u] },
+    rolldownOptions: { external: [/^node:/u] },
     target: "node22",
     minify: false,
   },

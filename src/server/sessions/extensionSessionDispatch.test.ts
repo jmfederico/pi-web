@@ -41,7 +41,7 @@ async function registerDispatch(deps: Partial<Parameters<typeof createExtensionS
     },
   };
   // The factory only needs these registration methods; a full ExtensionAPI fake would obscure the seam.
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  // oxlint-disable-next-line typescript/consistent-type-assertions
   await createExtensionSessionDispatch("/repos/a", { isEnabled: () => true, ...deps })(api as unknown as ExtensionAPI);
 
   function emit(envelope: unknown): void {

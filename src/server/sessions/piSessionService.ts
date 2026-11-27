@@ -1597,20 +1597,25 @@ export class PiSessionService implements SessionRouteService {
     this.subsessionNotifyArmed.clear();
     this.subsessionInboxes.clear();
     this.notificationStore.clearAll("service-dispose");
-    await Promise.all(activeSessions.map(async (active) => {
-      active.unsubscribe();
-      active.runtime.setRebindSession(undefined);
-      this.workspaceActivity?.removeSession(active.runtime.session.sessionId, active.runtime.session.sessionManager.getCwd());
-      try {
-        await this.abortSessionOperations(active.runtime.session);
-      } finally {
-        await active.runtime.dispose();
+    try {
+      const teardowns = await Promise.allSettled(activeSessions.map(async (active) => {
+        active.unsubscribe();
+        active.runtime.setRebindSession(undefined);
+        this.workspaceActivity?.removeSession(active.runtime.session.sessionId, active.runtime.session.sessionManager.getCwd());
+        try {
+          await this.abortSessionOperations(active.runtime.session);
+        } finally {
+          await active.runtime.dispose();
+        }
+      }));
+      for (const teardown of teardowns) {
+        if (teardown.status === "rejected") throw teardown.reason;
       }
-    })).finally(async () => {
+    } finally {
       this.extensionCommandExecution.disable();
       this.events.mediaIndex.clear();
       await this.activityMarker.dispose();
-    });
+    }
     await this.publishUnreadMutations([]);
   }
 
@@ -6499,7 +6504,7 @@ async function navigateTreeRetainingCustomMessage(
   navigate: () => ReturnType<NonNullable<PiAgentSession["navigateTree"]>>,
 ): ReturnType<NonNullable<PiAgentSession["navigateTree"]>> {
   if (parentId !== null && typeof parentId !== "string") throw new Error("This checkpoint has no valid history parent");
-  // eslint-disable-next-line @typescript-eslint/unbound-method -- Restore exact identities; calls below explicitly bind the manager.
+  // oxlint-disable-next-line typescript/unbound-method -- Restore exact identities; calls below explicitly bind the manager.
   const { branch, resetLeaf } = manager;
   let pending = true;
   const restore = () => {

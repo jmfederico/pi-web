@@ -5,8 +5,10 @@ import { WebSocket } from "ws";
 
 export async function oversizedFrame(url, revision, terminalId, phase, limit, receiver, timeoutMs = 5_000) {
   // Correlate receiver evidence to this connection, never a preceding probe.
-  const probe = `smokeProbe=${randomUUID()}`;
-  const socket = new WebSocket(`${url}?${probe}`);
+  // The session daemon adopts a UUID v4 x-request-id as its request ID; URLs
+  // are deliberately absent from its logs.
+  const probe = randomUUID();
+  const socket = new WebSocket(url, { headers: { "x-request-id": probe } });
   const cancellation = new AbortController();
   let timeout;
   let readyReceived = false;
@@ -51,8 +53,7 @@ async function sizeRejection(receiver, probe, phase, signal) {
     const logs = receiver.output.split("\n").flatMap(line => {
       try { return [JSON.parse(line)]; } catch { return []; }
     });
-    const request = logs.find(entry => entry.req?.url?.endsWith(`?${probe}`));
-    if (request && logs.some(entry => entry.reqId === request.reqId
+    if (logs.some(entry => entry.reqId === probe
       && entry.msg === "plugin backend channel transport failed"
       && entry.err?.code === "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH"
       && entry.phase === (phase === "open" ? "awaiting-open" : "ready"))) return;

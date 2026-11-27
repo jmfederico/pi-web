@@ -138,6 +138,6 @@ function parseStore(text: string, path: string): StoreData {
     || !Array.isArray(Reflect.get(value, "subscriptions")) || !Array.isArray(Reflect.get(value, "removals"))) {
     throw new Error(`Unrecognized PR watch state in ${path}; move it aside to start empty`);
   }
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Plugin-owned file written by this module.
+  // oxlint-disable-next-line typescript/consistent-type-assertions -- Plugin-owned file written by this module.
   return value as StoreData;
 }

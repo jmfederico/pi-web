@@ -54,7 +54,7 @@ export function resolvePluginNavigation(
       const sourceQueryIds = scope?.sourceContributionId === undefined || scope.sourceContributionId === scope.contributionId
         ? [] : [scope.sourceContributionId];
       contributionQuery = patchContributionQueryRecord(contributionQuery,
-        // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+        // oxlint-disable-next-line typescript/consistent-type-assertions
         scope?.contributionId ?? route.tool as QualifiedContributionId, sourceQueryIds, destination.query);
     } catch (error) {
       throw new TypeError(error instanceof Error ? error.message : String(error), { cause: error });

@@ -58,7 +58,7 @@ export default function prWatchExtension(pi: ExtensionAPI): void {
         signal?.throwIfAborted();
         const backend = createCompanionBackend(pi.events, PLUGIN_ID).forScope({ kind: "machine" });
         if (backend.request === undefined) throw new Error("Enable the pr-watch PI WEB plugin and restart the session daemon");
-        // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Pi validated the TypeBox object; the backend validates again.
+        // oxlint-disable-next-line typescript/consistent-type-assertions -- Pi validated the TypeBox object; the backend validates again.
         const input = { ...(params as Record<string, JsonValue>), sessionId: ctx.sessionManager.getSessionId(), cwd: ctx.cwd };
         const result = await backend.request(operation, input, signal === undefined ? {} : { signal });
         return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };

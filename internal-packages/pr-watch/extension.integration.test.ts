@@ -23,7 +23,7 @@ describe("PR watch companion", () => {
       const requests = vi.fn<(operation: string, input: JsonValue) => Promise<JsonValue>>(() => Promise.resolve({ alreadySubscribed: false }));
       bus.on("pi-web:companion-backend:discover", (data) => {
         // This fixture is the host side of the documented in-process discovery envelope.
-        // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+        // oxlint-disable-next-line typescript/consistent-type-assertions
         const envelope = data as { pluginId: string; accept: (discover: () => ReturnType<typeof createCompanionBackend>) => void };
         if (envelope.pluginId === "pr-watch") envelope.accept(() => ({ machineId: "local", forScope: () => ({ request: requests }) }));
       });

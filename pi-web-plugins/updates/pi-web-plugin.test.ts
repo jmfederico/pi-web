@@ -75,7 +75,7 @@ function runtimeContext(patch: Partial<PluginRuntimeContextV5> = {}): PluginRunt
     selectMainView: noop,
     selectWorkspaceTool: noop,
     openTerminal: noop,
-    // eslint-disable-next-line @typescript-eslint/no-deprecated -- Fakes implement the full host action contract, including the deprecated alias.
+    // oxlint-disable-next-line typescript/no-deprecated -- Fakes implement the full host action contract, including the deprecated alias.
     refreshFiles: noop,
     refreshWorkspacePanels: noop,
     refreshAppData: noop,

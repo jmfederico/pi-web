@@ -25,7 +25,7 @@ export interface NotificationDetails {
 
 export function record(value: unknown, label = "Input"): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error(`${label} must be an object`);
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Checked plain object at a JSON boundary.
+  // oxlint-disable-next-line typescript/consistent-type-assertions -- Checked plain object at a JSON boundary.
   return value as Record<string, unknown>;
 }
 

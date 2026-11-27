@@ -32,12 +32,22 @@ Known runtime-read asset owners include the Docker tests under `src/docker/`, `s
 Run the completion checks once against the final changes before committing or handing off a completed code batch. If relevant files change afterward, rerun the affected checks; committing alone does not invalidate an earlier result. For TypeScript code changes, run the relevant tests, lint only the changed TypeScript files, and use the cached whole-project typecheck:
 
 ```sh
-npm exec -- eslint src/shared/themePreference.ts src/shared/themePreference.test.ts
+npm exec -- oxlint src/shared/themePreference.ts src/shared/themePreference.test.ts
 npm run typecheck:cached
 git diff --check
 ```
 
-The first cached typecheck still pays for a full check; subsequent runs reuse `node_modules/.cache/pi-web/typecheck.tsbuildinfo`. Scoped ESLint is type-aware and still loads the TypeScript project, so it belongs at a meaningful checkpoint rather than after every keystroke. Focused tests/watch mode are the innermost loop.
+The first cached typecheck still pays for a full check; subsequent runs reuse the per-area build info under `node_modules/.cache/pi-web/typecheck/`. Scoped Oxlint is type-aware and still loads the TypeScript project for each area the files belong to, so it belongs at a meaningful checkpoint rather than after every keystroke. Focused tests/watch mode are the innermost loop.
+
+### Type-checking areas
+
+Type-aware checks hold a whole TypeScript program in memory. To keep them runnable on small machines and CI runners, the root `tsconfig.json` is a solution that references smaller area projects under `tsconfig/`: production code and tests for the client, server, and plugins, plus build and browser-fixture tooling. Shared compiler options live in `tsconfig.base.json`.
+
+`npm run typecheck` and `npm run lint` run one process per area, so peak memory follows the largest area rather than the whole repository. Type checking uses TypeScript 7 with two checkers per area. Linting uses Oxlint with type-aware rules, configured in `.oxlintrc.json`. Rules from Oxlint's nursery tier, such as `typescript/no-unnecessary-condition`, are experimental and can report false positives; disable such a report with an `oxlint-disable-next-line` comment that explains why.
+
+TypeScript 7 has no programmatic API. It is installed as `@typescript/native`, and the `typescript` dependency is an alias for `@typescript/typescript6`, which provides the TypeScript 6 API to build scripts and tests. Both packages install a `tsc` executable and npm may link either, so package scripts run TypeScript 7 through `node scripts/tsc.mjs`.
+
+Every checked file must belong to an area. When adding a source directory outside the existing ones, add it to the matching area, or add a new area and reference it from `tsconfig.json`. If one area grows much larger than the others, split it the same way.
 
 Documentation/comment-only changes need link/path review, relevant documentation or asset tests, and `git diff --check`; they do not need a local typecheck or whole-project lint. Use [testing policy](testing.md#choose-the-smallest-useful-boundary) to choose the smallest boundary that proves the behavior.
 
@@ -45,9 +55,9 @@ Documentation/comment-only changes need link/path review, relevant documentation
 
 `package.json` owns development startup commands and prerequisites. Run services through npm so their standard `pre<script>`, main script, and `post<script>` lifecycle steps execute in order. A failing prerequisite prevents that service from starting; post hooks are normal completion steps, not guaranteed shutdown cleanup.
 
-- `npm run dev` supervises watched sessiond, web/API, and client services.
+- `npm run dev` clears the previous plugin-build readiness marker before starting watched sessiond, web/API, and client services. Sessiond waits for the new web-owned build.
 - `npm run dev:ui` supervises web/API and client services without owning sessiond.
-- Split native and Docker services use `start:sessiond` for the non-watched daemon and `dev:ui` for the UI group.
+- Split native and Docker services use `start:sessiond` for the non-watched daemon and `dev:ui` for the UI group. If you start these manually and web is starting too, wait for the web API to be ready before starting sessiond. The marker indicates a completed build, not that no rebuild is about to start.
 
 Existing native development service definitions continue to work but retain their shell-based grouping until reinstalled. To adopt shared supervision, run `pi-web install --dev` once from the updated checkout, including the same `--config <path>` option if the services use a custom config file. Reinstalling services interrupts active sessions and terminals. Native update/restart commands do not rewrite definitions; `pi-web doctor` identifies outdated definitions and recommends reinstalling them. Docker updates recreate them through the normal update flow.
 
@@ -75,7 +85,7 @@ These tests prove browser painting, hit targeting, anchoring, and focus/dismissa
 | Stage | Required checks | Where they run |
 | --- | --- | --- |
 | Local iteration | Focused tests, optionally in watch mode | Developer/agent workspace |
-| Local completion | Relevant tests; scoped ESLint and cached typecheck for TypeScript changes; diff/link checks as applicable | Developer/agent workspace |
+| Local completion | Relevant tests; scoped Oxlint and cached typecheck for TypeScript changes; diff/link checks as applicable | Developer/agent workspace |
 | Commit | `git diff --cached --check` only, through the pre-commit hook | Local workspace after `npm install`/`npm ci` configures `.githooks` |
 | Pull request | Linux: full ordinary suite, static checks, build, artifact checks, and browser contracts. Windows: `npm run test:windows` | GitHub Actions CI |
 | Merge/push to `main` | Same CI checks; installed-package and runtime smoke checks on Linux | GitHub Actions CI |
@@ -84,7 +94,7 @@ These tests prove browser painting, hit targeting, anchoring, and focus/dismissa
 
 Pre-commit checks only the staged diff for whitespace errors and introduced conflict markers. It starts no npm/Node process and runs no typecheck, lint, Knip, tests, or build. Agents choose and run the scoped completion checks explicitly, then commit without repeating them. A successful commit proves hygiene only; CI independently checks the code.
 
-`npm run verify` runs uncached typechecking, whole-project ESLint, Knip unused-code analysis, and the ordinary test suite. Run it locally when a change's affected surface cannot be bounded, validation configuration changes, or a user explicitly requests full verification. A shared helper with identifiable consumers can still use related tests; a final handoff alone is not a reason to rerun every check. CI provides the mandatory broad PR/merge gate.
+`npm run verify` runs uncached typechecking, whole-project Oxlint, Knip unused-code analysis, and the ordinary test suite. Run it locally when a change's affected surface cannot be bounded, validation configuration changes, or a user explicitly requests full verification. A shared helper with identifiable consumers can still use related tests; a final handoff alone is not a reason to rerun every check. CI provides the mandatory broad PR/merge gate.
 
 CI runs these independent jobs in parallel:
 
@@ -179,7 +189,7 @@ Standalone application code imports SDK values through `src/piSdk.ts` and AI hel
 
 PI WEB supports only the latest Pi minor line it was tested with. The floor of the `@earendil-works/pi-coding-agent` development dependency range in `package.json` is the single source of truth for the supported minimum. If the tests need a specific Pi patch, raise the floor to that patch, for example from `^1.6.0` to `^1.6.3`. A maintainer evaluates a new Pi major version before PI WEB adopts it.
 
-The policy is advisory and keeps the peer and runtime decisions above: peers stay `"*"` and nothing is blocked. `package.json`, including its development dependencies, ships in the published package; `src/shared/piSupport.ts` reads the floor from it at runtime. When the Pi loaded by the session daemon, or by the web process if the daemon is unavailable, is older than the floor, the status response adds a `pi-unsupported` warning that the Updates panel shows. `pi-web doctor` reports the same check as a warning without failing. Newer and unrecognized Pi versions produce no warning. Keep the range a single comparator such as `^1.6.0`; a compound range has no floor and would silently disable the warning, which `src/shared/piSupport.test.ts` guards against.
+The policy is advisory and keeps the peer and runtime decisions above: peers stay `"*"` and nothing is blocked. `package.json`, including its development dependencies, ships in the published package; `src/shared/piSupport.ts` reads the floor from it at runtime. When the Pi loaded by the session daemon, or by the web process if the daemon is unavailable, is older than the floor, the status response adds a `pi-unsupported` warning that the Updates panel shows. On global npm and Pi-package installs with `pi` on `PATH`, the status also offers `commands.updatePi` (`pi update`); Docker images and local checkouts get their Pi from the image or the checkout's dependencies, so they do not. `pi-web doctor` reports the same check as a warning without failing. Newer and unrecognized Pi versions produce no warning. Keep the range a single comparator such as `^1.6.0`; a compound range has no floor and would silently disable the warning, which `src/shared/piSupport.test.ts` guards against.
 
 Upgrading or downgrading Pi in place takes effect when services restart. If Pi moves to another path, reinstall the PI WEB service definitions from that Pi instance. The startup environment selects an installation, not a frozen copy of its version.
 

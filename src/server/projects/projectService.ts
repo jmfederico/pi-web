@@ -21,6 +21,12 @@ export class ProjectService {
     return this.store.add(input.name === undefined ? { path: resolved } : { name: input.name, path: resolved });
   }
 
+  async rename(id: string, name: string): Promise<Project> {
+    const project = await this.store.rename(id, name);
+    if (!project) throw new Error("Project not found");
+    return project;
+  }
+
   async close(id: string): Promise<void> {
     if (!(await this.store.remove(id))) throw new Error("Project not found");
   }

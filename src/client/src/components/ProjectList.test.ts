@@ -229,6 +229,25 @@ describe("project move actions", () => {
     expect(list.projects.map((item) => item.id)).toEqual(["z", "a"]);
     expect(list.shadowRoot?.querySelector(".action-menu-panel")).not.toBeNull();
   });
+
+  it("offers rename only when the parent handles it, and closes the menu without selecting", async () => {
+    const target = project("target");
+    const list = await mountProjectList([target], undefined);
+    list.onSelect = vi.fn();
+    openMenu(list, "target");
+    await list.updateComplete;
+    expect(list.shadowRoot?.querySelector("[data-rename]")).toBeNull();
+
+    const onRename = vi.fn();
+    list.onRename = onRename;
+    await list.updateComplete;
+    list.shadowRoot?.querySelector<HTMLButtonElement>("[data-rename]")?.click();
+    await list.updateComplete;
+
+    expect(onRename).toHaveBeenCalledExactlyOnceWith(target);
+    expect(list.onSelect).not.toHaveBeenCalled();
+    expect(list.shadowRoot?.querySelector(".action-menu-panel")).toBeNull();
+  });
 });
 
 function openMenu(list: ProjectList, name: string): void {

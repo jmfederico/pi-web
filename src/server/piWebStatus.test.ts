@@ -440,7 +440,9 @@ describe("PI WEB status", () => {
       expect(status.commands.restart).toBe("systemd-run --user --collect --unit=pi-web-restart -- systemctl --user restart pi-web-ui-dev.service pi-web-sessiond.service");
       expect(status.commands.restartWeb).toBe("systemd-run --user --collect --unit=pi-web-restart-web -- systemctl --user restart pi-web-ui-dev.service");
       expect(status.commands.restartSessiond).toBe("systemd-run --user --collect --unit=pi-web-restart-sessiond -- systemctl --user restart pi-web-sessiond.service");
-      expect(status.messages.find((message) => message.id === "sessiond-stale")?.command).toBe("systemd-run --user --collect --unit=pi-web-restart-sessiond -- systemctl --user restart pi-web-sessiond.service");
+      expect(status.messages.map((message) => message.id)).toContain("sessiond-stale");
+      // Notices never carry commands; actions come only from status.commands.
+      expect(status.messages.filter((message) => "command" in message)).toEqual([]);
     } finally {
       await Promise.all([
         rm(home, { recursive: true, force: true }),
@@ -475,6 +477,48 @@ describe("PI WEB status", () => {
         rm(binDir, { recursive: true, force: true }),
       ]);
     }
+  });
+
+  it("offers Pi's self-update to an npm-global install only while its Pi is too old", async () => {
+    process.env["PI_WEB_SKIP_VERSION_CHECK"] = "1";
+    disableDockerRuntimeEnv();
+    const home = await tempHome();
+    const binDir = await tempHome();
+    try {
+      process.env["HOME"] = home;
+      const npm = join(binDir, "npm");
+      const packageRoot = fileURLToPath(new URL("../../", import.meta.url));
+      await writeFile(npm, `#!/bin/sh\nprintf '%s\\n' ${shellQuote(packageRoot)}\n`);
+      await chmod(npm, 0o755);
+      process.env["PATH"] = `${binDir}:${process.env["PATH"] ?? ""}`;
+      const statusWithPi = (piVersion: string, piOnPath = true) => getPiWebStatus(
+        daemonWithRuntime({ ...runningSessiondRuntime(), piVersion }),
+        { hasCommand: (command) => Promise.resolve(piOnPath && command === "pi") },
+      );
+
+      const older = await statusWithPi("0.1.0");
+      expect(older.components.web.installation?.kind).toBe("npm-global");
+      expect(older.commands.updatePi).toBe("pi update");
+      expect((await statusWithPi("999.0.0")).commands).not.toHaveProperty("updatePi");
+      expect((await statusWithPi("0.1.0", false)).commands).not.toHaveProperty("updatePi");
+    } finally {
+      await Promise.all([
+        rm(home, { recursive: true, force: true }),
+        rm(binDir, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
+  it("does not offer Pi's self-update to Docker installs, whose image provides Pi", async () => {
+    process.env["PI_WEB_SKIP_VERSION_CHECK"] = "1";
+    process.env["PI_WEB_DOCKER_RUNTIME"] = "1";
+    process.env["PI_WEB_DOCKER_MODE"] = "runtime";
+    process.env["PI_WEB_DOCKER_INSTALL_DIR"] = "/srv/pi-web-docker";
+
+    const status = await getPiWebStatus(daemonWithRuntime({ ...runningSessiondRuntime(), piVersion: "0.1.0" }), { hasCommand: () => Promise.resolve(true) });
+
+    expect(status.messages.map((message) => message.id)).toContain("pi-unsupported");
+    expect(status.commands).not.toHaveProperty("updatePi");
   });
 
   it("suggests Docker commands when running inside the Docker runtime", async () => {

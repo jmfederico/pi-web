@@ -42,7 +42,7 @@ export default function scheduledTasksExtension(pi: ExtensionAPI): void {
         const peer = createCompanionBackend(pi.events, "scheduled-tasks").forScope({ kind: "machine" });
         if (peer.request === undefined) throw new Error("Scheduled tasks backend does not support requests");
         // Pi validates the TypeBox object before execution; backend validation is authoritative.
-        // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- JSON tool input at the transport boundary.
+        // oxlint-disable-next-line typescript/consistent-type-assertions -- JSON tool input at the transport boundary.
         const result = await peer.request(operation, input as JsonValue, signal === undefined ? {} : { signal });
         return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
       },

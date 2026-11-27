@@ -15,13 +15,13 @@ async function fixture(options: ManagedMcpControllerOptions = {}) {
   let idle = true;
   const notify = vi.fn();
   // The fake supplies only the public extension lifecycle and registration boundary used here.
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  // oxlint-disable-next-line typescript/consistent-type-assertions
   const ctx = { isIdle: () => idle, isProjectTrusted: () => false, hasUI: true, ui: { notify } } as unknown as ExtensionContext;
   const register = vi.fn((name: string, config: McpServerConfig) => {
     registrations.set(name, { name, config, extensionPath: "managed" });
   });
   const unregister = vi.fn((name: string) => { registrations.delete(name); });
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  // oxlint-disable-next-line typescript/consistent-type-assertions
   const pi = {
     on: (name: string, handler: (event: ExtensionEvent, ctx: ExtensionContext) => unknown) => { handlers.set(name, handler); },
     registerMcpServer: register, unregisterMcpServer: unregister,
@@ -37,7 +37,7 @@ async function fixture(options: ManagedMcpControllerOptions = {}) {
     controller, registrations, register, unregister, notify, ctx, load,
     setIdle: (value: boolean) => { idle = value; },
     // These notification handlers read no event payload; the SDK integration covers dispatch.
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    // oxlint-disable-next-line typescript/consistent-type-assertions
     emit: async (type: ExtensionEvent["type"]) => { await handlers.get(type)?.({ type } as ExtensionEvent, ctx); },
   };
 }

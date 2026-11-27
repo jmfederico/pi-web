@@ -342,7 +342,7 @@ function assertContributionQueryParamsWithinLimits(params: URLSearchParams): voi
 function emptyQueryRecord<Value>(): Record<string, Value> {
   // Contribution-owned local keys may be named `constructor` or `toString`;
   // a null prototype keeps absent and present values inside the published type.
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Object.create(null) has the intended string-record runtime shape without a typed overload.
+  // oxlint-disable-next-line typescript/consistent-type-assertions -- Object.create(null) has the intended string-record runtime shape without a typed overload.
   return Object.create(null) as Record<string, Value>;
 }
 
