@@ -1,5 +1,5 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Project, WorkspaceProviderResolution } from "./types.js";
 import { appTestContext, registerAppTestHooks } from "./app.testSupport.js";
@@ -50,6 +50,37 @@ describe("buildApp project routes", () => {
 
     const missingResponse = await appTestContext.app.inject({ method: "PATCH", url: "/api/projects/does-not-exist", payload: { name: "Billing" } });
     expect(missingResponse.statusCode).toBe(404);
+  });
+
+  it("saves machine-local project settings and inherits the current machine default after reset", async () => {
+    const { app, projectDir, tempDir } = appTestContext;
+    const added = await app.inject({ method: "POST", url: "/api/projects", payload: { path: projectDir, create: true } });
+    expect(added.statusCode).toBe(200);
+    const project = added.json<Project>();
+    const projectUrl = `/api/machines/local/projects/${project.id}`;
+    const configDir = join(projectDir, ".pi-web");
+    await mkdir(configDir, { recursive: true });
+    const checkoutConfig = join(configDir, "config.json");
+    await writeFile(checkoutConfig, '{"unrelated":true}\n');
+
+    const settings = () => app.inject({ method: "GET", url: `${projectUrl}/settings` });
+    expect((await settings()).json()).toEqual({ project, worktreeFolder: { path: join(dirname(projectDir), `${basename(projectDir)}-worktrees`), source: "suggested" } });
+    const absoluteParent = join(tempDir, "shared-trees");
+    const global = await app.inject({ method: "PATCH", url: "/api/machines/local/config", payload: { set: { defaultWorktreeFolder: absoluteParent } } });
+    expect(global.statusCode).toBe(200);
+    expect((await settings()).json()).toMatchObject({ worktreeFolder: { path: join(absoluteParent, basename(projectDir)), source: "machine" } });
+
+    const saved = await app.inject({ method: "PATCH", url: projectUrl, payload: { set: { name: "Renamed", worktreeFolder: ".pi-web/worktrees" } } });
+    expect(saved.statusCode).toBe(200);
+    expect((await settings()).json()).toEqual({
+      project: { ...project, name: "Renamed", worktreeFolder: ".pi-web/worktrees" },
+      worktreeFolder: { path: join(projectDir, ".pi-web", "worktrees"), source: "project" },
+    });
+
+    const cleared = await app.inject({ method: "PATCH", url: projectUrl, payload: { unset: ["/worktreeFolder"] } });
+    expect(cleared.statusCode).toBe(200);
+    expect((await settings()).json()).toEqual({ project: { ...project, name: "Renamed" }, worktreeFolder: { path: join(absoluteParent, basename(projectDir)), source: "machine" } });
+    expect(await readFile(checkoutConfig, "utf8")).toBe('{"unrelated":true}\n');
   });
 
   // The trust lookup (GET /projects/trust) trims the path before keying a

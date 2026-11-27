@@ -20,6 +20,7 @@ import { SessionDaemonWorkspaceCatalog } from "./workspaces/sessionDaemonWorkspa
 import { sendWorkspaceRequestError } from "./workspaces/workspaceRouteErrors.js";
 import { loadEffectiveProjectAttachmentsConfig, loadEffectiveProjectUploadsConfig } from "./workspaces/projectPiWebConfig.js";
 import { listDirectorySuggestions } from "./projects/directorySuggestions.js";
+import { resolveProjectWorktreeFolder } from "./projects/projectWorktreeFolder.js";
 import { SessionDaemonClient } from "../sessiond/sessionDaemonClient.js";
 import { loadServerPluginRecoveryConfig } from "../serverPluginRecovery.js";
 import { registerSessionProxyRoutes, type SessionProxyDaemon } from "./sessiond/sessionProxyRoutes.js";
@@ -73,11 +74,7 @@ export interface AppDependencies extends Pick<FastifyServerOptions, "bodyLimit" 
   deploymentFlavor?: () => Promise<PiWebDeploymentFlavor>;
 }
 
-interface LocalProjectRouteOptions {
-  config?: Pick<PiWebConfigService, "read">;
-}
-
-function registerLocalProjectRoutes(app: FastifyInstance, projects: ProjectService, workspaces: WorkspaceCatalog, prefix: string, options: LocalProjectRouteOptions = {}): void {
+function registerLocalProjectRoutes(app: FastifyInstance, projects: ProjectService, workspaces: WorkspaceCatalog, prefix: string, config: Pick<PiWebConfigService, "read">): void {
   app.get(`${prefix}/projects`, async () => projects.list());
 
   app.get<{ Querystring: { q?: string } }>(`${prefix}/project-directories`, async (request, reply) => {
@@ -88,10 +85,19 @@ function registerLocalProjectRoutes(app: FastifyInstance, projects: ProjectServi
     }
   });
 
+  app.get<{ Params: { projectId: string } }>(`${prefix}/projects/:projectId/settings`, async (request, reply) => {
+    try {
+      const project = await projects.requireProject(request.params.projectId);
+      return { project, worktreeFolder: resolveProjectWorktreeFolder(project, await config.read()) };
+    } catch (error) {
+      return sendWorkspaceRequestError(reply, error, 404);
+    }
+  });
+
   app.get<{ Params: { projectId: string } }>(`${prefix}/projects/:projectId/workspaces`, async (request, reply) => {
     try {
       const project = await projects.requireProject(request.params.projectId);
-      return await resolveWorkspacesWithEffectiveConfig(project, workspaces, options.config);
+      return await resolveWorkspacesWithEffectiveConfig(project, workspaces, config);
     } catch (error) {
       return sendWorkspaceRequestError(reply, error, 404);
     }
@@ -270,8 +276,8 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
   registerMachineRoutes(app, machines);
   registerMachinePluginProxyRoutes(app, machines);
 
-  registerLocalProjectRoutes(app, projects, workspaces, "/api", { config: configService });
-  registerLocalProjectRoutes(app, projects, workspaces, "/api/machines/local", { config: configService });
+  registerLocalProjectRoutes(app, projects, workspaces, "/api", configService);
+  registerLocalProjectRoutes(app, projects, workspaces, "/api/machines/local", configService);
 
   registerSessionProxyRoutes(app, sessionDaemon, "/api");
   registerSessionProxyRoutes(app, sessionDaemon, "/api/machines/local");

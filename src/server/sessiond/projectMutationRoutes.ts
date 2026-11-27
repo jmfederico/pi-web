@@ -1,7 +1,13 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { ProjectService } from "../projects/projectService.js";
+import type { ProjectSettingsUpdate } from "../../shared/apiTypes.js";
+import { requireWorktreeFolder } from "../../shared/worktreeFolder.js";
 
-export function registerProjectMutationRoutes(app: FastifyInstance, projects: Pick<ProjectService, "add" | "rename" | "close">): void {
+export function registerProjectMutationRoutes(
+  app: FastifyInstance,
+  projects: Pick<ProjectService, "add" | "updateSettings" | "close">,
+  enforcedWorktreeFolder?: string,
+): void {
   app.post<{ Body: unknown }>("/projects", async (request, reply) => {
     const input = request.body;
     if (!isProjectInput(input)) {
@@ -15,10 +21,17 @@ export function registerProjectMutationRoutes(app: FastifyInstance, projects: Pi
   });
 
   app.patch<{ Params: { projectId: string }; Body: unknown }>("/projects/:projectId", async (request, reply) => {
-    const input = request.body;
-    if (!isRenameInput(input)) return reply.code(400).send({ error: "Invalid project input: name must be a string" });
+    let update: ProjectSettingsUpdate;
     try {
-      return await projects.rename(request.params.projectId, input.name);
+      update = parseProjectSettingsUpdate(request.body);
+      if (enforcedWorktreeFolder !== undefined && (update.set?.worktreeFolder !== undefined || update.unset?.includes("/worktreeFolder") === true)) {
+        throw new Error(`Worktree folder is controlled by ${enforcedWorktreeFolder}`);
+      }
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+    }
+    try {
+      return await projects.updateSettings(request.params.projectId, update);
     } catch (error) {
       return sendProjectError(reply, error);
     }
@@ -46,8 +59,29 @@ function isProjectInput(input: unknown): input is Parameters<ProjectService["add
     && (!("create" in input) || input.create === undefined || typeof input.create === "boolean");
 }
 
-function isRenameInput(input: unknown): input is { name: string } {
-  return input !== null && typeof input === "object" && "name" in input && typeof input.name === "string";
+function parseProjectSettingsUpdate(input: unknown): ProjectSettingsUpdate {
+  if (!isRecord(input)) throw new Error("Project settings must be an object");
+  // The existing rename API continues to accept a bare { name }.
+  if (Object.keys(input).length === 1 && typeof input["name"] === "string") return { set: { name: input["name"] } };
+  if (Object.keys(input).some((key) => key !== "set" && key !== "unset")) throw new Error("Project settings update must contain only set and unset");
+  const fields = input["set"] === undefined ? {} : input["set"];
+  if (!isRecord(fields) || Object.keys(fields).some((key) => key !== "name" && key !== "worktreeFolder")) throw new Error("Unknown project setting");
+  const name = fields["name"];
+  if (name !== undefined && typeof name !== "string") throw new Error("Project name must be a string");
+  const rawFolder = fields["worktreeFolder"];
+  const worktreeFolder = rawFolder === undefined ? undefined : requireWorktreeFolder(rawFolder, "Project worktree folder");
+  const unset = input["unset"] === undefined ? [] : input["unset"];
+  if (!Array.isArray(unset) || !unset.every((key) => key === "/worktreeFolder")) throw new Error("Only /worktreeFolder can be unset");
+  if (unset.length > 0 && worktreeFolder !== undefined) throw new Error("Worktree folder cannot be set and unset together");
+  if (unset.length === 0 && name === undefined && worktreeFolder === undefined) throw new Error("No project settings to update");
+  return {
+    set: { ...(name === undefined ? {} : { name }), ...(worktreeFolder === undefined ? {} : { worktreeFolder }) },
+    ...(unset.length === 0 ? {} : { unset: ["/worktreeFolder"] }),
+  };
+}
+
+function isRecord(input: unknown): input is Record<string, unknown> {
+  return input !== null && typeof input === "object" && !Array.isArray(input);
 }
 
 function isInvalidProjectPath(error: unknown): boolean {

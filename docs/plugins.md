@@ -125,7 +125,7 @@ They appear only in the session list, not the top Session pill or transcript bub
 
 ### Discover projects on the context's machine
 
-Plugins can list registered projects and suggest directories using the same search as **Add Project**, even before a project is selected. Discovery is read-only and stays on the initiating machine; remote failures do not substitute gateway projects. Older hosts may lack project discovery; update PI WEB when a plugin needs it.
+Plugins can list registered projects and suggest directories using the same search as **Add Project**, even before a project is selected. Discovery is read-only and stays on the initiating machine; remote failures do not substitute gateway projects. Where available, `projects.getWorktreeFolder(projectId)` returns the resolved parent path on that machine, with `configured: false` for the suggested fallback rather than a saved convention. Older hosts may lack the discovery or worktree-folder method.
 
 ### Attach text context to a message
 

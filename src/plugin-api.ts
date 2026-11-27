@@ -538,6 +538,8 @@ export interface PluginProjects {
   listProjects(): Promise<readonly PluginProject[]>;
   /** Suggest directories matching a path query using the host's project picker rules. */
   suggestDirectories(query: string): Promise<readonly PluginProjectDirectorySuggestion[]>;
+  /** Parent folder resolved on this machine. A suggestion is not a saved convention. Absent on older hosts. */
+  getWorktreeFolder?(projectId: string): Promise<{ readonly path: string; readonly configured: boolean }>;
 }
 
 /** Selected conversation snapshot, scoped to PluginRuntimeState.selectedMachine. */

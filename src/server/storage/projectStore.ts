@@ -2,7 +2,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { piWebDataDir } from "../../config.js";
 import { randomUUID } from "node:crypto";
-import type { Project } from "../types.js";
+import type { Project, ProjectSettingsUpdate } from "../../shared/apiTypes.js";
+import { requireWorktreeFolder } from "../../shared/worktreeFolder.js";
 
 interface ProjectFile {
   projects: Project[];
@@ -24,7 +25,8 @@ function parseProject(value: unknown): Project {
   const path = value["path"];
   const createdAt = value["createdAt"];
   if (typeof id !== "string" || typeof name !== "string" || typeof path !== "string" || typeof createdAt !== "string") throw new Error("Invalid project");
-  return { id, name, path, createdAt };
+  const worktreeFolder = value["worktreeFolder"];
+  return { id, name, path, createdAt, ...(worktreeFolder === undefined ? {} : { worktreeFolder: requireWorktreeFolder(worktreeFolder, "Project worktree folder") }) };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -75,12 +77,14 @@ export class ProjectStore {
     return (await this.list()).find((p) => p.id === id);
   }
 
-  /** Changes only the display name; a blank name restores the folder name. */
-  async rename(id: string, name: string): Promise<Project | undefined> {
+  /** Changes settings only; a blank display name restores the folder name. */
+  async updateSettings(id: string, { set, unset }: ProjectSettingsUpdate): Promise<Project | undefined> {
     const data = await this.read();
     const project = data.projects.find((p) => p.id === id);
     if (project === undefined) return undefined;
-    project.name = projectName(name, project.path);
+    if (set?.name !== undefined) project.name = projectName(set.name, project.path);
+    if (set?.worktreeFolder !== undefined) project.worktreeFolder = requireWorktreeFolder(set.worktreeFolder, "Project worktree folder");
+    if (unset?.includes("/worktreeFolder") === true) delete project.worktreeFolder;
     await this.write(data);
     return project;
   }
