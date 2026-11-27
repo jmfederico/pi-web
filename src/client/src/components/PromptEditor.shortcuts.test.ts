@@ -156,24 +156,20 @@ describe("composer keyboard handling", () => {
     expect(editor.onSend).toHaveBeenCalledOnce();
   });
 
-  it("does not reopen a dismissed popup when an in-flight completion load finishes", async () => {
-    const commands: SlashCommand[] = [{ name: "tree", source: "builtin" }];
-    let finish: ((value: SlashCommand[]) => void) | undefined;
+  it("does not open the completion popup after Escape dismisses an in-flight lookup", async () => {
+    let finish!: (value: SlashCommand[]) => void;
     const pending = new Promise<SlashCommand[]>((resolve) => { finish = resolve; });
-    const load = vi.spyOn(api, "commands").mockResolvedValueOnce(commands).mockReturnValueOnce(pending);
+    const load = vi.spyOn(api, "commands").mockReturnValue(pending);
     const editor = await mount("enter");
     editor.sessionId = "test-session";
     editor.cwd = "/repo";
     await editor.updateComplete;
     editor.view?.dispatch({ changes: { from: 0, to: editor.view.state.doc.length, insert: "/" }, selection: { anchor: 1 } });
-    await vi.waitFor(() => {
-      expect(editor.shadowRoot?.querySelector("autocomplete-menu")?.shadowRoot?.querySelector("[popover]")).not.toBeNull();
-    });
-    editor.view?.dispatch({ changes: { from: 1, insert: "t" }, selection: { anchor: 2 } });
-    expect(load).toHaveBeenCalledTimes(2);
-    editor.shadowRoot?.querySelector("autocomplete-menu")?.shadowRoot?.querySelector<HTMLElement>("[popover]")?.hidePopover();
-    finish?.(commands);
+    expect(load).toHaveBeenCalledOnce();
+    press(editor, "Escape");
+    finish([{ name: "tree", source: "builtin" }]);
     await pending;
+    await Promise.resolve();
     await editor.updateComplete;
     await editor.updateComplete;
     expect(editor.shadowRoot?.querySelector("autocomplete-menu")?.shadowRoot?.querySelector("[popover]")).toBeNull();
