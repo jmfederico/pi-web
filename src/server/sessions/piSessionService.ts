@@ -1598,7 +1598,7 @@ export class PiSessionService implements SessionRouteService {
     this.subsessionInboxes.clear();
     this.notificationStore.clearAll("service-dispose");
     try {
-      await Promise.all(activeSessions.map(async (active) => {
+      const teardowns = await Promise.allSettled(activeSessions.map(async (active) => {
         active.unsubscribe();
         active.runtime.setRebindSession(undefined);
         this.workspaceActivity?.removeSession(active.runtime.session.sessionId, active.runtime.session.sessionManager.getCwd());
@@ -1608,6 +1608,9 @@ export class PiSessionService implements SessionRouteService {
           await active.runtime.dispose();
         }
       }));
+      for (const teardown of teardowns) {
+        if (teardown.status === "rejected") throw teardown.reason;
+      }
     } finally {
       this.extensionCommandExecution.disable();
       this.events.mediaIndex.clear();
