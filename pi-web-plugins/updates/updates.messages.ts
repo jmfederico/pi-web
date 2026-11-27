@@ -45,6 +45,8 @@ export default {
   restartAllWarning: text("Restarting all services disconnects the browser and interrupts active sessions and terminals.", "Impact of restarting both services"),
   restartUnavailable: text("Restart buttons require a newer PI WEB host. Copy the command to run it manually.", "Compatibility guidance when the host has no lifecycle capability"),
   updateOptional: text("Update", "Optional update command"),
+  updatePi: text("Update Pi", "Command that updates the Pi coding agent PI WEB runs on"),
+  updatePiWarning: text("Updating Pi does not restart PI WEB. Restart all services as soon as it finishes; until then, active sessions may fail to load parts of Pi.", "Why a restart must follow a Pi update"),
   restartAll: text("Restart all", "Optional restart all services command"),
   restartWeb: text("Restart Web/UI", "Restart web service command"),
   restartSessiond: text("Restart session daemon", "Restart session runtime command"),

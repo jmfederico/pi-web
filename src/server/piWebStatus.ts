@@ -15,7 +15,7 @@ import { SessionDaemonClient } from "../sessiond/sessionDaemonClient.js";
 import { isHostAbsoluteAgentDir, loadPiWebConfig, PI_CODING_AGENT_DIR_ENV, type LoadedPiWebConfig } from "../config.js";
 import { versionChecksDisabled } from "../shared/versionCheckPolicy.js";
 import { comparePackageVersions } from "../shared/packageVersions.js";
-import { isOlderThanSupportedPi, loadedPiVersion, supportedPiMinimumVersion, unsupportedPiSummary } from "../shared/piSupport.js";
+import { isOlderThanSupportedPi, loadedPiVersion, PI_SELF_UPDATE_COMMAND, supportedPiMinimumVersion, unsupportedPiSummary, type LoadedPiVersion } from "../shared/piSupport.js";
 import { createPiWebReleaseLookupCache, type PiWebReleaseLookup } from "./piWebReleaseLookupCache.js";
 
 const PI_WEB_PACKAGE_NAME = "@jmfederico/pi-web";
@@ -178,11 +178,14 @@ export async function getPiWebStatus(daemon: PiWebStatusDaemon = new SessionDaem
   const { web, sessiond } = versionStatus.components;
   const release = await getLatestReleaseStatus(web.installedVersion ?? web.runtimeVersion ?? DEFAULT_VERSION, options.forceReleaseCheck === true);
   const components = { web, sessiond };
+  const supportedPiMinimum = runtimePackageInfo?.supportedPiMinimum;
+  const unsupportedPi = unsupportedLoadedPi(components, supportedPiMinimum);
   const commands = await commandsFor(components, {
     activeAgentProfile: options.activeAgentProfile,
     hasCommand: options.hasCommand ?? hasCommand,
+    piUpdateRecommended: unsupportedPi !== undefined,
   });
-  const messages = buildMessages(components, release, commands, runtimePackageInfo?.supportedPiMinimum);
+  const messages = buildMessages(components, release, commands, unsupportedPi === undefined || supportedPiMinimum === undefined ? undefined : { loaded: unsupportedPi, minimum: supportedPiMinimum });
   return {
     ...versionStatus,
     release,
@@ -434,13 +437,15 @@ async function fetchLatestNpmVersion(currentVersion: string): Promise<string> {
 async function commandsFor(components: PiWebStatusResponse["components"], options: {
   activeAgentProfile: ActiveAgentProfileDescriptor | undefined;
   hasCommand: (command: string) => Promise<boolean>;
+  piUpdateRecommended: boolean;
 }): Promise<PiWebStatusResponse["commands"]> {
   const installation = preferredInstallation(components);
   if (installation?.kind === "docker") return dockerCommands(installation);
 
-  const [serviceCommands, cliCommands] = await Promise.all([
+  const [serviceCommands, cliCommands, updatePi] = await Promise.all([
     nativeServiceCommands(),
     piWebCliCommands(installation),
+    piUpdateCommandFor(installation, options),
   ]);
   const restart = restartCommandFor(installation, serviceCommands, cliCommands);
   const restartWeb = serviceCommands.restartWeb;
@@ -454,7 +459,29 @@ async function commandsFor(components: PiWebStatusResponse["components"], option
     ...(restartWeb === undefined ? {} : { restartWeb }),
     ...(restartSessiond === undefined ? {} : { restartSessiond }),
     ...(status === undefined ? {} : { status }),
+    ...(updatePi === undefined ? {} : { updatePi }),
   };
+}
+
+/**
+ * Offer Pi's self-update only where PI WEB runs on the user's own Pi: a global
+ * npm install or a Pi package. Docker images ship their own Pi, and local
+ * checkouts load Pi from their development dependencies, so `pi update` would
+ * not change the Pi those installations run.
+ */
+async function piUpdateCommandFor(installation: PiWebInstallationInfo | undefined, options: {
+  hasCommand: (command: string) => Promise<boolean>;
+  piUpdateRecommended: boolean;
+}): Promise<string | undefined> {
+  if (!options.piUpdateRecommended) return undefined;
+  if (installation?.kind !== "npm-global" && installation?.kind !== "pi-package") return undefined;
+  return await options.hasCommand("pi") ? PI_SELF_UPDATE_COMMAND : undefined;
+}
+
+function unsupportedLoadedPi(components: PiWebStatusResponse["components"], minimum: string | undefined): LoadedPiVersion | undefined {
+  const loaded = loadedPiVersion(components);
+  if (loaded === undefined || minimum === undefined || !isOlderThanSupportedPi(loaded.version, minimum)) return undefined;
+  return loaded;
 }
 
 function preferredInstallation(components: PiWebStatusResponse["components"]): PiWebInstallationInfo | undefined {
@@ -586,7 +613,12 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function buildMessages(components: PiWebStatusResponse["components"], release: PiWebReleaseStatus, commands: PiWebStatusResponse["commands"], supportedPiMinimum: string | undefined): PiWebStatusMessage[] {
+function buildMessages(
+  components: PiWebStatusResponse["components"],
+  release: PiWebReleaseStatus,
+  commands: PiWebStatusResponse["commands"],
+  unsupportedPi: { loaded: LoadedPiVersion; minimum: string } | undefined,
+): PiWebStatusMessage[] {
   const messages: PiWebStatusMessage[] = [];
   const installedVersion = components.web.installedVersion ?? components.web.runtimeVersion;
 
@@ -598,7 +630,6 @@ function buildMessages(components: PiWebStatusResponse["components"], release: P
       body: commands.update === undefined
         ? `PI WEB ${release.latestVersion} is available${installedVersion === undefined ? "" : `; installed version is ${installedVersion}`}. Update PI WEB, then restart the services or processes for this installation.`
         : `PI WEB ${release.latestVersion} is available${installedVersion === undefined ? "" : `; installed version is ${installedVersion}`}. Run the update command to review the installation-specific plan and confirm. Updates may interrupt active sessions; if this terminal cannot safely run the update, the CLI will provide instructions.`,
-      ...optionalMessageCommand(commands.update),
     });
   }
 
@@ -611,7 +642,6 @@ function buildMessages(components: PiWebStatusResponse["components"], release: P
       body: command === undefined
         ? `The Web/UI service is running ${formatVersion(components.web.runtimeVersion)}, but ${formatVersion(components.web.installedVersion)} is installed. Restart the Web/UI service or process to use the installed version.`
         : `The Web/UI service is running ${formatVersion(components.web.runtimeVersion)}, but ${formatVersion(components.web.installedVersion)} is installed. Restart the service to use the installed version.`,
-      ...optionalMessageCommand(command),
     });
   }
 
@@ -621,7 +651,6 @@ function buildMessages(components: PiWebStatusResponse["components"], release: P
       severity: "info",
       title: "Session daemon version unknown",
       body: `The last check could not determine the session daemon version. This can happen during an update or restart. If checks keep failing, check the session daemon service or process.${components.sessiond.error === undefined ? "" : ` Last check: ${components.sessiond.error}`}`,
-      ...optionalMessageCommand(commands.status),
     });
   } else if (components.sessiond.stale) {
     const command = commands.restartSessiond ?? commands.restart;
@@ -632,28 +661,21 @@ function buildMessages(components: PiWebStatusResponse["components"], release: P
       body: command === undefined
         ? `The session daemon is running ${formatVersion(components.sessiond.runtimeVersion)}, but ${formatVersion(components.sessiond.installedVersion)} is installed. Restart the session daemon service or process to use the installed version.`
         : `The session daemon is running ${formatVersion(components.sessiond.runtimeVersion)}, but ${formatVersion(components.sessiond.installedVersion)} is installed. Restart the daemon to use the installed version.`,
-      ...optionalMessageCommand(command),
     });
   }
 
-  const loadedPi = loadedPiVersion(components);
-  if (loadedPi !== undefined && supportedPiMinimum !== undefined && isOlderThanSupportedPi(loadedPi.version, supportedPiMinimum)) {
+  if (unsupportedPi !== undefined) {
     messages.push({
       id: "pi-unsupported",
       severity: "warning",
       title: "Pi update recommended",
-      body: `${unsupportedPiSummary(loadedPi, supportedPiMinimum)} ${commands.restart === undefined
+      body: `${unsupportedPiSummary(unsupportedPi.loaded, unsupportedPi.minimum)} ${commands.restart === undefined
         ? "Update Pi, then restart the PI WEB services or processes."
         : "Update Pi, then restart PI WEB."}`,
-      ...optionalMessageCommand(commands.restart),
     });
   }
 
   return messages;
-}
-
-function optionalMessageCommand(command: string | undefined): Pick<PiWebStatusMessage, "command"> | object {
-  return command === undefined ? {} : { command };
 }
 
 function skipVersionCheck(): boolean {

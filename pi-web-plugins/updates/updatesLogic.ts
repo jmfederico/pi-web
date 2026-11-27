@@ -3,14 +3,15 @@ import type { PiWebDockerMode, PiWebInstallationInfo, PiWebStatusMessage, PiWebS
 export type CommandEntry = {
   label: string;
   command: string;
-} & ({ kind: "update" | "status" } | { kind: "restart"; services: RestartServices });
+} & ({ kind: "update" | "updatePi" | "status" } | { kind: "restart"; services: RestartServices });
 
-type CommandLabel = "update" | "updateOptional" | "restartAll" | "restartWeb" | "restartSessiond" | "status";
-const defaultLabel = (key: CommandLabel): string => ({ update: "Update PI WEB", updateOptional: "Update", restartAll: "Restart all", restartWeb: "Restart Web/UI", restartSessiond: "Restart session daemon", status: "Status" })[key];
+type CommandLabel = "update" | "updateOptional" | "updatePi" | "restartAll" | "restartWeb" | "restartSessiond" | "status";
+const defaultLabel = (key: CommandLabel): string => ({ update: "Update PI WEB", updateOptional: "Update", updatePi: "Update Pi", restartAll: "Restart all", restartWeb: "Restart Web/UI", restartSessiond: "Restart session daemon", status: "Status" })[key];
 
 function commandEntries(status: PiWebStatusResponse, label: (key: CommandLabel) => string): CommandEntry[] {
   const entries: CommandEntry[] = [
     { kind: "update", label: label("updateOptional"), command: status.commands.update ?? "" },
+    { kind: "updatePi", label: label("updatePi"), command: status.commands.updatePi ?? "" },
     { kind: "restart", services: "both", label: label("restartAll"), command: status.commands.restart ?? "" },
     { kind: "restart", services: "web", label: label("restartWeb"), command: status.commands.restartWeb ?? "" },
     { kind: "restart", services: "sessiond", label: label("restartSessiond"), command: status.commands.restartSessiond ?? "" },
@@ -32,7 +33,9 @@ export function recommendedCommand(status: PiWebStatusResponse, label: (key: Com
     return { ...update, label: label("update") };
   }
   const { web, sessiond } = status.components;
-  if (!web.stale && !sessiond.stale) return undefined;
+  // A stale restart may already load a newer Pi, so it comes before updating Pi.
+  // The status offers updatePi only while the loaded Pi is too old.
+  if (!web.stale && !sessiond.stale) return entries.find((entry) => entry.kind === "updatePi");
   const services: RestartServices = web.stale ? (sessiond.stale ? "both" : "web") : "sessiond";
   // Do not widen a targeted restart just because only a broader command exists.
   return entries.find((entry) => entry.kind === "restart" && entry.services === services);

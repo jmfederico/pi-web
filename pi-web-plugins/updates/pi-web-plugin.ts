@@ -89,6 +89,7 @@ function createUpdatesContent(localization: PluginLocalization, lifetimeSignal: 
         <span>${entry.label}</span>
         <code>${entry.command}</code>
         ${renderCommandActions(html, context, entry)}
+        ${entry.kind === "updatePi" ? html`<small class="updates-restart-warning">${t("updatePiWarning")}</small>` : null}
         ${entry.kind !== "restart" ? null : html`<small class="updates-restart-warning">${t(entry.services === "web" ? "restartWebWarning" : entry.services === "sessiond" ? "restartSessiondWarning" : "restartAllWarning")}${context.lifecycle === undefined ? ` ${t("restartUnavailable")}` : ""}</small>`}
       </div>
     `;

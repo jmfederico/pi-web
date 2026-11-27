@@ -24,6 +24,7 @@ describe("piSupportCheckLines", () => {
     const running: RunningVersionInfo = { web: componentStatus({ piVersion: "1.6.0" }), sessiond: sessiondStatus({ piVersion: "1.5.0" }) };
     expect(piSupportCheckLines(running, "1.6.0", "1.6.0")[0]).toMatch(/^! /u);
     expect(piSupportCheckLines(running, "1.6.0", "1.6.0").join("\n")).toContain("1.5.0");
+    expect(piSupportCheckLines(running, "1.6.0", "1.6.0").join("\n")).toContain("`pi update`");
 
     const notRunning: RunningVersionInfo = { webError: "offline", sessiondError: "offline" };
     expect(piSupportCheckLines(notRunning, "1.6.1", "1.6.0")[0]).toMatch(/^✓ /u);

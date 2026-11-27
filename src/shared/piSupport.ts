@@ -3,6 +3,14 @@ import { comparePackageVersions } from "./packageVersions.js";
 const PI_CODING_AGENT_PACKAGE = "@earendil-works/pi-coding-agent";
 
 /**
+ * Pi's self-update command. Pi chooses the update method for its own
+ * installation: the pi.dev managed installer, or a global npm, pnpm, Yarn, or
+ * Bun install. When another package manager owns Pi, Pi prints that
+ * manager's instruction instead of updating.
+ */
+export const PI_SELF_UPDATE_COMMAND = "pi update";
+
+/**
  * PI WEB supports the latest Pi minor line it was tested with. The floor of the
  * Pi development dependency range in package.json is the single source of truth
  * for that minimum. package.json ships in the published package, so installed

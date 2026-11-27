@@ -1816,6 +1816,8 @@ const catalogs: Record<string, Record<string, string>> = {
     "failed": "Fjärrversionskontrollen misslyckades: {error}",
     "update": "Uppdatera PI WEB",
     "updateOptional": "Uppdatera",
+    "updatePi": "Uppdatera Pi",
+    "updatePiWarning": "Att uppdatera Pi startar inte om PI WEB. Starta om alla tjänster så snart uppdateringen är klar; fram till dess kan aktiva sessioner misslyckas med att läsa in delar av Pi.",
     "restartAll": "Starta om alla tjänster",
     "restartWeb": "Starta om webb/gränssnitt",
     "restartSessiond": "Starta om sessionsdemonen",
