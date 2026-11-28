@@ -19,7 +19,8 @@
   "ignorePatterns": [
     "dist/**",
     "node_modules/**",
-    "plugins/*/dist/**"
+    "plugins/*/dist/**",
+    "internal-packages/*/dist/**"
   ],
   "rules": {
     "for-direction": "error",

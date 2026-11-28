@@ -7,6 +7,7 @@
   "include": [
     "../pi-web-plugins/**/*.ts",
     "../pi-packages/**/*.ts",
+    "../internal-packages/**/*.ts",
     "../extensions/**/*.ts"
   ],
   "exclude": [

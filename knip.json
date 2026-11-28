@@ -16,13 +16,16 @@
     "pi-packages/**/pi-web-plugin.ts",
     "pi-packages/**/server-plugin.ts",
     "pi-packages/**/extensions/index.ts",
+    "internal-packages/**/server-plugin.ts",
+    "internal-packages/**/extensions/index.ts",
     "scripts/*.mjs"
   ],
   "project": [
     "src/**/*.ts",
     "extensions/**/*.ts",
     "pi-web-plugins/**/*.ts",
-    "pi-packages/**/*.ts"
+    "pi-packages/**/*.ts",
+    "internal-packages/**/*.ts"
   ],
   "ignoreBinaries": ["mkfifo"],
   "ignoreExportsUsedInFile": true

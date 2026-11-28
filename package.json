@@ -57,6 +57,7 @@
     "predev:client": "npm run generate:material-icons",
     "dev:client": "node scripts/dev-client.mjs --host 0.0.0.0",
     "dev:plugins": "node scripts/build-plugins.mjs --watch",
+    "build:internal": "node scripts/build-internal-packages.mjs",
     "generate:material-icons": "node scripts/import-material-file-icons.mjs",
     "prebuild": "npm run generate:material-icons",
     "build": "npm run clean && node scripts/tsc.mjs -p tsconfig.build.json && node scripts/build-launchers.mjs && npm run build:plugin-api && npm run build:plugins && vite build",

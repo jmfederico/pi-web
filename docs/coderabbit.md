@@ -73,6 +73,8 @@ The workflow uses pinned actions and trusted default-branch code. It never check
 
 Agents can maintain `.coderabbit.yaml`, inspect actual GitHub reviews, fix or push back on findings as described in [Responding to findings](#responding-to-findings), resolve their threads, and request reviews using existing GitHub access. Separate CodeRabbit credentials are not needed for those operations. Keep configuration changes reviewable, preserve the merge rules, and never manufacture approvals or bypass checks to clear a blocked PR.
 
+In development installs, the internal [PR watch](../internal-packages/pr-watch/README.md) package lets a session subscribe to its pull request and be woken when CodeRabbit acts, instead of polling GitHub.
+
 CodeRabbit account billing, users, and optional direct API/MCP access are separate from this repository workflow.
 
 References: [CodeRabbit approvals](https://docs.coderabbit.ai/pr-reviews/automatic-approvals), [guideline mapping](https://docs.coderabbit.ai/knowledge-base/code-guidelines), [plans](https://docs.coderabbit.ai/management/plans), and [GitHub token event behavior](https://docs.github.com/en/actions/concepts/security/github_token).

@@ -9,6 +9,8 @@
     "../pi-web-plugins/**/*.testSupport.ts",
     "../pi-packages/**/*.test.ts",
     "../pi-packages/**/*.testSupport.ts",
+    "../internal-packages/**/*.test.ts",
+    "../internal-packages/**/*.testSupport.ts",
     "../extensions/**/*.test.ts",
     "../extensions/**/*.testSupport.ts"
   ]
