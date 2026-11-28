@@ -113,14 +113,12 @@ This is an instruction for the agent, not a scheduler rule. Reporting `completed
 
 ## Read-only dashboard
 
-The **Scheduled tasks** tab opens a read-only overview grouped by what needs review:
+The **Scheduled tasks** tab shows each task’s project, workspace, next scheduled run, and latest recorded outcome. **All tasks** shows tasks across the selected machine. Choose **Current project** or **Current workspace** to narrow the list to your current PI WEB selection. A confirmed launch with no report shows **No outcome reported**; that does not mean the conversation is still running.
 
-- **Needs attention:** non-archived tasks whose latest execution is `failed`, `errored`, or `uncertain`. The tab badge counts these tasks on the selected machine and refreshes even when the dashboard is closed. It disappears when none need attention.
-- **Recent results:** up to five non-archived tasks whose latest run reported completion, ordered by run creation time, not completion time.
-- **Up next:** up to five active, unpaused, non-archived tasks with a next due time, soonest first.
-- **Awaiting an outcome:** executions marked `dispatching` or `dispatched`. This does not mean their conversations are still running; status is never inferred from session activity.
+- **Needs attention** shows tasks that could not start, whose start was not confirmed, or whose agent reported a problem on the latest run. The tab badge counts these non-archived tasks on the selected machine, even when the tab is closed.
+- **Tasks** shows the other current tasks, with upcoming runs first. **Archived tasks** is collapsed by default.
 
-The collapsed **All tasks** section contains every task, including paused and archived tasks. Overview cards show shortened reports. Select a task to open its dedicated detail view with the full report, next due time, paginated execution history, and available conversation links. Native **Technical details** disclosures hold exact schedules, timezones, target IDs, execution revisions, session IDs, and diagnostics. Open the separate **All history** view on demand to browse history across tasks.
+Read a short agent report directly in the overview. For longer reports, the tab previews the opening line and lets you expand **Full report** without leaving the task list. **Open conversation** takes you to the exact session for follow-up. Select the task name to see earlier runs, the prompt used, and technical details. Use **All history** to browse across tasks.
 
 The dashboard has no task-editing controls. Its collapsed help directs you to ask an agent in a conversation to create, change, pause, reschedule, or archive tasks. Agents also support manual dispatch. Workspace Tasks' separate **Tasks** tab runs terminal commands; it does not manage these schedules.
 

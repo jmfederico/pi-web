@@ -1,10 +1,15 @@
 import { css, html, LitElement, nothing } from "lit";
 import { keyed } from "lit/directives/keyed.js";
+import { repeat } from "lit/directives/repeat.js";
 import type { ApplicationPanelContextV5, LocalizedMessages, PluginLocalization, StylesheetIntegrationCapabilityV1 } from "@jmfederico/pi-web/plugin-api";
 import definitions from "./messages.js";
 import type { AttentionBadge } from "./attentionBadge.js";
-import { needsAttention, overviewGroups } from "./overview.js";
+import { needsAttention, overviewGroups, reportPreview } from "./overview.js";
+import { loadTargetNames, type TargetNames } from "./targetNames.js";
 import { readTaskPrompt, readExecutionPrompt, readHistory, readOverview, type ExecutionView, type HistoryPage, type TaskOverview, type TaskView } from "./responses.js";
+
+const taskScopes = ["all", "project", "workspace"] as const;
+type TaskScope = typeof taskScopes[number];
 
 export const panelTag = "pi-web-scheduled-tasks-panel";
 export interface PanelContent {
@@ -22,11 +27,13 @@ export class ScheduledTasksPanel extends LitElement {
   private releaseLocalization: (() => void) | undefined;
   private pending: AbortController | undefined;
   private tasks: TaskOverview[] = [];
+  private scope: TaskScope = "all";
+  private targetNames: TargetNames | undefined;
   private history: HistoryPage = { executions: [], nextOffset: null };
   private taskId: string | undefined;
   private view: "overview" | "task" | "history" = "overview";
   private offset = 0;
-  private allTasksExpanded = false;
+  private archivedExpanded = false;
   private busy = false;
   private loaded = false;
   private issue: "unavailable" | "loadFailed" | "invalidResponse" | "navigationFailed" | undefined;
@@ -48,10 +55,20 @@ export class ScheduledTasksPanel extends LitElement {
   set context(value: ApplicationPanelContextV5) {
     const previous = this.contextValue;
     this.contextValue = value;
-    if (previous?.machine.id === value.machine.id && !!previous.backend === !!value.backend) return;
+    if (previous?.machine.id === value.machine.id && !!previous.backend === !!value.backend) {
+      const before = previous.state;
+      const after = value.state;
+      if (before.selectedProject !== after.selectedProject || before.selectedWorkspace !== after.selectedWorkspace) {
+        if (!this.canUseScope(this.scope)) this.scope = "all";
+        this.requestUpdate();
+      }
+      return;
+    }
+    this.scope = "all";
+    this.targetNames = undefined;
     this.pending?.abort();
     this.clearPrompts();
-    this.tasks = []; this.history = { executions: [], nextOffset: null }; this.taskId = undefined; this.view = "overview"; this.offset = 0; this.allTasksExpanded = false; this.loaded = false;
+    this.tasks = []; this.history = { executions: [], nextOffset: null }; this.taskId = undefined; this.view = "overview"; this.offset = 0; this.archivedExpanded = false; this.loaded = false;
     if (this.isConnected) void this.load();
   }
   override connectedCallback(): void {
@@ -100,6 +117,7 @@ export class ScheduledTasksPanel extends LitElement {
         const page = history === null ? { executions: [], nextOffset: null } : readHistory(history);
         this.tasks = tasks; this.history = page; this.loaded = true;
         updateBadge(tasks.filter(needsAttention).length);
+        void this.refreshTargetNames(context, [...tasks, ...page.executions.map((execution) => execution.task)], controller.signal);
       } catch { this.issue = "invalidResponse"; }
     } catch (error) {
       if (controller.signal.aborted) return;
@@ -107,6 +125,27 @@ export class ScheduledTasksPanel extends LitElement {
       this.diagnostic = error instanceof Error ? error.message : String(error);
     } finally {
       if (!controller.signal.aborted) { this.busy = false; this.requestUpdate(); }
+    }
+  }
+  private async refreshTargetNames(context: ApplicationPanelContextV5, tasks: TaskView[], signal: AbortSignal): Promise<void> {
+    const names = await loadTargetNames(context.catalog, tasks, signal);
+    if (signal.aborted) return;
+    this.targetNames = names;
+    this.requestUpdate();
+  }
+  private canUseScope(scope: TaskScope): boolean {
+    const state = this.contextValue?.state;
+    return scope === "all" || (scope === "project" ? !!state?.selectedProject : !!state?.selectedWorkspace);
+  }
+  private tasksInScope(): TaskOverview[] {
+    const state = this.contextValue?.state;
+    switch (this.scope) {
+      case "all": return this.tasks;
+      case "project": return this.tasks.filter((task) => task.projectId === state?.selectedProject?.id);
+      case "workspace": {
+        const workspace = state?.selectedWorkspace;
+        return this.tasks.filter((task) => task.projectId === workspace?.projectId && task.workspaceId === workspace.id);
+      }
     }
   }
   private showHistory(taskId?: string): void {
@@ -152,8 +191,8 @@ export class ScheduledTasksPanel extends LitElement {
       this.issue = "navigationFailed"; this.requestUpdate();
     }
   }
-  private time(at: string): string {
-    return this.contentValue?.localization.date(new Date(at), { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }) ?? at;
+  private time(at: string, timeZone?: string): string {
+    return this.contentValue?.localization.date(new Date(at), { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short", ...(timeZone === undefined ? {} : { timeZone }) }) ?? at;
   }
   private renderTarget(task: TaskView) {
     return this.contentValue?.messages.t("target", { project: task.projectId, workspace: task.workspaceId });
@@ -163,7 +202,20 @@ export class ScheduledTasksPanel extends LitElement {
     if (!messages) return nothing;
     if (task.archived) return messages.t("archived");
     if (task.paused) return messages.t("paused");
-    return task.nextDue === null ? messages.t("noNext") : messages.t("next", { at: this.time(task.nextDue) });
+    return task.nextDue === null ? messages.t("noNext") : messages.t("next", { at: this.time(task.nextDue, task.timezone) });
+  }
+  private renderTargetNames(task: TaskView) {
+    const messages = this.contentValue?.messages;
+    if (!messages) return nothing;
+    const state = this.contextValue?.state;
+    const project = state?.selectedProject?.id === task.projectId ? state.selectedProject.name : this.targetNames?.projects.get(task.projectId);
+    const selectedWorkspace = state?.selectedWorkspace;
+    const workspace = selectedWorkspace?.projectId === task.projectId && selectedWorkspace.id === task.workspaceId
+      ? selectedWorkspace.label : this.targetNames?.workspaces.get(task.projectId)?.get(task.workspaceId);
+    const label = this.targetNames === undefined && (project === undefined || workspace === undefined)
+      ? messages.t("loadingTarget")
+      : messages.t("namedTarget", { project: project ?? messages.t("unknownProject"), workspace: workspace ?? messages.t("unknownWorkspace") });
+    return html`<p class="meta target-names" dir="auto">${label}</p>`;
   }
   private renderNotices(execution: ExecutionView) {
     const messages = this.contentValue?.messages;
@@ -227,17 +279,22 @@ export class ScheduledTasksPanel extends LitElement {
       </div>
     </details>`;
   }
+  private renderConversation(execution: ExecutionView) {
+    const messages = this.contentValue?.messages;
+    if (!messages || execution.sessionId === null) return nothing;
+    return html`<a class="conversation" href=${this.conversationUrl(execution)} @click=${(event: MouseEvent) => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      void this.openConversation(execution);
+    }}>${messages.t("openConversation")}</a>`;
+  }
   private renderExecution(execution: ExecutionView) {
     const messages = this.contentValue?.messages;
     if (!messages) return nothing;
     return html`<div class="execution" data-status=${execution.status}>
       <div class="heading"><strong class="outcome">${messages.t(execution.status)}</strong>
         <span class="meta">${messages.t("recordedAt", { at: this.time(execution.createdAt) })}</span></div>
-      ${execution.sessionId !== null ? html`<a class="conversation" href=${this.conversationUrl(execution)} @click=${(event: MouseEvent) => {
-        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-        event.preventDefault();
-        void this.openConversation(execution);
-      }}>${messages.t("openConversation")}</a>` : nothing}
+      ${this.renderConversation(execution)}
       ${execution.latestReport ? keyed(execution.id, html`<details class="result"><summary>${messages.t("result")}</summary>
         <p class="summary">${execution.latestReport.summary}</p>
       </details>`) : nothing}
@@ -255,40 +312,64 @@ export class ScheduledTasksPanel extends LitElement {
       aria-label=${messages.t("viewTask", { name: task.name })}
       @click=${() => { this.showHistory(task.id); }}>${task.name}</button>`;
   }
-  private renderOverviewTask(task: TaskOverview, upcoming = false) {
+  private renderReportPreview(execution: ExecutionView) {
+    const messages = this.contentValue?.messages;
+    if (!messages || !execution.latestReport) return nothing;
+    const { summary } = execution.latestReport;
+    const preview = reportPreview(summary);
+    return preview.truncated ? keyed(execution.id, html`<div class="overview-report">
+      <details><summary>${messages.t("readReport")}</summary>
+        <p class="summary" dir="auto">${summary}</p>
+      </details>
+      <p class="report-preview" dir="auto">${preview.text}…</p>
+    </div>`) : html`<p class="report-preview" dir="auto">${preview.text}</p>`;
+  }
+  private renderOverviewTask(task: TaskOverview) {
     const messages = this.contentValue?.messages;
     if (!messages) return nothing;
     const execution = task.latestExecution;
-    return html`<article class="task" data-attention=${!upcoming && needsAttention(task)}>
-      <h3>${this.renderTaskLink(task)}</h3>
-      ${upcoming ? html`<p class="next meta">${this.renderNext(task)}</p>` : execution ? html`
-        <div class="heading"><span class="outcome" data-status=${execution.status}>${messages.t(execution.status)}</span>
-          <span class="meta">${this.time(execution.createdAt)}</span></div>
-      ` : nothing}
+    return html`<article class="task" data-attention=${needsAttention(task)}>
+      <div class="task-heading">
+        <h3>${this.renderTaskLink(task)}</h3>
+        <p class="next meta">${this.renderNext(task)}</p>
+      </div>
+      ${this.renderTargetNames(task)}
+      ${execution ? html`
+        <div class="run-line"><strong class="outcome" data-status=${execution.status}>${messages.t(execution.status)}</strong>
+          <span class="meta">${messages.t("recordedAt", { at: this.time(execution.createdAt) })}</span></div>
+        ${this.renderReportPreview(execution)}
+        ${execution.status === "uncertain" ? html`<p class="meta">${messages.t("uncertainHelp")}</p>` : nothing}
+        ${this.renderConversation(execution)}
+      ` : html`<p class="meta">${messages.t("noExecution")}</p>`}
     </article>`;
+  }
+  private renderScopeFilter() {
+    const messages = this.contentValue?.messages;
+    if (!messages) return nothing;
+    const labels = { all: "scopeAll", project: "scopeProject", workspace: "scopeWorkspace" } as const;
+    return html`<div class="ui-tabs scope-filter" role="group" aria-label=${messages.t("filterTasks")}>
+      ${taskScopes.map((scope) => html`<button type="button" class="ui-button ui-tab" aria-pressed=${String(this.scope === scope)}
+        ?disabled=${!this.canUseScope(scope)} @click=${() => { this.scope = scope; this.requestUpdate(); }}>${messages.t(labels[scope])}</button>`)}
+    </div>`;
   }
   private renderOverview() {
     const messages = this.contentValue?.messages;
     if (!messages) return nothing;
     if (this.tasks.length === 0) return html`<section class="empty"><h2 class="view-title" tabindex="-1">${messages.t("emptyTasks")}</h2><p class="meta">${messages.t("emptyGuidance")}</p></section>`;
-    const groups = overviewGroups(this.tasks);
+    const tasks = this.tasksInScope();
+    const groups = overviewGroups(tasks);
     return html`
-      <section aria-labelledby="attention-title">
+      ${tasks.length === 0 ? html`<p class="quiet view-title" tabindex="-1">${messages.t(this.scope === "project" ? "emptyProject" : "emptyWorkspace")}</p>` : nothing}
+      ${groups.attention.length ? html`<section aria-labelledby="attention-title">
         <h2 id="attention-title" class="view-title" tabindex="-1">${messages.t("attention")}</h2>
-        ${groups.attention.length ? groups.attention.map((task) => this.renderOverviewTask(task)) : html`<p class="quiet">${messages.t("noAttention")}</p>`}
-      </section>
-      ${groups.recent.length ? html`<section aria-labelledby="results-title"><h2 id="results-title">${messages.t("recent")}</h2>
-        <p class="section-note meta">${messages.t("resultOrder")}</p>
-        ${groups.recent.map((task) => this.renderOverviewTask(task))}</section>` : nothing}
-      <section aria-labelledby="upcoming-title"><h2 id="upcoming-title">${messages.t("upcoming")}</h2>
-        ${groups.upcoming.length ? groups.upcoming.map((task) => this.renderOverviewTask(task, true)) : html`<p class="quiet">${messages.t("noUpcoming")}</p>`}
-      </section>
-      ${groups.awaiting.length ? html`<section aria-labelledby="awaiting-title"><h2 id="awaiting-title">${messages.t("awaiting")}</h2>
-        ${groups.awaiting.map((task) => this.renderOverviewTask(task))}</section>` : nothing}
-      <details class="all-tasks" ?open=${this.allTasksExpanded} @toggle=${(event: Event) => { if (event.currentTarget instanceof HTMLDetailsElement && event.currentTarget.isConnected) this.allTasksExpanded = event.currentTarget.open; }}><summary>${messages.t("allTasks", { count: this.tasks.length })}</summary>
-        ${[...this.tasks].sort((a, b) => a.name.localeCompare(b.name)).map((task) => html`<article class="task compact">
-          <h3>${this.renderTaskLink(task)}</h3><p class="meta">${this.renderNext(task)}</p></article>`)}
-      </details>`;
+        ${repeat(groups.attention, (task) => task.id, (task) => this.renderOverviewTask(task))}
+      </section>` : nothing}
+      ${groups.current.length ? html`<section aria-labelledby="tasks-title"><h2 id="tasks-title" class="view-title" tabindex="-1">${messages.t("tasks")}</h2>
+        ${repeat(groups.current, (task) => task.id, (task) => this.renderOverviewTask(task))}
+      </section>` : nothing}
+      ${groups.archived.length ? html`<details class="archived-tasks" ?open=${this.archivedExpanded} @toggle=${(event: Event) => { if (event.currentTarget instanceof HTMLDetailsElement && event.currentTarget.isConnected) this.archivedExpanded = event.currentTarget.open; }}><summary class="view-title">${messages.t("archivedTasks", { count: groups.archived.length })}</summary>
+        ${repeat(groups.archived, (task) => task.id, (task) => this.renderOverviewTask(task))}
+      </details>` : nothing}`;
   }
   private renderHistory() {
     const messages = this.contentValue?.messages;
@@ -296,12 +377,14 @@ export class ScheduledTasksPanel extends LitElement {
     const selected = this.tasks.find((task) => task.id === this.taskId);
     return html`
       <div class="detail-heading"><h2 class="view-title" tabindex="-1">${selected?.name ?? messages.t("history")}</h2>
-        ${selected ? html`<p class="next meta">${this.renderNext(selected)}</p>${this.renderPrompt(selected)}${this.renderTechnical(selected)}` : nothing}</div>
+        ${selected ? html`${this.renderTargetNames(selected)}<p class="next meta">${this.renderNext(selected)}</p>${this.renderPrompt(selected)}${this.renderTechnical(selected)}` : nothing}</div>
       <section aria-label=${messages.t("history")}>
         ${selected ? html`<h2>${messages.t("history")}</h2>` : nothing}
         ${this.history.executions.length === 0 && !this.busy ? html`<p class="quiet">${messages.t(selected && this.offset === 0 ? "noExecution" : "emptyHistory")}</p>` : nothing}
         ${this.history.executions.map((execution) => html`<article class="history-entry">
-          ${selected ? nothing : html`<h3>${execution.task.name}</h3>`}${this.renderExecution(execution)}</article>`)}
+          ${selected?.projectId === execution.task.projectId && selected.workspaceId === execution.task.workspaceId ? nothing : html`
+            ${selected ? nothing : html`<h3>${execution.task.name}</h3>`}${this.renderTargetNames(execution.task)}`}
+          ${this.renderExecution(execution)}</article>`)}
         ${this.offset > 0 || this.history.nextOffset !== null ? html`<nav class="pages" aria-label=${messages.t("history")}>
           <button type="button" class="ui-button ui-button--action" ?disabled=${this.busy || this.offset === 0} @click=${() => { this.page(Math.max(0, this.offset - 20)); }}>${messages.t("previous")}</button>
           <button type="button" class="ui-button ui-button--action" ?disabled=${this.busy || this.history.nextOffset === null} @click=${() => { if (this.history.nextOffset !== null) this.page(this.history.nextOffset); }}>${messages.t("nextPage")}</button>
@@ -313,18 +396,21 @@ export class ScheduledTasksPanel extends LitElement {
     if (!content) return nothing;
     const { messages, localization } = content;
     return html`<div class="panel" dir=${localization.direction}>
-      <header class="ui-toolbar"><strong class="ui-toolbar-title title">${messages.t("title")}</strong>
-        <div class="ui-toolbar-group"><button type="button" class="ui-button" ?disabled=${this.busy} @click=${() => this.load()}>${messages.t("refresh")}</button></div></header>
-      <div class="body" aria-busy=${this.busy}>
+      <header class="ui-toolbar">
+        ${this.view === "overview" ? this.renderScopeFilter() : html`<strong class="ui-toolbar-title title">${messages.t("title")}</strong>`}
+        <div class="ui-toolbar-group"><button type="button" class="ui-button" ?disabled=${this.busy} @click=${() => this.load()}>${messages.t("refresh")}</button></div>
+      </header>
+      <div class="body" aria-busy=${this.busy}><div class="reading-width">
         ${this.view !== "overview" ? html`<button type="button" class="ui-button ui-button--action back" @click=${() => this.showOverview()}>${messages.t("overview")}</button>` : nothing}
         ${this.issue ? html`<div role="alert" class="error"><p>${messages.t(this.issue)}</p>${this.diagnostic !== undefined ? html`<details><summary>${messages.t("errorDetails")}</summary><p class="diagnostic">${this.diagnostic}</p></details>` : nothing}</div>` : nothing}
         ${this.busy ? html`<p role="status" class="meta">${messages.t("loading")}</p>` : nothing}
+        ${this.targetNames?.lookupFailed === true ? html`<p class="catalog-warning meta" role="status">${messages.t("targetLookupFailed")}</p>` : nothing}
         ${this.loaded ? this.view === "overview" ? this.renderOverview() : this.renderHistory() : nothing}
         ${this.view === "overview" && this.loaded ? html`<footer>
           <button type="button" class="ui-button ui-button--action" @click=${() => { this.showHistory(); }}>${messages.t("allHistory")}</button>
           <details class="guidance"><summary>${messages.t("manage")}</summary><p class="meta">${messages.t("guidance")}</p></details>
         </footer>` : nothing}
-      </div>
+      </div></div>
     </div>`;
   }
   static override styles = css`
@@ -332,17 +418,23 @@ export class ScheduledTasksPanel extends LitElement {
     .panel { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
     .title { padding-inline: 12px; }
     .body { overflow: auto; padding: 20px 16px; min-height: 0; overflow-wrap: anywhere; }
-    h2 { font-size: 14px; margin: 0; font-weight: 600; }
-    h3 { font-size: inherit; margin: 0; min-width: 0; }
+    .reading-width { max-inline-size: 760px; margin-inline: auto; }
+    h2 { font-size: 15px; margin: 0; font-weight: 600; }
+    h3 { font-size: 14px; margin: 0; min-width: 0; }
     p { margin: 0; line-height: 1.5; }
     section + section { margin-top: 28px; }
-    .heading { display: flex; align-items: baseline; justify-content: space-between; gap: 4px 12px; flex-wrap: wrap; }
+    .scope-filter { flex: 1 1 auto; }
+    .heading, .task-heading, .run-line { display: flex; align-items: baseline; gap: 2px 12px; flex-wrap: wrap; }
+    .heading, .task-heading { justify-content: space-between; }
     .task, .history-entry { display: grid; gap: 8px; padding-block: 14px; border-bottom: 1px solid var(--pi-border-muted); }
     .task[data-attention="true"] .outcome, .execution[data-status="failed"] .outcome, .execution[data-status="errored"] .outcome, .execution[data-status="uncertain"] .outcome { color: var(--pi-danger); }
-    .ui-button.task-link { --ui-control-size: 32px; --ui-control-padding: 4px 0; justify-content: flex-start; text-align: start; white-space: normal; color: var(--pi-text); font: inherit; font-weight: 600; width: 100%; height: auto; }
+    .task .outcome[data-status="completed"] { color: var(--pi-success); }
+    .ui-button.task-link { --ui-control-padding: 4px 0; justify-content: flex-start; text-align: start; white-space: normal; color: var(--pi-text); font: inherit; font-weight: 600; width: 100%; height: auto; }
     .meta { color: var(--pi-text-secondary); font-size: 12px; }
     .quiet { color: var(--pi-text-secondary); padding-top: 10px; }
-    .section-note { margin-top: 6px; }
+    .overview-report summary { width: fit-content; text-decoration: underline; text-underline-offset: 3px; }
+    .overview-report details[open] + .report-preview { display: none; }
+    .report-preview, .overview-report .summary { max-inline-size: 70ch; }
     .next { font-variant-numeric: tabular-nums; }
     .execution, .detail-stack { display: grid; gap: 10px; min-width: 0; }
     .outcome { font-size: 12px; font-weight: 500; }
@@ -353,11 +445,12 @@ export class ScheduledTasksPanel extends LitElement {
     .diagnostic, code { font: 12px var(--pi-mono, monospace); }
     .error { color: var(--pi-danger); margin-bottom: 16px; }
     .error p { margin-block: 8px; }
+    .catalog-warning { margin-block-end: 12px; }
     .conversation { justify-self: start; max-width: 100%; color: var(--pi-text-secondary); text-decoration: underline; text-underline-offset: 3px; padding-block: 4px; line-height: 1.5; }
     .conversation:hover { color: var(--pi-text); }
     .conversation:focus-visible { outline: 2px solid var(--pi-text-secondary); outline-offset: 2px; }
     .pages { display: flex; gap: 8px; padding-block: 16px; }
-    .all-tasks { margin-top: 24px; }
+    .archived-tasks { margin-top: 24px; }
     summary { cursor: pointer; padding-block: 10px; font-size: 12px; color: var(--pi-text-secondary); }
     summary:hover { color: var(--pi-text); }
     summary:focus-visible, .view-title:focus-visible { outline: 2px solid var(--pi-text-secondary); outline-offset: 2px; }
