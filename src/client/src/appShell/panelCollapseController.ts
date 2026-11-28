@@ -45,12 +45,6 @@ export class PanelCollapseController implements ReactiveController {
     this.persistAndUpdate();
   }
 
-  expandWorkspacePanel(): void {
-    if (!this.workspacePanelCollapsed) return;
-    this.workspacePanelCollapsed = false;
-    this.persistAndUpdate();
-  }
-
   private persistAndUpdate(): void {
     try {
       this.storage?.setItem(PANEL_COLLAPSE_STORAGE_KEY, JSON.stringify({
