@@ -10,6 +10,7 @@ import { requireDefaultLocalization } from "./shared/defaultLocalization.js";
 import { requireDefaultStreamingBehavior } from "./shared/streamingBehavior.js";
 import { migrateSessionNamingConfig } from "./configSessionNamingMigration.js";
 import { requireInstallationName } from "./shared/installationName.js";
+import { requireWorktreeFolder } from "./shared/worktreeFolder.js";
 import { requireHostAccess } from "./shared/hostAccess.js";
 import { readConfigDocument, updateConfigDocument } from "./configFileStorage.js";
 
@@ -416,6 +417,7 @@ export function parsePiWebConfig(value: Record<string, unknown>, path = "request
     ...(value["uploads"] !== undefined ? { uploads: parseUploadsConfig(value["uploads"], path) } : {}),
     ...(value["attachments"] !== undefined ? { attachments: parseAttachmentsConfig(value["attachments"], path) } : {}),
     ...(value["maxUploadBytes"] !== undefined ? { maxUploadBytes: parseMaxUploadBytes(value["maxUploadBytes"], "maxUploadBytes", path) } : {}),
+    ...(value["defaultWorktreeFolder"] !== undefined ? { defaultWorktreeFolder: requireWorktreeFolder(value["defaultWorktreeFolder"], `PI WEB config defaultWorktreeFolder: ${path}`) } : {}),
     ...(value["sessionArchive"] !== undefined ? { sessionArchive: parseSessionArchiveConfig(value["sessionArchive"], path) } : {}),
     ...(value["spawnSessions"] !== undefined ? { spawnSessions: parseSpawnSessions(value["spawnSessions"], path) } : {}),
     ...(value["sessionMessages"] !== undefined ? { sessionMessages: parseBooleanKey(value["sessionMessages"], "sessionMessages", path) } : {}),

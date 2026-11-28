@@ -27,6 +27,7 @@ import { SessionArchiveStore, defaultSessionArchiveFilePath } from "./sessions/s
 import { FileSessionUnreadPersistence, SessionUnreadStore, defaultSessionUnreadFilePath } from "./sessions/sessionUnreadStore.js";
 import { ProjectScopedSpawnTargetResolver } from "./sessions/spawnTargetResolver.js";
 import { ProjectService } from "./projects/projectService.js";
+import { DEFAULT_WORKTREE_FOLDER_SETTING } from "./projects/projectWorktreeFolder.js";
 import { ProjectLifecycleService } from "./projects/projectLifecycleService.js";
 import { registerProjectMutationRoutes } from "./sessiond/projectMutationRoutes.js";
 import { ProjectStore, projectStorePath } from "./storage/projectStore.js";
@@ -52,7 +53,7 @@ import {
 } from "../server-plugin-api.js";
 import { getPiWebRuntimeComponent } from "./piWebStatus.js";
 import { SESSIOND_RUNTIME_CAPABILITIES } from "../shared/capabilities.js";
-import { agentSessionDirEnvOverride, effectivePiWebConfig, maxUploadBytes, offlineModeEnabled, piWebDataDir, sessionArchiveDirectory, PI_CODING_AGENT_DIR_ENV, PI_CODING_AGENT_SESSION_DIR_ENV } from "../config.js";
+import { agentSessionDirEnvOverride, effectivePiWebConfig, maxUploadBytes, offlineModeEnabled, piWebConfigEnforcedSettings, piWebDataDir, sessionArchiveDirectory, PI_CODING_AGENT_DIR_ENV, PI_CODING_AGENT_SESSION_DIR_ENV } from "../config.js";
 import { createFilePiWebConfigService } from "./configRoutes.js";
 import { createActiveAgentProfileDescriptor } from "../sessiond/activeAgentProfile.js";
 import { loadServerPluginRecoveryConfig } from "../serverPluginRecovery.js";
@@ -506,7 +507,7 @@ async function createSessionDaemonRuntime() {
 }
 
 function registerSessionDaemonRoutes({ eventHub, machineStatus, statusAttribution, workspaceChanges, projectLifecycle, auth, sessions, pins, serverNotices, runtimeComponent, projects, workspaceProviders, pluginBackends, workspaceProviderRuntime, workspaceRemovals, serverPlugins }: SessionDaemonRuntime): void {
-  registerProjectMutationRoutes(app, projectLifecycle);
+  registerProjectMutationRoutes(app, projectLifecycle, piWebConfigEnforcedSettings(daemonEnvironment)[DEFAULT_WORKTREE_FOLDER_SETTING]);
   registerPluginCatalogRoutes(app, { projects, workspaces: workspaceProviders, sessions, pins });
   registerPluginSessionLifecycleRoutes(app, {
     projects, workspaces: workspaceProviders, sessions, pins,

@@ -1,3 +1,4 @@
+import type { ProjectSettingsUpdate } from "../../../shared/apiTypes";
 import { api as defaultApi, type Project } from "../api";
 import { BrowserErrorReporter, machineBrowserErrorScope, projectBrowserErrorScope } from "../browserErrors";
 import { selectedMachineId, type GetState, type NavigationDestinationOptions, type NavigationSelection, type SetState } from "./types";
@@ -15,7 +16,7 @@ export interface ProjectTrustChoice {
 }
 
 export interface ProjectControllerDependencies {
-  api?: Pick<typeof defaultApi, "projects" | "addProject" | "renameProject" | "closeProject" | "workspaces" | "setWorkspaceTrust">;
+  api?: Pick<typeof defaultApi, "projects" | "addProject" | "updateProjectSettings" | "closeProject" | "workspaces" | "setWorkspaceTrust">;
   navigateToProject?: (project: Project | undefined, options?: NavigationDestinationOptions) => Promise<boolean>;
   captureNavigation?: () => NavigationSelection;
 }
@@ -99,18 +100,18 @@ export class ProjectController {
     await this.api.setWorkspaceTrust(project.id, mainWorkspace.id, trusted, machineId);
   }
 
-  /** Rejects on failure so the rename dialog can show the error and stay open. */
-  async renameProject(projectId: string, name: string, machineId: string): Promise<void> {
-    const project = await this.api.renameProject(projectId, name, machineId);
+  /** Rejects on save failure so the settings dialog can show the error and stay open. */
+  async updateProjectSettings(projectId: string, update: ProjectSettingsUpdate, machineId: string): Promise<void> {
+    const project = await this.api.updateProjectSettings(projectId, update, machineId);
     const state = this.getState();
     if (selectedMachineId(state) !== machineId) return;
-    const selected = state.selectedProject?.id === project.id;
+    const selected = state.selectedProject?.id === project.id ? state.selectedProject : undefined;
     this.setState({
       projects: state.projects.map((candidate) => candidate.id === project.id ? project : candidate),
-      ...(selected ? { selectedProject: project } : {}),
+      ...(selected === undefined ? {} : { selectedProject: project }),
     });
-    // A plain folder's workspace is labeled with its project name.
-    if (selected) await this.workspaces.refreshSelectedProjectTopology();
+    // A plain folder's workspace is labeled with its project name. Refresh without reselecting.
+    if (selected !== undefined && selected.name !== project.name) void this.workspaces.refreshSelectedProjectTopology();
   }
 
   async closeProject(projectId: string) {

@@ -17,6 +17,8 @@ import { requireDefaultLocalization } from "../../../shared/defaultLocalization"
 import { requireLogLevel } from "../../../shared/logLevel";
 import { requireDefaultStreamingBehavior } from "../../../shared/streamingBehavior";
 import { requireInstallationName } from "../../../shared/installationName";
+import { requireWorktreeFolder } from "../../../shared/worktreeFolder";
+import type { ProjectSettings } from "../../../shared/apiTypes";
 import { requireHostAccess } from "../../../shared/hostAccess";
 import { parseRuntimeActivityPresentation } from "../../../shared/sessionActivityPresentation";
 
@@ -160,7 +162,24 @@ function optionalMachineStatus(record: Record<string, unknown>, key: string): Ma
 
 export function parseProject(value: unknown): Project {
   const record = requireRecord(value);
-  return { id: requireString(record, "id"), name: requireString(record, "name"), path: requireString(record, "path"), createdAt: requireString(record, "createdAt") };
+  return {
+    id: requireString(record, "id"), name: requireString(record, "name"), path: requireString(record, "path"), createdAt: requireString(record, "createdAt"),
+    ...optionalField("worktreeFolder", record["worktreeFolder"] === undefined ? undefined : requireWorktreeFolder(record["worktreeFolder"], "Project worktree folder")),
+  };
+}
+
+export function parseProjectSettings(value: unknown): ProjectSettings {
+  const record = requireRecord(value);
+  const folder = requireRecord(record["worktreeFolder"]);
+  const source = folder["source"];
+  if (source !== "project" && source !== "machine" && source !== "deployment" && source !== "environment" && source !== "suggested") throw new Error("Invalid worktree folder source");
+  return {
+    project: parseProject(record["project"]),
+    worktreeFolder: {
+      path: requireString(folder, "path"), source,
+      ...optionalField("enforcedBy", optionalString(folder, "enforcedBy")),
+    },
+  };
 }
 
 export function parseWorkspace(value: unknown): Workspace {
@@ -1568,6 +1587,7 @@ function parsePiWebConfigValues(value: unknown): PiWebConfigValues {
     ...optionalField("askUser", optionalBoolean(record, "askUser")),
     ...optionalField("environmentFacts", optionalBoolean(record, "environmentFacts")),
     ...optionalField("extensionDialogsTimeoutMs", optionalNumber(record, "extensionDialogsTimeoutMs")),
+    ...optionalField("defaultWorktreeFolder", record["defaultWorktreeFolder"] === undefined ? undefined : requireWorktreeFolder(record["defaultWorktreeFolder"], "Default worktree folder")),
     ...optionalField("sessionArchive", optionalSessionArchive(record["sessionArchive"])),
   };
   return config;

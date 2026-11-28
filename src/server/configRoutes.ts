@@ -21,6 +21,7 @@ export const SELECTED_MACHINE_CONFIG_KEYS = [
   "uploads",
   "attachments",
   "maxUploadBytes",
+  "defaultWorktreeFolder",
   "spawnSessions",
   "sessionMessages",
   "crossProjectSessionMessages",

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Project, WorkspaceProviderAuthorityResolution } from "../../shared/apiTypes.js";
+import type { Project, ProjectSettingsUpdate, WorkspaceProviderAuthorityResolution } from "../../shared/apiTypes.js";
 import { SessionUnreadStore, type SessionUnreadMutation } from "../sessions/sessionUnreadStore.js";
 import { MachineStatusService } from "../status/machineStatusService.js";
 import { CachedWorkspaceAttribution } from "../status/workspaceAttribution.js";
@@ -187,19 +187,19 @@ describe("eventual project unread cleanup", () => {
     expect(fixture.unread.hasUnread()).toBe(false);
   });
 
-  it("serializes renames with other catalog writes", async () => {
+  it("serializes project settings with other catalog writes", async () => {
     const fixture = lifecycle([kept]);
     let finishAdd: (() => void) | undefined;
     fixture.projects.add.mockImplementationOnce((input) => new Promise((resolve) => {
       finishAdd = () => { resolve(project("added", input.path)); };
     }));
     const adding = fixture.service.add({ path: removed.path });
-    const renaming = fixture.service.rename(kept.id, "Kept");
+    const updating = fixture.service.updateSettings(kept.id, { set: { name: "Kept", worktreeFolder: "trees" } });
     await vi.advanceTimersByTimeAsync(0);
-    expect(fixture.projects.rename).not.toHaveBeenCalled();
+    expect(fixture.projects.updateSettings).not.toHaveBeenCalled();
     finishAdd?.();
     await adding;
-    await expect(renaming).resolves.toMatchObject({ id: kept.id, name: "Kept" });
+    await expect(updating).resolves.toMatchObject({ id: kept.id, name: "Kept", worktreeFolder: "trees" });
   });
 
   it("cancels pending cleanup on shutdown", async () => {
@@ -222,10 +222,10 @@ function lifecycle(initial: Project[], paths = new Map<string, string[]>()) {
       registered.push(added);
       return Promise.resolve(added);
     }),
-    rename: vi.fn((id: string, name: string) => {
-      const renamed = { ...registered.find((entry) => entry.id === id) ?? project(id, "/"), name };
-      registered = registered.map((entry) => entry.id === id ? renamed : entry);
-      return Promise.resolve(renamed);
+    updateSettings: vi.fn((id: string, update: ProjectSettingsUpdate) => {
+      const updated = { ...registered.find((entry) => entry.id === id) ?? project(id, "/"), ...update.set };
+      registered = registered.map((entry) => entry.id === id ? updated : entry);
+      return Promise.resolve(updated);
     }),
     close: vi.fn((id: string) => {
       registered = registered.filter((entry) => entry.id !== id);

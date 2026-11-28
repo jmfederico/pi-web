@@ -1,8 +1,8 @@
 import type { ProjectService } from "./projectService.js";
-import type { Project, WorkspaceProviderAuthorityResolution } from "../../shared/apiTypes.js";
+import type { Project, ProjectSettingsUpdate, WorkspaceProviderAuthorityResolution } from "../../shared/apiTypes.js";
 
 interface ProjectLifecycleDependencies {
-  projects: Pick<ProjectService, "list" | "add" | "rename" | "close">;
+  projects: Pick<ProjectService, "list" | "add" | "updateSettings" | "close">;
   workspaces: { resolve(project: Project): Promise<WorkspaceProviderAuthorityResolution> };
   hasUnread(): boolean;
   reconcileUnreadWorkspaces(cwds: Iterable<string>): Promise<void>;
@@ -52,8 +52,8 @@ export class ProjectLifecycleService {
   }
 
   /** Serialized with add/close so catalog writes cannot overwrite each other. Ids and paths, and so status attribution, are unchanged. */
-  rename(id: string, name: string): Promise<Project> {
-    return this.serialized(() => this.dependencies.projects.rename(id, name));
+  updateSettings(id: string, update: ProjectSettingsUpdate): Promise<Project> {
+    return this.serialized(() => this.dependencies.projects.updateSettings(id, update));
   }
 
   close(id: string): Promise<void> {

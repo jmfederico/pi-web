@@ -14,7 +14,7 @@ describe("projectStorePath", () => {
   });
 });
 
-describe("ProjectStore.rename", () => {
+describe("ProjectStore.updateSettings", () => {
   let dir: string;
   let store: ProjectStore;
   beforeEach(async () => {
@@ -27,7 +27,7 @@ describe("ProjectStore.rename", () => {
     const project = await store.add({ path: "/srv/app" });
     const other = await store.add({ path: "/srv/other" });
 
-    await expect(store.rename(project.id, "  Billing app  ")).resolves.toEqual({ ...project, name: "Billing app" });
+    await expect(store.updateSettings(project.id, { set: { name: "  Billing app  " } })).resolves.toEqual({ ...project, name: "Billing app" });
     expect(await new ProjectStore(join(dir, "projects.json")).list()).toEqual([{ ...project, name: "Billing app" }, other]);
     // Re-adding the same folder keeps the chosen name.
     await expect(store.add({ path: "/srv/app" })).resolves.toMatchObject({ id: project.id, name: "Billing app" });
@@ -35,11 +35,11 @@ describe("ProjectStore.rename", () => {
 
   it("restores the folder name for a blank name", async () => {
     const project = await store.add({ name: "Custom", path: "/srv/app" });
-    await expect(store.rename(project.id, "   ")).resolves.toMatchObject({ name: "app" });
+    await expect(store.updateSettings(project.id, { set: { name: "   " } })).resolves.toMatchObject({ name: "app" });
   });
 
   it("reports an unknown project without writing", async () => {
-    await expect(store.rename("missing", "Name")).resolves.toBeUndefined();
+    await expect(store.updateSettings("missing", { set: { name: "Name" } })).resolves.toBeUndefined();
     expect(await store.list()).toEqual([]);
   });
 });

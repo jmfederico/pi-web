@@ -42,6 +42,22 @@ describe("Settings source, enforcement and reset controls", () => {
     expect(panel.onReset).not.toHaveBeenCalled();
   });
 
+  it("edits the machine worktree default without saving inherited values", async () => {
+    const panel = new SettingsGeneralPanel();
+    panel.machineConfigResponse = { ...configResponse({}), effectiveConfig: { defaultWorktreeFolder: "../inherited" } };
+    panel.onSaveMachineConfig = vi.fn();
+    document.body.append(panel);
+    await panel.updateComplete;
+    const folder = panel.shadowRoot?.querySelector<HTMLInputElement>('input[name="defaultWorktreeFolder"]');
+    if (!folder) throw new Error("Missing worktree folder input");
+    expect(folder.value).toBe("");
+    expect(panel.shadowRoot?.textContent).toContain("../inherited");
+    folder.value = "/opt/worktrees";
+    folder.dispatchEvent(new Event("input"));
+    folder.form?.dispatchEvent(new Event("submit", { cancelable: true }));
+    expect(panel.onSaveMachineConfig).toHaveBeenCalledExactlyOnceWith({ defaultWorktreeFolder: "/opt/worktrees" });
+  });
+
   it("locks theme browser and gateway actions and preserves a hidden browser choice", async () => {
     const panel = new SettingsThemePanel();
     panel.configResponse = { ...configResponse({ defaultTheme: { themeId: "saved", auto: false } }), enforcedSettings: { "/defaultTheme": "PI_WEB_DEFAULT_THEME" } };
@@ -96,13 +112,13 @@ describe("Settings source, enforcement and reset controls", () => {
 
   it("clears folder overrides and saves other machine changes in one update", async () => {
     const panel = new SettingsGeneralPanel();
-    panel.machineConfigResponse = configResponse({ installationName: "Saved", uploads: { defaultFolder: "saved-uploads" }, attachments: { defaultFolder: "saved-attachments" }, pathAccess: { allowedPaths: ["/saved"] } });
+    panel.machineConfigResponse = configResponse({ installationName: "Saved", uploads: { defaultFolder: "saved-uploads" }, attachments: { defaultFolder: "saved-attachments" }, defaultWorktreeFolder: "../saved-worktrees", pathAccess: { allowedPaths: ["/saved"] } });
     panel.onSaveMachineConfig = vi.fn();
     document.body.append(panel);
     await panel.updateComplete;
     const root = panel.shadowRoot;
-    for (const placeholder of [".pi-web/uploads", ".pi-web/attachments"]) {
-      const input = root?.querySelector<HTMLInputElement>(`input[placeholder="${placeholder}"]`);
+    for (const selector of ['input[placeholder=".pi-web/uploads"]', 'input[placeholder=".pi-web/attachments"]', 'input[name="defaultWorktreeFolder"]']) {
+      const input = root?.querySelector<HTMLInputElement>(selector);
       if (!input) throw new Error("Missing folder input");
       input.value = "";
       input.dispatchEvent(new Event("input"));
@@ -112,7 +128,7 @@ describe("Settings source, enforcement and reset controls", () => {
     paths.value = "";
     paths.dispatchEvent(new Event("input"));
     root?.querySelector("form")?.dispatchEvent(new Event("submit", { cancelable: true }));
-    expect(panel.onSaveMachineConfig).toHaveBeenCalledExactlyOnceWith({ pathAccess: { allowedPaths: [] } }, ["/uploads/defaultFolder", "/attachments/defaultFolder"]);
+    expect(panel.onSaveMachineConfig).toHaveBeenCalledExactlyOnceWith({ pathAccess: { allowedPaths: [] } }, ["/uploads/defaultFolder", "/attachments/defaultFolder", "/defaultWorktreeFolder"]);
   });
 
 });

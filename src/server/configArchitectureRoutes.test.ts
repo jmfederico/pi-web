@@ -48,6 +48,23 @@ describe("layered config updates", () => {
     }
   });
 
+  it("validates the selected-machine worktree folder and resets it without writing deployment defaults", async () => {
+    writeFileSync(defaults, JSON.stringify({ defaultWorktreeFolder: "../deployed" }));
+    writeFileSync(writable, JSON.stringify({ installationName: "Office" }));
+    start();
+    const url = "/api/machines/local/config";
+    const invalid = await app.inject({ method: "PATCH", url, payload: { set: { defaultWorktreeFolder: " " } } });
+    expect(invalid.statusCode).toBe(400);
+    const saved = await app.inject({ method: "PATCH", url, payload: { set: { defaultWorktreeFolder: " ../saved " } } });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json<PiWebConfigResponse>()).toMatchObject({ config: { defaultWorktreeFolder: "../saved" }, configSources: { "/defaultWorktreeFolder": "config" } });
+    const reset = await app.inject({ method: "PATCH", url, payload: { unset: ["/defaultWorktreeFolder"] } });
+    expect(reset.statusCode).toBe(200);
+    expect(reset.json<PiWebConfigResponse>()).toMatchObject({ config: { installationName: "Office" }, effectiveConfig: { defaultWorktreeFolder: "../deployed" }, configSources: { "/defaultWorktreeFolder": "defaults" } });
+    expect(JSON.parse(readFileSync(writable, "utf8"))).toEqual({ installationName: "Office" });
+    expect(JSON.parse(readFileSync(defaults, "utf8"))).toEqual({ defaultWorktreeFolder: "../deployed" });
+  });
+
   it("edits machine logging, inherits unset levels, and preserves access policy overrides", async () => {
     writeFileSync(defaults, JSON.stringify({ logLevel: "warn" }));
     writeFileSync(writable, JSON.stringify({ httpAccessLog: true }));

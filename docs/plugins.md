@@ -125,7 +125,7 @@ They appear only in the session list, not the top Session pill or transcript bub
 
 ### Discover projects on the context's machine
 
-Plugins can list registered projects and suggest directories using the same search as **Add Project**, even before a project is selected. Discovery is read-only and stays on the initiating machine; remote failures do not substitute gateway projects. Older hosts may lack project discovery; update PI WEB when a plugin needs it.
+Plugins can list registered projects and suggest directories using the same search as **Add Project**, even before a project is selected. Discovery is read-only and stays on the initiating machine; remote failures do not substitute gateway projects. Where available, `projects.getWorktreeFolder(projectId)` returns the resolved parent path on that machine, with `configured: false` for the suggested fallback rather than a saved convention. Older hosts may lack the discovery or worktree-folder method.
 
 ### Attach text context to a message
 
@@ -150,6 +150,12 @@ Plugin navigation can open a complete destination or patch the current URL, sele
 **Session IDs.** Browser URLs, plugin navigation, and PI WEB session APIs use exact, case-sensitive IDs. Pass the full `session.id` returned by the session catalog or creation response. Abbreviated IDs produce a missing-session destination instead of matching or expanding a prefix; update old shortened links and integrations to use full IDs. Short IDs shown in labels are display-only.
 
 Older hosts ignore the options argument and still treat the destination as a complete replacement; upgrade PI WEB before relying on patch behavior or history replacement. Hosts without destination-query support also ignore `query`; upgrade before relying on exact item selection.
+
+### Workspace creation action
+
+An action contribution can set `placement: "workspace-create"`. The first enabled action with that placement also appears as **+** in the visible Workspaces heading for the selected project. Use it to open a creation flow, not to run an operation immediately. The action remains in the action palette on hosts that do not support the placement.
+
+After a successful mutation, `context.refreshProjectWorkspaces?.()` re-lists the project captured by the action on its machine without changing the selected workspace or conversation. Check for the optional method on older hosts.
 
 ### Message actions
 
@@ -634,9 +640,12 @@ Open the **Tasks** tab to run a command in a workspace terminal. These command b
 
 ### Workflows
 
-Workflows is a shipped Pi package for PI WEB's opinionated prompts and shortcuts. **Create Worktree** opens a dialog for the base branch and purpose or description. The base defaults to the main workspace's current branch, or `HEAD` when detached; local and remote branches are suggested. Submitting starts a fresh conversation in the selected project's main workspace and submits `/worktree` with the details. The action is a shortcut for the same prompt template used by the command, not a separate agent workflow. You can invoke it from another worktree or without a selected conversation; your current conversation and draft remain untouched.
+Select **+** next to **Workspaces** to open **New worktree** in **Create manually** mode. Both modes are also available in the action palette and share a **Starting point** field. It defaults to `HEAD` (the main workspace's current commit).
 
-The action requires the Workflows server plugin and API v5. It uses public project/workspace discovery and session capabilities, including on remote machines. If dispatch cannot be confirmed, inspect Sessions before trying again; the dialog does not resend automatically. The agent creates the worktree, so opening its conversation is not confirmation that creation has finished.
+- **Create manually:** Enter a worktree name. PI WEB suggests a new branch and shows the path under the project's default worktree folder. You can edit the branch or use **Change location** to browse folders or enter a full path on the project's machine. PI WEB creates the worktree and refreshes the list without starting an agent. Choose **Go to worktree** to open it or **Close** to stay where you are. The project must be registered at a Git checkout root. An existing branch name is rejected, not reused.
+- **Ask an agent:** Describe the task. The agent uses your description to name the worktree and its new branch. PI WEB sends `/worktree` in a new conversation in the main workspace. Choose **Go to conversation** to open it or **Close** to stay with your current conversation and draft. If you've set a worktree parent folder, the panel shows it and passes it to the agent. Otherwise the agent follows the project's conventions. If dispatch cannot be confirmed, check Sessions in the main workspace before trying again. A started conversation does not mean the worktree is ready.
+
+Manage the parent folder in **Project settings…** or in the machine's [Default worktree folder](config.md#default-worktree-folder) setting. Changing the location in **New worktree** does not change either setting. Both modes use the Workflows server plugin on the selected machine.
 
 You can also use `/worktree` directly in a conversation with the free-form hint **Purpose and/or base branch**:
 

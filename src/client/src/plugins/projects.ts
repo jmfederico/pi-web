@@ -1,7 +1,7 @@
 import type { PluginProjects } from "../../../plugin-api";
 import type { projectsApi } from "../api/clients";
 
-type ProjectDiscoveryClient = Pick<typeof projectsApi, "projects" | "projectDirectories">;
+type ProjectDiscoveryClient = Pick<typeof projectsApi, "projects" | "projectDirectories" | "projectSettings">;
 
 /** Capture the host context's machine once; never read live selection or substitute local data. */
 export function createPluginProjects(client: ProjectDiscoveryClient, machineId: string): PluginProjects {
@@ -9,5 +9,9 @@ export function createPluginProjects(client: ProjectDiscoveryClient, machineId: 
     machineId,
     listProjects: async () => (await client.projects(machineId)).map(({ id, name, path }) => ({ id, name, path })),
     suggestDirectories: async (query: string) => (await client.projectDirectories(query, machineId)).map(({ path }) => ({ path })),
+    getWorktreeFolder: async (projectId: string) => {
+      const { worktreeFolder } = await client.projectSettings(projectId, machineId);
+      return { path: worktreeFolder.path, configured: worktreeFolder.source !== "suggested" };
+    },
   });
 }

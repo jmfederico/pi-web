@@ -39,7 +39,7 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
   @property({ type: Boolean, reflect: true }) collapsible = false;
   @property({ type: Boolean, reflect: true }) collapsed = false;
   @property({ attribute: false }) onSelect?: (project: Project) => void;
-  @property({ attribute: false }) onRename?: (project: Project) => void;
+  @property({ attribute: false }) onProjectSettings?: (project: Project) => void;
   @property({ attribute: false }) onClose?: (project: Project) => void;
   @property({ attribute: false }) onMove?: (project: Project, direction: -1 | 1) => void;
   /** The parent persists a drop relative to a visible neighbor. */
@@ -144,7 +144,7 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
                             <button class="ui-button ui-menu-item" data-move ?disabled=${index === 0} @click=${() => { this.onMove?.(project, -1); }}>${messages.t("moveUp")}</button>
                             <button class="ui-button ui-menu-item" data-move ?disabled=${index === this.projects.length - 1} @click=${() => { this.onMove?.(project, 1); }}>${messages.t("moveDown")}</button>
                           `}
-                          ${this.onRename === undefined ? null : html`<button class="ui-button ui-menu-item" data-rename @click=${() => { this.rename(project); }}>${messages.t("renameProject")}</button>`}
+                          ${this.onProjectSettings === undefined ? null : html`<button class="ui-button ui-menu-item" data-project-settings @click=${(event: MouseEvent) => { this.openProjectSettings(project, event); }}>${messages.t("projectSettingsAction")}</button>`}
                           <button class="ui-button ui-menu-item" title=${messages.t("closeProject")} @click=${() => { this.close(project); }}>${messages.t("closeProject")}</button>
                         </div>
                         ${this.renderRootTrust(project)}
@@ -254,9 +254,13 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
     }
   }
 
-  private rename(project: Project) {
+  private openProjectSettings(project: Project, event: MouseEvent) {
+    // Give the modal a stable return target before removing the menu that launched it.
+    if (event.currentTarget instanceof HTMLElement) {
+      event.currentTarget.closest("[data-project-id]")?.querySelector<HTMLElement>(".action-menu-toggle")?.focus({ preventScroll: true });
+    }
     this.openMenuProjectId = undefined;
-    this.onRename?.(project);
+    this.onProjectSettings?.(project);
   }
 
   private close(project: Project) {
