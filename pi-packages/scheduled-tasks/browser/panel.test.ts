@@ -26,7 +26,7 @@ function activate(request = vi.fn<(operation: string, input: JsonValue, options?
   const requestRender = vi.fn();
   const context: ApplicationPanelContextV5 = {
     machine: { id: "captured-machine", name: "Machine", kind: "remote" }, state: {},
-    catalog: { version: 1, machineId: "captured-machine", projects: { list: vi.fn(), get: vi.fn() }, workspaces: { list: vi.fn(), get: vi.fn() }, sessions: { list: vi.fn(), get: vi.fn() } },
+    catalog: { version: 1, machineId: "captured-machine", projects: { list: () => Promise.resolve([]), get: vi.fn() }, workspaces: { list: () => Promise.resolve([]), get: vi.fn() }, sessions: { list: vi.fn(), get: vi.fn() } },
     backend: { machineId: "captured-machine", forScope }, navigate,
     host: { requestRender }, prompt: { insertText: vi.fn(), getText: () => "draft", getSelection: () => null },
   };
@@ -123,15 +123,12 @@ describe("Scheduled tasks dashboard", () => {
     expect(target.root.querySelector("script")).toBeNull();
     expect(target.root.querySelector(".run-warning, .result")).toBeNull();
     // A retained due timestamp is not an upcoming dispatch while the task is paused.
-    expect(target.root.querySelector('[aria-labelledby="upcoming-title"] article')).toBeNull();
-    expect(target.root.querySelector('[aria-labelledby="awaiting-title"] [data-status="dispatched"]')).not.toBeNull();
-    expect(target.root.querySelector('[aria-labelledby="results-title"]')).toBeNull();
-    expect(target.root.querySelector(".conversation, .summary")).toBeNull();
+    expect(target.root.querySelector(".task .next")?.textContent).toBe("Paused");
+    expect(target.root.querySelector('.task [data-status="dispatched"]')?.textContent).toBe("No outcome reported");
+    expect(target.root.querySelector(".task .summary")).toBeNull();
     target.mount({ ...target.context, state: { mainView: "workspace" } }); await target.element.updateComplete;
     expect(target.request).toHaveBeenCalledTimes(1);
-    button(target.root, `View task: ${task.name}`).click();
-    await vi.waitFor(() => { expect(target.root.querySelector(".history-entry")).not.toBeNull(); });
-    const link = target.root.querySelector<HTMLAnchorElement>("a.conversation");
+    const link = target.root.querySelector<HTMLAnchorElement>(".task a.conversation");
     if (!link) throw new Error("Missing conversation link");
     const destination = new URL(link.href);
     expect(Object.fromEntries(destination.searchParams)).toEqual({ machine: "captured-machine", project: "stored-project", workspace: "stored-workspace", session: "stored-conversation", view: "chat" });
@@ -141,6 +138,27 @@ describe("Scheduled tasks dashboard", () => {
     await vi.waitFor(() => { expect(target.navigate).toHaveBeenCalledExactlyOnceWith({ machineId: "captured-machine", projectId: "stored-project", workspaceId: "stored-workspace", sessionId: "stored-conversation", view: "chat" }); });
     expect(target.context.prompt.getText()).toBe("draft");
   });
+  it("follows workspace selection without reloading tasks, and falls back to all tasks when the selection is cleared", async () => {
+    const target = setup(); await ready(target);
+    expect(button(target.root, "Current project").disabled).toBe(true);
+    expect(button(target.root, "Current workspace").disabled).toBe(true);
+    const project = { id: task.projectId, name: "Reviews", path: "/reviews" };
+    const workspace = { id: task.workspaceId, projectId: project.id, label: "Main", path: project.path, isMain: true };
+    target.mount({ ...target.context, state: { selectedProject: project, selectedWorkspace: workspace } });
+    await target.element.updateComplete;
+    button(target.root, "Current workspace").click();
+    await target.element.updateComplete;
+    expect(target.root.querySelector(".target-names")?.textContent).toBe("Reviews / Main");
+    target.mount({ ...target.context, state: { selectedProject: project, selectedWorkspace: { ...workspace, id: "other-workspace" } } });
+    await target.element.updateComplete;
+    expect(target.root.querySelector(".task")).toBeNull();
+    expect(button(target.root, "Current workspace").getAttribute("aria-pressed")).toBe("true");
+    target.mount({ ...target.context, state: { selectedProject: project } });
+    await target.element.updateComplete;
+    expect(target.root.querySelector(".task")).not.toBeNull();
+    expect(button(target.root, "All tasks").getAttribute("aria-pressed")).toBe("true");
+    expect(target.request).toHaveBeenCalledExactlyOnceWith("overview", {}, expect.anything());
+  });
   it("opens full task reports and technical disclosures with lazy task-filtered, paginated history", async () => {
     const summary = `First line <script>\n${"Full report detail. ".repeat(40)}\nFinal finding <failure>`;
     const reported = { ...execution, status: "errored", dispatchError: "Diagnostic <failure>", latestReport: { summary } };
@@ -148,8 +166,9 @@ describe("Scheduled tasks dashboard", () => {
       ? { tasks: [{ ...task, latestExecution: reported }] }
       : { executions: [reported], nextOffset: 20 })));
     await ready(target);
-    expect(target.root.textContent).not.toContain(summary);
-    expect(target.root.querySelector(".summary, .conversation, .run-warning")).toBeNull();
+    expect(target.root.querySelector(".task .report-preview")?.textContent).toBe("First line <script>…");
+    expect(target.root.querySelector<HTMLDetailsElement>(".task details")?.open).toBe(false);
+    expect(target.root.querySelector(".task .run-warning")).toBeNull();
     button(target.root, `View task: ${task.name}`).click();
     await vi.waitFor(() => { expect(target.request).toHaveBeenCalledWith("history", { taskId: "task", limit: 20, offset: 0 }, expect.anything()); });
     await vi.waitFor(() => { expect(target.root.querySelector(".history-entry .summary")?.textContent).toBe(summary); });
@@ -191,7 +210,7 @@ describe("Scheduled tasks dashboard", () => {
       ? { tasks: [{ ...configured, latestExecution: run }] }
       : { executions: [run], nextOffset: null })));
     await ready(target);
-    const result = target.root.querySelector('[aria-labelledby="results-title"] article');
+    const result = target.root.querySelector(".task");
     expect(result?.querySelector('[data-status="completed"]')).not.toBeNull();
     expect(result?.querySelector(".run-warning")).toBeNull();
     expect(result?.querySelector("details")).toBeNull();
@@ -262,7 +281,7 @@ describe("Scheduled tasks dashboard", () => {
     expect(target.root.querySelector(".history-entry h3")?.textContent).toBe(task.name);
     const historyCalls = target.request.mock.calls.filter(([operation]) => operation === "history").length;
     button(target.root, "Overview").click();
-    await vi.waitFor(() => { expect(target.root.querySelector('[aria-labelledby="awaiting-title"]')).not.toBeNull(); });
+    await vi.waitFor(() => { expect(target.root.querySelector(".task")).not.toBeNull(); });
     expect(target.root.querySelector(".history-entry")).toBeNull();
     expect(target.request.mock.calls.at(-1)?.[0]).toBe("overview");
     expect(target.request.mock.calls.filter(([operation]) => operation === "history")).toHaveLength(historyCalls);

@@ -12,23 +12,28 @@ const localization = createPluginLocalization(service, "scheduled-tasks", "@jmfe
 const activation = plugin.activate({ apiVersion: 5, pluginId: "scheduled-tasks", runtimePluginId: "scheduled-tasks", signal: lifetime.signal, lifetimeSignal: lifetime.signal, localization, html, svg: html });
 activation.start({ signal: lifetime.signal, capabilities: { resolve: (token) => token.parse(stylesheetIntegrationCapability) } });
 const task = { id: "review", name: "Daily issue classification and compatibility review", revision: 2, projectId: "project-with-a-long-registered-id", workspaceId: "main-workspace", schedule: { kind: "cron", expression: "0 9 * * *" }, timezone: "Europe/Madrid", paused: false, archived: false, nextDue: "2026-10-02T07:00:00Z" };
-const execution = { id: "execution-review", task, trigger: "scheduled", createdAt: "2026-10-01T07:00:00Z", status: "completed", sessionId: "review-conversation", dispatchError: null, latestReport: { summary: "Reviewed 18 issues. Classified 4 new reports and recorded compatibility findings.\nShared notes: docs/compatibility.md" } };
+const project = { id: task.projectId, name: "PI WEB", path: "/fixture/pi-web" };
+const otherProject = { id: "dependency-project", name: "Dependency tools", path: "/fixture/dependencies" };
+const workspace = { id: task.workspaceId, projectId: project.id, path: project.path, label: "Main", isMain: true };
+const investigation = { ...workspace, id: "investigation-workspace", label: "Investigation", isMain: false };
+const otherWorkspace = { ...workspace, projectId: otherProject.id, path: otherProject.path };
+const execution = { id: "execution-review", task, trigger: "scheduled", createdAt: "2026-10-01T07:00:00Z", status: "completed", sessionId: "review-conversation", dispatchError: null, latestReport: { summary: "Reviewed 18 issues. Classified 4 new reports and recorded compatibility findings.\nShared notes: docs/compatibility.md\n" + "Detailed findings are available in the conversation. ".repeat(35) } };
 const request = (operation: string, input: JsonValue): Promise<JsonValue> => {
   if (operation === "overview") return Promise.resolve({ tasks: [
     { ...task, latestExecution: execution },
     { ...task, id: "backup", name: "Check the nightly backup", latestExecution: { ...execution, status: "errored", sessionId: "backup-conversation", latestReport: { summary: "The backup could not be verified. The storage service needs your attention before tonight’s run." } } },
-    { ...task, id: "pending", name: "Weekly dependency review", latestExecution: { ...execution, status: "dispatched", latestReport: null } },
-    { ...task, id: "paused", name: "One-off investigation", schedule: { kind: "once", at: "2026-10-03T08:00:00Z" }, paused: true, nextDue: null, latestExecution: null },
+    { ...task, id: "pending", projectId: otherProject.id, name: "Weekly dependency review", latestExecution: { ...execution, task: { ...task, projectId: otherProject.id }, status: "dispatched", latestReport: null } },
+    { ...task, id: "paused", workspaceId: investigation.id, name: "One-off investigation", schedule: { kind: "once", at: "2026-10-03T08:00:00Z" }, paused: true, nextDue: null, latestExecution: null },
     { ...task, id: "archived", name: "Archived compatibility check", archived: true, latestExecution: null },
   ] });
-  if (operation === "history") return Promise.resolve({ executions: [{ ...execution, id: JSON.stringify(input), latestReport: { summary: execution.latestReport.summary + "\n" + "Detailed findings are available in the conversation. ".repeat(35) } }], nextOffset: null });
+  if (operation === "history") return Promise.resolve({ executions: [{ ...execution, id: JSON.stringify(input) }], nextOffset: null });
   if (operation === "inspect") return Promise.resolve({ ...task, prompt: "Review new issues.\n" + "LongReference".repeat(60) });
   if (operation === "execution") return Promise.resolve({ ...execution, task: { ...task, prompt: "Review the issues saved for this run.\nRecord the findings." } });
   throw new Error(`Dashboard attempted non-read operation ${operation}`);
 };
 const context: ApplicationPanelContextV5 = {
-  machine: { id: "local", name: "Local", kind: "local" }, state: {},
-  catalog: { version: 1, machineId: "local", projects: { list: () => Promise.resolve([]), get: () => Promise.reject(new Error("unused")) }, workspaces: { list: () => Promise.resolve([]), get: () => Promise.reject(new Error("unused")) }, sessions: { list: () => Promise.resolve([]), get: () => Promise.reject(new Error("unused")) } },
+  machine: { id: "local", name: "Local", kind: "local" }, state: { selectedProject: project, selectedWorkspace: workspace },
+  catalog: { version: 1, machineId: "local", projects: { list: () => Promise.resolve([project, otherProject]), get: () => Promise.reject(new Error("unused")) }, workspaces: { list: (projectId) => Promise.resolve(projectId === project.id ? [workspace, investigation] : [otherWorkspace]), get: () => Promise.reject(new Error("unused")) }, sessions: { list: () => Promise.resolve([]), get: () => Promise.reject(new Error("unused")) } },
   backend: { machineId: "local", forScope: () => ({ request }) },
   navigate: (destination) => { document.body.dataset["destination"] = JSON.stringify(destination); return Promise.resolve(); },
   host: { requestRender: () => undefined }, prompt: { insertText: () => undefined, getText: () => "draft", getSelection: () => null },
