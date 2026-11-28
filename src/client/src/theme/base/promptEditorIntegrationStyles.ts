@@ -6,18 +6,22 @@ import { css } from "lit";
  * Appearance still comes from theme properties; surrounding layout stays layered.
  */
 export const promptEditorIntegrationStyles = css`
-  .editor-input:has(.editor-chat-navigation) .cm-content { min-height: max(50px, 2.8em); padding-right: 66px; }
-  .markdown-editor .cm-editor { box-sizing: border-box; width: 100%; min-height: 54px; max-height: 220px; resize: none; overflow: hidden; border-radius: 0; border: 0; background: var(--pi-bg); color: var(--pi-text); font: var(--pi-control-font-size, 16px)/1.4 var(--pi-control-font-family, var(--pi-font, system-ui, sans-serif)); padding-block: 12px; }
-  .markdown-editor .cm-scroller { max-height: 196px; overflow-y: auto; font-family: var(--pi-control-font-family, var(--pi-font, system-ui, sans-serif)); line-height: 1.4; }
-  .markdown-editor .cm-content { min-height: 2.8em; padding: 0 52px 0 16px; caret-color: var(--pi-text); text-align: start; unicode-bidi: plaintext; }
-  :host(:dir(rtl)) .markdown-editor .cm-content { padding: 0 16px 0 52px; }
+  .editor-input:has(.editor-chat-navigation) .cm-content { min-height: calc(max(50px, 2.8em) + 24px); padding-right: 66px; }
+  .markdown-editor .cm-editor { box-sizing: border-box; width: 100%; min-height: 54px; max-height: 220px; resize: none; overflow: hidden; border-radius: 0; border: 0; background: var(--pi-bg); color: var(--pi-text); font: var(--pi-control-font-size, 16px)/1.4 var(--pi-control-font-family, var(--pi-font, system-ui, sans-serif)); }
+  /* Vertical breathing room lives on the editable content, not the editor
+     frame, so a long press anywhere in the box gets the native edit menu. */
+  .markdown-editor .cm-scroller { max-height: 220px; overflow-y: auto; font-family: var(--pi-control-font-family, var(--pi-font, system-ui, sans-serif)); line-height: 1.4; }
+  .markdown-editor .cm-content { min-height: calc(2.8em + 24px); padding: 12px 52px 12px 16px; caret-color: var(--pi-text); text-align: start; unicode-bidi: plaintext; }
+  :host(:dir(rtl)) .markdown-editor .cm-content { padding: 12px 16px 12px 52px; }
   :host(:dir(rtl)) .editor-input:has(.editor-chat-navigation) .cm-content { padding-left: 66px; }
   .markdown-editor .cm-line { padding: 0; unicode-bidi: plaintext; }
-  .markdown-editor .cm-placeholder { color: var(--pi-dim); }
-  /* CodeMirror measures this element for the empty-document caret. Keep the
-     layout box here, not on its pseudo-element, so the caret has a height. */
-  .markdown-editor .prompt-placeholder { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-  .markdown-editor .prompt-placeholder::before { content: attr(data-placeholder); }
+  /* The empty hint is out of flow, so the empty line holds only CodeMirror's
+     line break and native caret placement needs no correction (see PromptEditor). */
+  .markdown-editor .cm-content { position: relative; }
+  .markdown-editor .cm-content[data-empty]::before { content: attr(data-placeholder); position: absolute; top: 12px; left: 16px; right: 52px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; color: var(--pi-dim); pointer-events: none; }
+  .editor-input:has(.editor-chat-navigation) .cm-content[data-empty]::before { right: 66px; }
+  :host(:dir(rtl)) .markdown-editor .cm-content[data-empty]::before { left: 52px; right: 16px; }
+  :host(:dir(rtl)) .editor-input:has(.editor-chat-navigation) .cm-content[data-empty]::before { left: 66px; }
   .markdown-editor .cm-argument-hint { color: var(--pi-dim); pointer-events: none; }
   .markdown-editor .cm-focused { outline: none; }
   /* drawSelection() supplies its own caret/selection; match the selected palette

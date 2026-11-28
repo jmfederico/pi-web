@@ -3,7 +3,7 @@ import { promptEditorMessages as messages } from "../promptEditorMessages";
 import { defaultKeymap, history, historyKeymap, indentWithTab, insertNewlineAndIndent } from "@codemirror/commands";
 import { markdown, deleteMarkupBackward, insertNewlineContinueMarkup } from "@codemirror/lang-markdown";
 import { EditorSelection, EditorState, Compartment } from "@codemirror/state";
-import { drawSelection, EditorView, keymap, placeholder } from "@codemirror/view";
+import { drawSelection, EditorView, keymap } from "@codemirror/view";
 import { defaultHighlightStyle, indentOnInput, indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, html, nothing, type PropertyValues, type TemplateResult } from "lit";
@@ -41,13 +41,13 @@ function shouldShowAttachSourceMenu(): boolean {
   return typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
 }
 
-// Text nodes inside contenteditable can become iOS keyboard context, even in
-// non-editable placeholder widgets. Render the hint with CSS-generated content.
-function createPromptPlaceholder(): HTMLElement {
-  const hint = document.createElement("span");
-  hint.className = "prompt-placeholder";
-  hint.dataset["placeholder"] = messages.t("placeholder");
-  return hint;
+// The empty-prompt hint is CSS-generated content on the editable element, not a
+// CodeMirror placeholder widget. Text nodes inside contenteditable can become
+// iOS keyboard context, and a widget inside the empty line makes iOS place the
+// caret after it; CodeMirror then moves the selection before it, which
+// dismisses the native long-press edit menu.
+function emptyDocumentContentAttributes(state: EditorState): Record<string, string> {
+  return state.doc.length === 0 ? { "data-empty": "" } : {};
 }
 
 type PromptSendArgs = [text: string, streamingBehavior?: "steer" | "followUp", attachments?: PromptAttachment[], delivery?: PromptAttachmentDelivery, folder?: string, chips?: readonly StagedPromptChip[]];
@@ -445,6 +445,7 @@ export class PromptEditor extends LitElement {
           EditorView.lineWrapping,
           drawSelection(),
           EditorView.contentAttributes.of((view) => inputAssistanceContentAttributes(view.state.sliceDoc(0, view.state.selection.main.head))),
+          EditorView.contentAttributes.of((view) => emptyDocumentContentAttributes(view.state)),
           EditorView.domEventHandlers({
             keyup: (event) => this.handleEditorKeyUp(event),
             blur: () => {
@@ -476,10 +477,8 @@ export class PromptEditor extends LitElement {
   }
 
   private editorLabels() {
-    return [
-      placeholder(createPromptPlaceholder),
-      EditorView.contentAttributes.of({ "aria-placeholder": messages.t("placeholder"), "aria-label": messages.t("message") }),
-    ];
+    const hint = messages.t("placeholder");
+    return EditorView.contentAttributes.of({ "aria-placeholder": hint, "data-placeholder": hint, "aria-label": messages.t("message") });
   }
 
   private syncEditorDoc() {
