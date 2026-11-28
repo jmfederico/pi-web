@@ -2239,7 +2239,7 @@ export class PiWebApp extends LitElement {
         }
         if (restoreFocus) void this.focusPanelToggle(side);
       },
-      resizeStart: () => this.startPanelResize(side),
+      resizeStart: () => this.measuredPanelWidth(side) ?? this.panelResize.panelWidth(side),
       resize: (width: number) => { this.panelResize.resizePanel(side, width, { persist: false }); },
       resizeEnd: () => { this.panelResize.persistPanelSizes(); },
       reset: () => { this.resetResizablePanel(side); },
@@ -2264,7 +2264,7 @@ export class PiWebApp extends LitElement {
       <app-panel-edge-control
         side="navigation"
         controls="navigation-panel"
-        .resizable=${!this.appShell.isMobileNavigationLayout}
+        .resizable=${!this.appShell.isMobileNavigationLayout && !this.panelCollapse.navigationPanelCollapsed}
         .panelWidth=${this.panelResize.panelWidth("navigation")}
         .minWidth=${constraints.minWidth}
         .maxWidth=${constraints.maxWidth}
@@ -2282,7 +2282,7 @@ export class PiWebApp extends LitElement {
       <app-panel-edge-control
         side="workspace"
         controls="workspace-panel"
-        .resizable=${!this.appShell.isMobileNavigationLayout}
+        .resizable=${this.isDesktopSideBySideLayout()}
         .panelWidth=${this.panelResize.panelWidth("workspace")}
         .minWidth=${constraints.minWidth}
         .maxWidth=${constraints.maxWidth}
@@ -2292,12 +2292,6 @@ export class PiWebApp extends LitElement {
         .onReset=${this.workspacePanelActions.reset}
       ></app-panel-edge-control>
     `;
-  }
-
-  private startPanelResize(side: ResizablePanelSide): number {
-    if (side === "navigation") this.panelCollapse.expandNavigationPanel();
-    else this.panelCollapse.expandWorkspacePanel();
-    return this.measuredPanelWidth(side) ?? this.panelResize.panelWidth(side);
   }
 
   private resizablePanelConstraints(side: ResizablePanelSide): PanelResizeConstraints {
