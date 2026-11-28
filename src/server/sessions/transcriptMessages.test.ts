@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { annotateAssistantThinkingLevel, historyMessagesFromEntries } from "./transcriptMessages.js";
-import { pageMessagesAtSafeBoundary } from "./messagePaging.js";
+import { pageMessages } from "./messagePaging.js";
 import { projectBrowserMessageResponse } from "../browserMessageProjection.js";
 import { parseMessagePage } from "../../client/src/api/parsers.js";
 import { normalizeMessages } from "../../client/src/chatMessages.js";
@@ -30,14 +30,14 @@ describe("durable transcript identity", () => {
     const original = structuredClone(entries);
     const messages = historyMessagesFromEntries(entries);
     const linesForPage = (before?: number, limit?: number) => normalizeMessages(parseMessagePage(
-      projectBrowserMessageResponse(pageMessagesAtSafeBoundary(messages, { ...(before === undefined ? {} : { before }), ...(limit === undefined ? {} : { limit }) })),
+      projectBrowserMessageResponse(pageMessages(messages, { ...(before === undefined ? {} : { before }), ...(limit === undefined ? {} : { limit }) })),
     ).messages);
 
     expect(linesForPage().map((line) => line.entryId)).toEqual([
       "user-1", "assistant-1", "custom-1", "compact-1", "branch-1", "user-2", "bash-1",
     ]);
     expect(linesForPage(5, 1).map((line) => line.entryId)).toEqual([
-      "user-1", "assistant-1", "custom-1", "compact-1", "branch-1",
+      "branch-1",
     ]);
     expect(linesForPage()[1]?.meta?.thinkingLevel).toBe("high");
     expect(historyMessagesFromEntries(entries)).toEqual(messages);

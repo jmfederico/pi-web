@@ -48,7 +48,7 @@ import {
   validateSessionStateNamespace, type SessionStateData, type SessionStateSnapshot, type SessionStateWrite,
 } from "../../shared/sessionState.js";
 import type { SessionMedia } from "./sessionMediaIndex.js";
-import { pageMessagesAtSafeBoundary } from "./messagePaging.js";
+import { pageMessages } from "./messagePaging.js";
 import { clientSessionFirstMessagePreview } from "./clientSessionPreview.js";
 import type { SessionEventHub } from "../realtime/sessionEventHub.js";
 import { BUILTIN_COMMANDS } from "./builtinCommands.js";
@@ -2969,7 +2969,7 @@ export class PiSessionService implements SessionRouteService {
     const userCount = messages.filter((message) => isRecord(message) && message["role"] === "user").length;
     const echoes = (this.pendingPromptEchoes.get(session) ?? []).filter((echo) => echo.userIndex >= userCount);
     messages.push(...echoes.map((echo) => echo.message));
-    const messagePage = pageMessagesAtSafeBoundary(messages, page);
+    const messagePage = pageMessages(messages, page);
     return {
       page: { ...messagePage, messages: messagePage.messages.map((message) => this.browserTranscriptMessage(session, message)) },
       status: this.statusFromSession(session, transcriptMessageCount(branch) + echoes.length),
@@ -2980,7 +2980,7 @@ export class PiSessionService implements SessionRouteService {
 
   async messages(ref: PiSessionRef, page?: { before?: number; limit?: number }): Promise<ClientMessagePage> {
     const session = await this.getOrOpen(ref);
-    const result = pageMessagesAtSafeBoundary(historyMessagesFromEntries(await this.readableSessionBranch(ref, session)), page);
+    const result = pageMessages(historyMessagesFromEntries(await this.readableSessionBranch(ref, session)), page);
     return { ...result, messages: result.messages.map((message) => this.browserTranscriptMessage(session, message)) };
   }
 
