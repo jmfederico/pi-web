@@ -1,6 +1,7 @@
 import { MachineSwitcher } from "../../src/client/src/components/MachineSwitcher";
 import { pluginStyles } from "../../src/client/src/plugins/styles";
 import { ProjectList } from "../../src/client/src/components/ProjectList";
+import { ProjectSettingsDialog } from "../../src/client/src/components/ProjectSettingsDialog";
 import { WorkspaceList } from "../../src/client/src/components/WorkspaceList";
 import { SessionList } from "../../src/client/src/components/SessionList";
 import { trustApi, workspacesApi, type SessionInfo } from "../../src/client/src/api";
@@ -39,6 +40,16 @@ if (selectedProject === undefined) throw new Error("Missing project fixture");
 projects.selected = selectedProject;
 projects.statusSnapshot = snapshot;
 projects.onSelect = (project) => { projects.selected = project; result.textContent = `projects:${project.id}`; };
+projects.onProjectSettings = (project) => {
+  const dialog = new ProjectSettingsDialog();
+  dialog.loadSettings = () => Promise.resolve({
+    project,
+    worktreeFolder: { path: `/mnt/worktrees/${"long-directory-name-".repeat(6)}project`, source: "machine" },
+  });
+  dialog.onCancel = () => { dialog.remove(); };
+  dialog.onSubmit = () => { dialog.remove(); return Promise.resolve(); };
+  document.body.append(dialog);
+};
 projects.onMove = () => undefined;
 projects.collapsible = true;
 projects.onToggleCollapsed = () => { projects.collapsed = !projects.collapsed; };

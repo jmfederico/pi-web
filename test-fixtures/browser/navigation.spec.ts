@@ -51,6 +51,28 @@ test("shared row hooks preserve full-width geometry, long names, and keyboard na
   }
 });
 
+test("project settings opens from the row menu and returns keyboard focus to its trigger", async ({ page }) => {
+  const trigger = page.locator('project-list [data-project-id="p2"] .action-menu-toggle');
+  await trigger.click();
+  await page.getByRole("button", { name: "Project settings…" }).click();
+  const panel = page.locator("project-settings-dialog");
+  await expect(panel.getByRole("dialog", { name: "Project settings" })).toBeVisible();
+  // The controls are slotted into the native dialog from the panel's shadow root.
+  const close = panel.getByRole("button", { name: "Close project settings" });
+  await expect(close).toBeFocused();
+  const name = panel.getByRole("textbox", { name: "Display name" });
+  await expect(name).toHaveValue("Second project");
+  await page.keyboard.press("Tab");
+  await expect(name).toBeFocused();
+  const body = panel.locator(".ui-dialog-body");
+  expect(await body.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  await page.screenshot({ path: test.info().outputPath("project-settings.png") });
+  await page.keyboard.press("Escape");
+  await expect(panel).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await expect(page.locator('project-list [data-project-id="p1"]')).toHaveAttribute("data-current", "true");
+});
+
 test("less-specific themes override navigation presentation across component roots", async ({ page }) => {
   const labels = lists.map(({ host }) => page.locator(host).locator(".ui-nav-row-label").first());
   const positions = await Promise.all(labels.map((label) => label.evaluate((element) => element.getBoundingClientRect().left)));
