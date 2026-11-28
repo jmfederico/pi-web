@@ -404,6 +404,7 @@ export class ScheduledTasksPanel extends LitElement {
         ${this.view !== "overview" ? html`<button type="button" class="ui-button ui-button--action back" @click=${() => this.showOverview()}>${messages.t("overview")}</button>` : nothing}
         ${this.issue ? html`<div role="alert" class="error"><p>${messages.t(this.issue)}</p>${this.diagnostic !== undefined ? html`<details><summary>${messages.t("errorDetails")}</summary><p class="diagnostic">${this.diagnostic}</p></details>` : nothing}</div>` : nothing}
         ${this.busy ? html`<p role="status" class="meta">${messages.t("loading")}</p>` : nothing}
+        ${this.targetNames?.lookupFailed === true ? html`<p class="catalog-warning meta" role="status">${messages.t("targetLookupFailed")}</p>` : nothing}
         ${this.loaded ? this.view === "overview" ? this.renderOverview() : this.renderHistory() : nothing}
         ${this.view === "overview" && this.loaded ? html`<footer>
           <button type="button" class="ui-button ui-button--action" @click=${() => { this.showHistory(); }}>${messages.t("allHistory")}</button>
@@ -444,6 +445,7 @@ export class ScheduledTasksPanel extends LitElement {
     .diagnostic, code { font: 12px var(--pi-mono, monospace); }
     .error { color: var(--pi-danger); margin-bottom: 16px; }
     .error p { margin-block: 8px; }
+    .catalog-warning { margin-block-end: 12px; }
     .conversation { justify-self: start; max-width: 100%; color: var(--pi-text-secondary); text-decoration: underline; text-underline-offset: 3px; padding-block: 4px; line-height: 1.5; }
     .conversation:hover { color: var(--pi-text); }
     .conversation:focus-visible { outline: 2px solid var(--pi-text-secondary); outline-offset: 2px; }

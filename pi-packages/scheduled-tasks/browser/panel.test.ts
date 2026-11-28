@@ -138,6 +138,20 @@ describe("Scheduled tasks dashboard", () => {
     await vi.waitFor(() => { expect(target.navigate).toHaveBeenCalledExactlyOnceWith({ machineId: "captured-machine", projectId: "stored-project", workspaceId: "stored-workspace", sessionId: "stored-conversation", view: "chat" }); });
     expect(target.context.prompt.getText()).toBe("draft");
   });
+  it("keeps tasks and known names visible when a catalog request fails, and clears the notice after Refresh", async () => {
+    const target = setup();
+    const project = { id: task.projectId, name: "Reviews", path: "/reviews" };
+    vi.spyOn(target.context.catalog.projects, "list").mockResolvedValue([project]);
+    vi.spyOn(target.context.catalog.workspaces, "list")
+      .mockRejectedValueOnce(new Error("Catalog unavailable"))
+      .mockResolvedValueOnce([{ id: task.workspaceId, projectId: project.id, label: "Main", path: project.path, isMain: true }]);
+    await vi.waitFor(() => { expect(target.root.querySelector(".catalog-warning")?.textContent).toContain("Refresh"); });
+    expect(button(target.root, `View task: ${task.name}`).disabled).toBe(false);
+    expect(target.root.querySelector(".target-names")?.textContent).toBe("Reviews / Unknown workspace");
+    button(target.root, "Refresh").click();
+    await vi.waitFor(() => { expect(target.root.querySelector(".target-names")?.textContent).toBe("Reviews / Main"); });
+    expect(target.root.querySelector(".catalog-warning")).toBeNull();
+  });
   it("follows workspace selection without reloading tasks, and falls back to all tasks when the selection is cleared", async () => {
     const target = setup(); await ready(target);
     expect(button(target.root, "Current project").disabled).toBe(true);

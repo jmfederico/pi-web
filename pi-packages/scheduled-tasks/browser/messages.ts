@@ -17,6 +17,7 @@ export default {
   emptyProject: text("No scheduled tasks in this project", "The project scope contains no tasks"),
   emptyWorkspace: text("No scheduled tasks in this workspace", "The workspace scope contains no tasks"),
   loadingTarget: text("Looking up project and workspace…", "Loading the task target names"),
+  targetLookupFailed: text("Couldn’t load some project or workspace names. Select Refresh to try again.", "A catalog request failed but the task list is still available"),
   namedTarget: text<{ project: string; workspace: string }>("{project} / {workspace}", "Task target: project name followed by workspace label"),
   unknownProject: text("Unknown project", "The registered project name is unavailable"),
   unknownWorkspace: text("Unknown workspace", "The registered workspace label is unavailable"),
