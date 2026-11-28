@@ -215,6 +215,8 @@ export interface PiWebConfigValues {
   attachments?: PiWebAttachmentsConfig;
   /** Maximum accepted HTTP request body size in bytes (uploads/attachments). */
   maxUploadBytes?: number;
+  /** Machine default parent folder for new Git worktrees. */
+  defaultWorktreeFolder?: string;
   /** Destination for newly archived transcripts; the index remains in the PI WEB data directory. */
   sessionArchive?: { directory?: string };
   /** When true, LLMs can start new sessions via the spawn_session tool. */
@@ -420,6 +422,22 @@ export interface Project {
   name: string;
   path: string;
   createdAt: string;
+  /** Machine-local override for the parent folder of new worktrees. */
+  worktreeFolder?: string;
+}
+
+export interface ProjectSettingsUpdate {
+  set?: { name?: string; worktreeFolder?: string };
+  unset?: "/worktreeFolder"[];
+}
+
+export interface ProjectSettings {
+  project: Project;
+  worktreeFolder: {
+    path: string;
+    source: "project" | "machine" | "deployment" | "environment" | "suggested";
+    enforcedBy?: string;
+  };
 }
 
 export interface WorkspaceEffectiveConfig {

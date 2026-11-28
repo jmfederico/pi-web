@@ -15,6 +15,7 @@ import { installTerminalRendererFake } from "../../../../pi-web-plugins/terminal
 import type { PluginRuntimeContext as InternalPluginRuntimeContext } from "../plugins/types";
 import type { RequiredTerminalBrowserComposition, RequiredTerminalBrowserFacadeV1 } from "../plugins/requiredTerminalFacade";
 import { initialAppState, type AppState } from "../appState";
+import { api } from "../api";
 import { PI_WEB_PLUGIN_LIFECYCLE_VERSION } from "../../../shared/apiTypes";
 import { loadExternalPlugins } from "../plugins/external";
 import { PluginRegistry } from "../plugins/registry";
@@ -82,6 +83,37 @@ it("uses bundled Info with no project, workspace or session and follows selectio
   expect(panel.shadowRoot?.textContent).toContain("Remote box");
   expect(panel.shadowRoot?.textContent).not.toContain("/repo");
   expect(activate).toHaveBeenCalledOnce();
+});
+
+it("runs the selected project's workspace creation action and refreshes just its workspace list", async () => {
+  const create = vi.fn(async (context: { refreshProjectWorkspaces?: () => void | Promise<void> }) => {
+    await context.refreshProjectWorkspaces?.();
+  });
+  const unrelated = vi.fn();
+  const app = await mount({ apiVersion: 5, name: "Workspace provider", activate: () => ({ contributions: { actions: [
+    { id: "other", title: "Other", run: unrelated },
+    { id: "disabled", title: "Disabled", placement: "workspace-create", enabled: () => false, run: unrelated },
+    { id: "new", title: "New workspace", placement: "workspace-create", run: create },
+  ] } }) });
+  const navigation = () => app.shadowRoot?.querySelector("app-navigation-panel")?.shadowRoot;
+  const workspaces = () => navigation()?.querySelector("workspace-list")?.shadowRoot;
+  const newButton = () => workspaces()?.querySelector<HTMLButtonElement>('button[aria-label="New workspace"]');
+  expect(newButton()).toBeFalsy();
+  const session = { id: "session", cwd: "/repo", path: "/private/session.jsonl", created: "now", modified: "now", messageCount: 1, firstMessage: "Conversation" };
+  patchState(app, { selectedMachine: remote, projects: [project], selectedProject: project, selectedWorkspace: workspace, selectedSession: session, sessions: [session], workspaces: [workspace] });
+  await settle(app);
+  const createdWorkspace = { ...workspace, id: "created", path: "/new-worktree", label: "created", isMain: false };
+  const list = vi.spyOn(api, "workspaceResolution").mockResolvedValue({ projectId: project.id, status: "provider", ownerPluginId: "test-provider", workspaces: [workspace, createdWorkspace], diagnostics: [] });
+  const button = newButton();
+  if (!button) throw new Error("Workspace creation button was unavailable");
+  button.click();
+  await vi.waitFor(() => {
+    expect(list).toHaveBeenCalledExactlyOnceWith(project.id, remote.id);
+    expect(workspaces()?.querySelector('[data-workspace-id="created"]')).toBeTruthy();
+  });
+  expect(workspaces()?.querySelector('[data-workspace-id="workspace"]')?.getAttribute("data-current")).toBe("true");
+  expect(navigation()?.querySelector("session-list")?.shadowRoot?.querySelector('[data-session-id="session"]')?.getAttribute("data-current")).toBe("true");
+  expect(unrelated).not.toHaveBeenCalled();
 });
 
 it("gives public callbacks fresh basic selections and keeps workspace-only tabs out until selected", async () => {

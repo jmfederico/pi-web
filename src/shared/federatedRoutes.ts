@@ -66,6 +66,7 @@ export const FEDERATED_HTTP_ROUTES = [
   })),
   { method: "GET", path: "/projects" },
   { method: "POST", path: "/projects" },
+  { method: "GET", path: "/projects/:projectId/settings" },
   { method: "PATCH", path: "/projects/:projectId" },
   { method: "DELETE", path: "/projects/:projectId" },
   { method: "GET", path: "/project-directories" },

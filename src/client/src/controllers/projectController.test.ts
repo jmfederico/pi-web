@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { localization } from "../localization/browser";
 import type { AppState } from "../appState";
 import { initialAppState } from "../appState";
-import type { Project, Workspace } from "../api";
+import type { ProjectSettingsUpdate } from "../../../shared/apiTypes";
+import type { Project, SessionInfo, Workspace } from "../api";
 import { browserErrorScopeKey, machineBrowserErrorScope, projectBrowserErrorScope } from "../browserErrors";
 import { ProjectController } from "./projectController";
 
@@ -28,7 +29,7 @@ describe("ProjectController", () => {
       () => state, (patch) => { state = { ...state, ...patch }; },
       { selectProject, forgetProject: vi.fn(), clearSelection: vi.fn(), refreshSelectedProjectTopology: vi.fn() },
       { api: {
-        projects: vi.fn(), addProject: () => Promise.resolve(added), renameProject: vi.fn(), closeProject: vi.fn(),
+        projects: vi.fn(), addProject: () => Promise.resolve(added), updateProjectSettings: vi.fn(), closeProject: vi.fn(),
         workspaces: () => Promise.resolve([]), setWorkspaceTrust: setTrust,
       } },
     );
@@ -58,7 +59,7 @@ describe("ProjectController", () => {
           workspaces: vi.fn().mockResolvedValue([]),
           projects: vi.fn().mockRejectedValue(failure),
           addProject: vi.fn(),
-          renameProject: vi.fn(),
+          updateProjectSettings: vi.fn(),
           closeProject: vi.fn(),
           setWorkspaceTrust: vi.fn(),
         },
@@ -84,7 +85,7 @@ describe("ProjectController", () => {
           workspaces: vi.fn().mockResolvedValue([]),
           projects: vi.fn(),
           addProject: vi.fn(),
-          renameProject: vi.fn(),
+          updateProjectSettings: vi.fn(),
           closeProject: vi.fn().mockRejectedValue(failure),
           setWorkspaceTrust: vi.fn(),
         },
@@ -110,7 +111,7 @@ describe("ProjectController", () => {
           workspaces: vi.fn().mockResolvedValue([]),
           projects: vi.fn(),
           addProject: vi.fn().mockRejectedValue(failure),
-          renameProject: vi.fn(),
+          updateProjectSettings: vi.fn(),
           closeProject: vi.fn(),
           setWorkspaceTrust: vi.fn(),
         },
@@ -142,7 +143,7 @@ describe("ProjectController", () => {
           workspaces: vi.fn().mockResolvedValue([workspace(addedProject.id, addedProject.path)]),
           projects: vi.fn(),
           addProject: vi.fn().mockResolvedValue(addedProject),
-          renameProject: vi.fn(),
+          updateProjectSettings: vi.fn(),
           closeProject: vi.fn(),
           setWorkspaceTrust: vi.fn().mockRejectedValue(failure),
         },
@@ -174,7 +175,7 @@ describe("ProjectController", () => {
           workspaces: vi.fn().mockResolvedValue([]),
           projects: vi.fn().mockResolvedValue([currentProject]),
           addProject: vi.fn(),
-          renameProject: vi.fn(),
+          updateProjectSettings: vi.fn(),
           closeProject: vi.fn(),
           setWorkspaceTrust: vi.fn(),
         },
@@ -209,7 +210,7 @@ describe("ProjectController", () => {
           workspaces: vi.fn().mockResolvedValue([]),
           projects: vi.fn(),
           addProject: vi.fn(),
-          renameProject: vi.fn(),
+          updateProjectSettings: vi.fn(),
           closeProject: () => closeRequest,
           setWorkspaceTrust: vi.fn(),
         },
@@ -249,7 +250,7 @@ describe("ProjectController", () => {
           workspaces: vi.fn().mockResolvedValue([workspace(addedProject.id, addedProject.path)]),
           projects: vi.fn(),
           addProject: vi.fn().mockResolvedValue(addedProject),
-          renameProject: vi.fn(),
+          updateProjectSettings: vi.fn(),
           closeProject: vi.fn(),
           setWorkspaceTrust: vi.fn(),
         },
@@ -275,7 +276,7 @@ describe("ProjectController", () => {
           workspaces: vi.fn().mockResolvedValue([workspace(addedProject.id, addedProject.path)]),
           projects: vi.fn(),
           addProject: vi.fn().mockResolvedValue(addedProject),
-          renameProject: vi.fn(),
+          updateProjectSettings: vi.fn(),
           closeProject: vi.fn(),
           setWorkspaceTrust: vi.fn(),
         },
@@ -314,7 +315,7 @@ describe("ProjectController", () => {
           workspaces: vi.fn().mockResolvedValue([workspace(addedProject.id, addedProject.path)]),
           projects: vi.fn(),
           addProject: vi.fn().mockResolvedValue(addedProject),
-          renameProject: vi.fn(),
+          updateProjectSettings: vi.fn(),
           closeProject: vi.fn(),
           setWorkspaceTrust,
         },
@@ -339,7 +340,7 @@ describe("ProjectController", () => {
           workspaces: vi.fn().mockResolvedValue([workspace(addedProject.id, addedProject.path)]),
           projects: vi.fn(),
           addProject: vi.fn().mockResolvedValue(addedProject),
-          renameProject: vi.fn(),
+          updateProjectSettings: vi.fn(),
           closeProject: vi.fn(),
           setWorkspaceTrust,
         },
@@ -372,7 +373,7 @@ describe("ProjectController", () => {
           workspaces: vi.fn().mockResolvedValue([workspace(addedProject.id, addedProject.path)]),
           projects: vi.fn(),
           addProject: vi.fn().mockResolvedValue(addedProject),
-          renameProject: vi.fn(),
+          updateProjectSettings: vi.fn(),
           closeProject: vi.fn(),
           setWorkspaceTrust,
         },
@@ -404,7 +405,7 @@ describe("ProjectController", () => {
           workspaces: vi.fn().mockResolvedValue([workspace(addedProject.id, addedProject.path)]),
           projects: vi.fn(),
           addProject: vi.fn().mockResolvedValue(addedProject),
-          renameProject: vi.fn(),
+          updateProjectSettings: vi.fn(),
           closeProject: vi.fn(),
           setWorkspaceTrust,
         },
@@ -438,7 +439,7 @@ describe("ProjectController", () => {
       { selectProject: vi.fn(), forgetProject: vi.fn(), clearSelection: vi.fn(), refreshSelectedProjectTopology: vi.fn() },
       {
         api: {
-          projects: vi.fn(), renameProject: vi.fn(), closeProject: vi.fn(), workspaces, setWorkspaceTrust,
+          projects: vi.fn(), updateProjectSettings: vi.fn(), closeProject: vi.fn(), workspaces, setWorkspaceTrust,
           addProject: async () => {
             if (phase === "creation") await pause();
             return addedProject;
@@ -484,7 +485,7 @@ describe("ProjectController", () => {
       (patch) => { state = { ...state, ...patch }; },
       { selectProject: vi.fn(), forgetProject: vi.fn(), clearSelection: vi.fn(), refreshSelectedProjectTopology: vi.fn() },
       {
-        api: { projects: vi.fn(), renameProject: vi.fn(), closeProject: vi.fn(), addProject: vi.fn().mockResolvedValue(addedProject), workspaces, setWorkspaceTrust },
+        api: { projects: vi.fn(), updateProjectSettings: vi.fn(), closeProject: vi.fn(), addProject: vi.fn().mockResolvedValue(addedProject), workspaces, setWorkspaceTrust },
         navigateToProject,
       },
     );
@@ -531,7 +532,7 @@ describe("ProjectController", () => {
           workspaces: vi.fn().mockResolvedValue([]),
           projects: vi.fn(),
           addProject: vi.fn(),
-          renameProject: vi.fn(),
+          updateProjectSettings: vi.fn(),
           closeProject: vi.fn().mockResolvedValue(undefined),
           setWorkspaceTrust: vi.fn(),
         },
@@ -546,39 +547,58 @@ describe("ProjectController", () => {
     expect(clearSelection).toHaveBeenCalledOnce();
   });
 
-  it("renames a project in place and refreshes the selected project's workspace labels", async () => {
-    const renamed = project("renamed", "/renamed");
+  it("updates project settings in place without changing the selected workspace or session", async () => {
+    const selected = project("selected", "/selected");
     const other = project("other", "/other");
-    let state: AppState = { ...initialAppState(), projects: [renamed, other], selectedProject: renamed };
+    const selectedWorkspace = workspace(selected.id, selected.path);
+    const selectedSession: SessionInfo = { id: "s1", cwd: selected.path, path: "/s1.jsonl", created: "now", modified: "now", messageCount: 1, firstMessage: "Hello", persisted: true };
+    let state: AppState = { ...initialAppState(), projects: [selected, other], selectedProject: selected, selectedWorkspace, selectedSession };
     const refreshSelectedProjectTopology = vi.fn();
-    const renameProject = vi.fn((id: string, name: string) => Promise.resolve({ ...(id === renamed.id ? renamed : other), name }));
+    const selectProject = vi.fn();
+    const updateProjectSettings = vi.fn<(id: string, update: ProjectSettingsUpdate, machineId?: string) => Promise<Project>>();
     const controller = new ProjectController(
       () => state,
       (patch) => { state = { ...state, ...patch }; },
-      { selectProject: vi.fn(), forgetProject: vi.fn(), clearSelection: vi.fn(), refreshSelectedProjectTopology },
-      { api: { projects: vi.fn(), addProject: vi.fn(), renameProject, closeProject: vi.fn(), workspaces: vi.fn(), setWorkspaceTrust: vi.fn() } },
+      { selectProject, forgetProject: vi.fn(), clearSelection: vi.fn(), refreshSelectedProjectTopology },
+      { api: { projects: vi.fn(), addProject: vi.fn(), updateProjectSettings, closeProject: vi.fn(), workspaces: vi.fn(), setWorkspaceTrust: vi.fn() } },
     );
 
-    await controller.renameProject(renamed.id, "Billing", "local");
+    const updated = { ...selected, name: "Billing", worktreeFolder: "trees" };
+    const edit = { set: { name: "Billing", worktreeFolder: "trees" } };
+    updateProjectSettings.mockResolvedValueOnce(updated);
+    await controller.updateProjectSettings(selected.id, edit, "local");
 
-    expect(renameProject).toHaveBeenCalledExactlyOnceWith(renamed.id, "Billing", "local");
-    expect(state.projects).toEqual([{ ...renamed, name: "Billing" }, other]);
-    expect(state.selectedProject).toEqual({ ...renamed, name: "Billing" });
+    expect(updateProjectSettings).toHaveBeenCalledExactlyOnceWith(selected.id, edit, "local");
+    expect(state.projects).toEqual([updated, other]);
+    expect(state.selectedProject).toEqual(updated);
+    expect(state.selectedWorkspace).toBe(selectedWorkspace);
+    expect(state.selectedSession).toBe(selectedSession);
+    expect(selectProject).not.toHaveBeenCalled();
     expect(refreshSelectedProjectTopology).toHaveBeenCalledOnce();
 
-    await controller.renameProject(other.id, "Other", "local");
-    expect(state.projects).toEqual([{ ...renamed, name: "Billing" }, { ...other, name: "Other" }]);
-    expect(state.selectedProject).toEqual({ ...renamed, name: "Billing" });
+    const cleared = { ...selected, name: "Billing" };
+    updateProjectSettings.mockResolvedValueOnce(cleared);
+    await controller.updateProjectSettings(selected.id, { unset: ["/worktreeFolder"] }, "local");
+    expect(state.selectedProject).toEqual(cleared);
     expect(refreshSelectedProjectTopology).toHaveBeenCalledOnce();
 
-    // A rename sent to the machine that listed the project does not touch another machine's list.
-    await controller.renameProject(renamed.id, "Elsewhere", "remote-a");
-    expect(renameProject).toHaveBeenLastCalledWith(renamed.id, "Elsewhere", "remote-a");
-    expect(state.projects).toEqual([{ ...renamed, name: "Billing" }, { ...other, name: "Other" }]);
+    const updatedOther = { ...other, name: "Other" };
+    updateProjectSettings.mockResolvedValueOnce(updatedOther);
+    await controller.updateProjectSettings(other.id, { set: { name: "Other" } }, "local");
+    expect(state.projects).toEqual([cleared, updatedOther]);
+    expect(state.selectedProject).toEqual(cleared);
+    expect(refreshSelectedProjectTopology).toHaveBeenCalledOnce();
+
+    // Editing a project on its original machine must not update a different machine's list.
+    updateProjectSettings.mockResolvedValueOnce({ ...selected, name: "Elsewhere" });
+    const remoteEdit = { set: { name: "Elsewhere" } };
+    await controller.updateProjectSettings(selected.id, remoteEdit, "remote-a");
+    expect(updateProjectSettings).toHaveBeenLastCalledWith(selected.id, remoteEdit, "remote-a");
+    expect(state.projects).toEqual([cleared, updatedOther]);
     expect(refreshSelectedProjectTopology).toHaveBeenCalledOnce();
   });
 
-  it("leaves projects unchanged and rejects when a rename fails", async () => {
+  it("leaves projects unchanged and rejects when saving project settings fails", async () => {
     const existing = project("existing", "/existing");
     let state: AppState = { ...initialAppState(), projects: [existing] };
     const failure = new Error("Project not found");
@@ -586,10 +606,10 @@ describe("ProjectController", () => {
       () => state,
       (patch) => { state = { ...state, ...patch }; },
       { selectProject: vi.fn(), forgetProject: vi.fn(), clearSelection: vi.fn(), refreshSelectedProjectTopology: vi.fn() },
-      { api: { projects: vi.fn(), addProject: vi.fn(), renameProject: vi.fn().mockRejectedValue(failure), closeProject: vi.fn(), workspaces: vi.fn(), setWorkspaceTrust: vi.fn() } },
+      { api: { projects: vi.fn(), addProject: vi.fn(), updateProjectSettings: vi.fn().mockRejectedValue(failure), closeProject: vi.fn(), workspaces: vi.fn(), setWorkspaceTrust: vi.fn() } },
     );
 
-    await expect(controller.renameProject(existing.id, "Billing", "local")).rejects.toBe(failure);
+    await expect(controller.updateProjectSettings(existing.id, { set: { name: "Billing" } }, "local")).rejects.toBe(failure);
     expect(state.projects).toEqual([existing]);
   });
 });

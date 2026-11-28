@@ -7,7 +7,7 @@ export const PI_WEB_CONFIG_DEFINITIONS = {
   shortcuts: "json", defaultTheme: "json", defaultLocalization: "json",
   defaultStreamingBehavior: "string", quietMode: "boolean", plugins: "json",
   basePaths: "json", pathAccess: "json", uploads: "json", attachments: "json",
-  maxUploadBytes: "number", sessionArchive: "json",
+  maxUploadBytes: "number", sessionArchive: "json", defaultWorktreeFolder: "string",
   spawnSessions: "boolean", sessionMessages: "boolean", crossProjectSessionMessages: "boolean", subsessions: "boolean", askUser: "boolean",
   environmentFacts: "boolean", extensionDialogsTimeoutMs: "number",
 } as const satisfies Record<Exclude<keyof PiWebConfigValues, "agent">, string>;

@@ -299,6 +299,14 @@ Plugins may also own separate project files, such as `.pi-web/tasks.json` for th
 
 PI WEB also honors one optional project hook; see [Worktree pre-remove hook](#worktree-pre-remove-hook).
 
+## Default worktree folder
+
+In **Settings → General → Selected machine settings**, set **Default worktree folder** to choose a parent folder for new worktrees. An absolute machine default adds a subfolder named for the registered project's root folder. A relative default starts at that project root, not the currently selected worktree. For example, for `/src/app`, `/trees` resolves to `/trees/app` and `../trees` resolves to `/src/trees`.
+
+A machine-local project override wins over the saved default. It resolves relative paths from the same root, but uses absolute paths without adding a project subfolder. Overrides are stored with the project registration, not in the checkout's `.pi-web/config.json`. Without either setting, manual creation suggests a sibling folder such as `/src/app-worktrees`; agent-assisted creation omits the folder hint. Changing a default does not move existing worktrees.
+
+Set `PI_WEB_DEFAULT_WORKTREE_FOLDER` in both web/API and session daemon environments on the project machine to enforce the default and lock both settings fields. Restart both services to apply an environment change; restarting the daemon interrupts active sessions and terminals. Saving settings in the UI takes effect on the next folder lookup, without a restart.
+
 ## Worktree pre-remove hook
 
 Use an executable `.pi-web/hooks/worktree-pre-remove` script to stop containers or release workspace resources before removal. Place it relative to the workspace where the removal command runs—normally the project's main workspace.
@@ -329,6 +337,7 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 | Additional filesystem roots | `pathAccess.allowedPaths` | `PI_WEB_PATH_ACCESS` (JSON object) | Global + project | **Adds** after base roots; global then project, deduplicated; env replaces effective additions | Next file request; refresh existing views if needed |
 | Manual file upload default folder | `uploads.defaultFolder` | `PI_WEB_UPLOADS` (JSON object) | Global + project | **Overrides**: project value wins for workspaces in that project; otherwise global/default applies | New Upload dialogs and direct drag/drop batches after config/workspace refresh |
 | Prompt attachment default folder | `attachments.defaultFolder` | `PI_WEB_ATTACHMENTS` (JSON object) | Global + project | **Overrides**: project value wins for workspaces in that project; otherwise global/default applies | New prompt-attachment saves after config/workspace refresh |
+| [Default worktree folder](#default-worktree-folder) | `defaultWorktreeFolder` | `PI_WEB_DEFAULT_WORKTREE_FOLDER` | Global on the project machine | Machine-local override for each registered project; not a checkout config key | Next folder lookup; environment changes need a web/API and session daemon restart |
 | Upload/body limit | `maxUploadBytes` | `PI_WEB_MAX_UPLOAD_BYTES` | Global | Not supported locally | Restart web/API and session daemon on that machine |
 | Agent can spawn sessions | `spawnSessions` | `PI_WEB_SPAWN_SESSIONS` | Global/session daemon | Not supported locally | Restart session daemon on that machine |
 | Tracked subsessions | `subsessions` | `PI_WEB_SUBSESSIONS` | Global/session daemon | Not supported locally; also requires `spawnSessions` | Restart session daemon on that machine |

@@ -12,6 +12,7 @@ export default defineConfig({
       fileName: () => "server-plugin.js",
     },
     target: "node22",
+    rolldownOptions: { external: [/^node:/u] },
     minify: false,
   },
 });

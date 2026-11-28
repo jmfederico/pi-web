@@ -23,6 +23,7 @@ export interface MachineAccessConfigDraft {
   allowedPathsText: string;
   uploadDefaultFolder: string;
   attachmentDefaultFolder: string;
+  defaultWorktreeFolder: string;
 }
 
 export function emptyGatewayServerConfigDraft(): GatewayServerConfigDraft {
@@ -30,7 +31,7 @@ export function emptyGatewayServerConfigDraft(): GatewayServerConfigDraft {
 }
 
 export function emptyMachineAccessConfigDraft(): MachineAccessConfigDraft {
-  return { installationName: "", allowedPathsText: "", uploadDefaultFolder: "", attachmentDefaultFolder: "" };
+  return { installationName: "", allowedPathsText: "", uploadDefaultFolder: "", attachmentDefaultFolder: "", defaultWorktreeFolder: "" };
 }
 
 export function gatewayServerDraftFromConfig(config: PiWebConfigValues): GatewayServerConfigDraft {
@@ -49,6 +50,7 @@ export function machineAccessDraftFromConfig(config: PiWebConfigValues): Machine
     allowedPathsText: config.pathAccess?.allowedPaths?.join("\n") ?? "",
     uploadDefaultFolder: config.uploads?.defaultFolder ?? "",
     attachmentDefaultFolder: config.attachments?.defaultFolder ?? "",
+    defaultWorktreeFolder: config.defaultWorktreeFolder ?? "",
   };
 }
 
@@ -81,11 +83,13 @@ export function machineAccessConfigPatchFromDraft(draft: MachineAccessConfigDraf
   const allowedPaths = parseAllowedPathsText(draft.allowedPathsText);
   const uploadDefaultFolder = normalizeWorkspaceRelativeFolder(draft.uploadDefaultFolder, "upload");
   const attachmentDefaultFolder = normalizeWorkspaceRelativeFolder(draft.attachmentDefaultFolder, "attachment");
+  const defaultWorktreeFolder = draft.defaultWorktreeFolder.trim();
   return {
     installationName: draft.installationName.trim(),
     pathAccess: { allowedPaths },
     uploads: uploadDefaultFolder === "" ? {} : { defaultFolder: uploadDefaultFolder },
     attachments: attachmentDefaultFolder === "" ? {} : { defaultFolder: attachmentDefaultFolder },
+    ...(defaultWorktreeFolder === "" ? {} : { defaultWorktreeFolder }),
   };
 }
 
@@ -101,6 +105,7 @@ function preservedGatewayConfigRemainder(baseConfig: PiWebConfigValues): PiWebCo
     ...(baseConfig.pathAccess === undefined ? {} : { pathAccess: baseConfig.pathAccess }),
     ...(baseConfig.uploads === undefined ? {} : { uploads: baseConfig.uploads }),
     ...(baseConfig.attachments === undefined ? {} : { attachments: baseConfig.attachments }),
+    ...(baseConfig.defaultWorktreeFolder === undefined ? {} : { defaultWorktreeFolder: baseConfig.defaultWorktreeFolder }),
     ...(baseConfig.maxUploadBytes === undefined ? {} : { maxUploadBytes: baseConfig.maxUploadBytes }),
     ...(baseConfig.spawnSessions === undefined ? {} : { spawnSessions: baseConfig.spawnSessions }),
     ...(baseConfig.subsessions === undefined ? {} : { subsessions: baseConfig.subsessions }),

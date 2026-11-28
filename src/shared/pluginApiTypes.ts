@@ -260,6 +260,10 @@ export interface PiWebStatusMessage {
   severity: PiWebStatusSeverity;
   title: string;
   body: string;
+  /**
+   * @deprecated Never set. Status notices do not carry commands; use
+   * {@link PiWebStatusResponse.commands} for maintenance actions.
+   */
   command?: string;
 }
 
@@ -280,6 +284,12 @@ export interface PiWebStatusResponse extends PiWebVersionResponse {
     restartWeb?: string;
     restartSessiond?: string;
     status?: string;
+    /**
+     * Pi's self-update command. Present only while the loaded Pi is older than
+     * this PI WEB release supports and the installation uses the user's own Pi.
+     * Updating Pi does not restart PI WEB; restart it afterwards.
+     */
+    updatePi?: string;
   };
   messages: PiWebStatusMessage[];
 }

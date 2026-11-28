@@ -364,8 +364,34 @@ describe("plugin delivery artifacts", () => {
     expect(moduleSpecifiers(await readFile(browserModule, "utf8"))).toEqual(["./worktreeDialog.js", "./workflows.messages.js"]);
     expect((await import(pathToFileURL(browserModule).href)).default).toMatchObject({ name: "Workflows", apiVersion: 5 });
     const serverModule = join(source, metadata.piWeb.plugins[0].serverModule);
-    expect(moduleSpecifiers(await readFile(serverModule, "utf8"))).toEqual([]);
-    expect((await import(pathToFileURL(serverModule).href)).default).toMatchObject({ name: "Workflows", apiVersion: 5 });
+    // Importing succeeds even if Vite has stubbed Node built-ins; exercise prepare.
+    await cp(serverModule, join(tempDir, "workflows.mjs"));
+    const probe = join(tempDir, "probe.mjs");
+    await writeFile(probe, `
+      import assert from "node:assert/strict";
+      import { execFileSync } from "node:child_process";
+      import { realpathSync } from "node:fs";
+      import plugin from "./workflows.mjs";
+      const path = realpathSync(process.cwd());
+      const signal = new AbortController().signal;
+      const project = { id: "project", path };
+      const workspace = { id: "main-workspace", projectId: project.id, path, isMain: true };
+      const git = (args) => execFileSync("git", args, { cwd: path, encoding: "utf8" });
+      git(["init", "-b", "main"]);
+      git(["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "Initial"]);
+      const activation = await plugin.activate({
+        async execFile({ args }) {
+          return { stdout: git(args), stderr: "", exitCode: 0, signal: null, stdoutTruncated: false, stderrTruncated: false };
+        },
+      });
+      await activation.start({ capabilities: { resolve: ({ id }) => id === "catalog"
+        ? { workspaces: { list: () => Promise.resolve([workspace]) } } : {} } });
+      const result = await activation.peer.request({ scope: { kind: "project", project }, operation: "prepare", input: null, signal });
+      assert.equal(plugin.apiVersion, 5);
+      assert.equal(result.defaultBase, "main");
+      assert.deepEqual(result.manual, { startingRefs: ["refs/heads/main"] });
+    `);
+    await execUtf8(process.execPath, [probe], tempDir, 10_000);
     enabled = false;
     expect((await catalog.snapshot()).plugins[0].enabled).toBe(false);
     // Disabling web contributions leaves Pi prompt resources installed.

@@ -40,6 +40,7 @@ export class AppNavigationPanel extends LitElement {
   @property({ attribute: false }) projects: Project[] = [];
   @property({ attribute: false }) selectedProject?: Project;
   @property({ type: Boolean }) workspaceSelectionVisible = true;
+  @property({ attribute: false }) createWorkspaceAction?: Pick<import("../../actions").AppAction, "title" | "run">;
   @property({ attribute: false }) workspaces: Workspace[] = [];
   @property({ attribute: false }) selectedWorkspace?: Workspace;
   @property({ attribute: false }) sessions: SessionInfo[] = [];
@@ -72,7 +73,7 @@ export class AppNavigationPanel extends LitElement {
   @property({ attribute: false }) onToggleWorkspaces?: () => void;
   @property({ attribute: false }) onToggleSessions?: () => void;
   @property({ attribute: false }) onSelectProject?: (project: Project) => void | Promise<void>;
-  @property({ attribute: false }) onRenameProject?: (project: Project) => void;
+  @property({ attribute: false }) onProjectSettings?: (project: Project) => void;
   @property({ attribute: false }) onCloseProject?: (project: Project) => void | Promise<void>;
   @property({ attribute: false }) onMoveProject?: (project: Project, direction: -1 | 1) => void;
   @property({ attribute: false }) onReorderProject?: (project: Project, neighbor: Project, position: "before" | "after") => void;
@@ -171,7 +172,7 @@ export class AppNavigationPanel extends LitElement {
   private readonly childCallbacks = {
     toggleProjects: () => { this.onToggleProjects?.(); },
     selectProject: (project: Project) => this.onSelectProject?.(project),
-    renameProject: (project: Project) => { this.onRenameProject?.(project); },
+    projectSettings: (project: Project) => { this.onProjectSettings?.(project); },
     closeProject: (project: Project) => this.onCloseProject?.(project),
     moveProject: (project: Project, direction: -1 | 1) => this.onMoveProject?.(project, direction),
     reorderProject: (project: Project, neighbor: Project, position: "before" | "after") => this.onReorderProject?.(project, neighbor, position),
@@ -265,7 +266,7 @@ export class AppNavigationPanel extends LitElement {
         .collapsed=${this.projectsCollapsed}
         .onToggleCollapsed=${this.childCallbacks.toggleProjects}
         .onSelect=${this.childCallbacks.selectProject}
-        .onRename=${this.onRenameProject === undefined ? undefined : this.childCallbacks.renameProject}
+        .onProjectSettings=${this.onProjectSettings === undefined ? undefined : this.childCallbacks.projectSettings}
         .onClose=${this.childCallbacks.closeProject}
         .onMove=${this.childCallbacks.moveProject}
         .onReorder=${this.onReorderProject === undefined ? undefined : this.childCallbacks.reorderProject}
@@ -279,6 +280,7 @@ export class AppNavigationPanel extends LitElement {
         style=${styleMap(this.sectionSizeStyle("workspaces"))}
         ?data-manual-size=${!this.compact && this.sectionSizes.height("workspaces") !== undefined}
         .workspaces=${this.workspaces}
+        .createAction=${this.createWorkspaceAction}
         .projectId=${this.selectedProject?.id ?? ""}
         .selected=${this.selectedWorkspace}
         .machineId=${this.selectedMachine?.id ?? "local"}

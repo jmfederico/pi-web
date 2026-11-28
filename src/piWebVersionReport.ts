@@ -6,7 +6,7 @@ import { SessionDaemonClient } from "./sessiond/sessionDaemonClient.js";
 import type { PiWebComponentStatus, PiWebInstallationInfo, PiWebVersionResponse } from "./shared/apiTypes.js";
 import { parsePiWebComponentStatus, parsePiWebVersionResponse } from "./shared/piWebStatusParsing.js";
 import { comparePackageVersions } from "./shared/packageVersions.js";
-import { isOlderThanSupportedPi, loadedPiVersion, supportedPiMinimumVersion, unsupportedPiSummary, type LoadedPiVersion } from "./shared/piSupport.js";
+import { isOlderThanSupportedPi, loadedPiVersion, PI_SELF_UPDATE_COMMAND, supportedPiMinimumVersion, unsupportedPiSummary, type LoadedPiVersion } from "./shared/piSupport.js";
 
 const PI_WEB_PACKAGE_NAME = "@jmfederico/pi-web";
 const PI_WEB_VERSION_TIMEOUT_MS = 2000;
@@ -139,7 +139,7 @@ export function piSupportCheckLines(info: RunningVersionInfo, cliPiVersion: stri
   return [
     `! Pi update recommended`,
     `  ${unsupportedPiSummary(loaded, minimum)}`,
-    "  Update Pi, then run `pi-web restart`.",
+    `  Run \`${PI_SELF_UPDATE_COMMAND}\`, then \`pi-web restart\`.`,
   ];
 }
 

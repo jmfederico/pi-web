@@ -42,6 +42,7 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
   /** Status tree of the machine these workspaces belong to; absent means no indicators. */
   @property({ attribute: false }) statusSnapshot: MachineStatusSnapshot | undefined;
   @property({ attribute: false }) deletingWorkspaceIds: string[] = [];
+  @property({ attribute: false }) createAction?: Pick<import("../actions").AppAction, "title" | "run">;
   @property({ attribute: false }) onSelect?: (workspace: Workspace) => void;
   @property({ attribute: false }) onDelete?: (workspace: Workspace) => void;
   @property({ attribute: false }) onMove?: (workspace: Workspace, direction: -1 | 1) => void;
@@ -112,7 +113,10 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
   override render() {
     return html`
       <section data-ui-context="workspaces" data-collapsed=${String(this.collapsed)}>
-        <h2 class="ui-toolbar">${this.renderHeading()}</h2>
+        <h2 class="ui-toolbar">
+          ${this.renderHeading()}
+          ${this.createAction === undefined ? null : html`<span class="ui-toolbar-group"><button type="button" class="ui-button ui-button--icon" title=${this.createAction.title} aria-label=${this.createAction.title} @click=${() => { void this.createAction?.run(); }}>+</button></span>`}
+        </h2>
         ${this.collapsed ? null : html`
           <div class="list-body ui-nav-list">
             ${repeat(this.workspaces, (workspace) => workspace.id, (workspace, index) => {
@@ -161,7 +165,7 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
   }
 
   private renderHeading() {
-    if (!this.collapsible) return html`<span>${messages.t("workspaces")}</span>`;
+    if (!this.collapsible) return html`<span class="ui-toolbar-title">${messages.t("workspaces")}</span>`;
     const selectedSummary = this.selected === undefined ? messages.t("noWorkspace") : messages.t("workspaceSummary", { label: workspacePrimaryLabel(this.selected), path: this.selected.path });
     const selectedTitle = this.selected?.path ?? selectedSummary;
     return html`<button class="ui-button ui-toolbar-title section-toggle ui-nav-section-toggle" aria-expanded=${String(!this.collapsed)} @click=${() => { this.onToggleCollapsed?.(); }}><span class="section-title"><span class="section-name">${this.collapsed ? "▸" : "▾"} ${messages.t("workspaces")}</span>${this.collapsed ? html`<small class="section-selected" title=${selectedTitle}>${selectedSummary}</small>` : null}</span><small class="section-count">${localization.number(this.workspaces.length)}</small></button>`;

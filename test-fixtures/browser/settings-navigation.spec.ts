@@ -44,6 +44,45 @@ async function expectRevealed(content: Locator, group: Locator, control: Locator
   expect(selector.x + selector.width).toBeLessThanOrEqual(viewport.x + viewport.width + 1);
 }
 
+test("collapsed sidebars have no resize target and reopen with their chevrons", async ({ page, hasTouch }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await isolateRequests(page);
+  await page.goto("/settings-navigation.html?notices");
+  await expect(page.locator("body")).toHaveAttribute("data-ready", "true");
+
+  for (const side of ["navigation", "workspace"] as const) {
+    const handle = page.getByRole("separator", { name: `Resize ${side} panel` });
+    const collapse = page.getByRole("button", { name: `Collapse ${side} panel` });
+    const expand = page.getByRole("button", { name: `Expand ${side} panel` });
+    await expect(handle).toBeVisible();
+    await collapse.click();
+    await expect(expand).toBeVisible();
+
+    const edge = await page.locator(`app-panel-edge-control[side="${side}"]`).boundingBox();
+    if (edge === null) throw new Error(`Missing collapsed ${side} edge`);
+    // Aim just inside the viewport, where the invisible resize target used to extend.
+    const inward = side === "navigation" ? 1 : -1;
+    const x = edge.x + edge.width / 2 + 3 * inward;
+    const y = edge.y + edge.height / 2;
+    if (hasTouch) await page.touchscreen.tap(x, y);
+    else {
+      await page.mouse.click(x, y);
+      await expect(expand).toBeVisible();
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      await page.mouse.move(x + 80 * inward, y, { steps: 4 });
+      await page.mouse.up();
+    }
+    await expect(expand).toBeVisible();
+    await expect(handle).toHaveCount(0);
+
+    if (hasTouch) await expand.tap();
+    else await expand.click();
+    await expect(collapse).toBeVisible();
+    await expect(handle).toBeVisible();
+  }
+});
+
 test("routes the gateway warning through existing Notices without a session or workspace", async ({ page }, testInfo) => {
   await isolateRequests(page);
   const sockets: string[] = [];

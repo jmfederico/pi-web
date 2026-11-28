@@ -1,6 +1,6 @@
 import { mkdir, realpath, stat } from "node:fs/promises";
 import type { ProjectStore } from "../storage/projectStore.js";
-import type { Project } from "../types.js";
+import type { Project, ProjectSettingsUpdate } from "../../shared/apiTypes.js";
 import { expandUserPath } from "./directorySuggestions.js";
 
 export class ProjectService {
@@ -21,8 +21,8 @@ export class ProjectService {
     return this.store.add(input.name === undefined ? { path: resolved } : { name: input.name, path: resolved });
   }
 
-  async rename(id: string, name: string): Promise<Project> {
-    const project = await this.store.rename(id, name);
+  async updateSettings(id: string, update: ProjectSettingsUpdate): Promise<Project> {
+    const project = await this.store.updateSettings(id, update);
     if (!project) throw new Error("Project not found");
     return project;
   }

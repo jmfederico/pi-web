@@ -123,7 +123,7 @@
               <p>PI WEB reuses your existing Pi installation; it does not install a separate Pi engine. Each PI WEB release supports the latest Pi minor version it was tested with. An older Pi still runs, but the Updates panel and <code>pi-web doctor</code> recommend updating it. New Pi major versions are evaluated before PI WEB adopts them.</p>
               <details class="config-details">
                 <summary>Changing or upgrading your Pi installation</summary>
-                <p>After upgrading or downgrading Pi, restart the web/API service before the session daemon to use the changed version. Restarting the daemon interrupts active sessions. If a Pi upgrade causes compatibility problems, you can downgrade Pi. If Pi was previously installed only as part of PI WEB, install Pi itself before updating PI WEB.</p>
+                <p>Run <code>pi update</code> to update Pi; it uses the method that installed Pi, such as the pi.dev installer or a global npm or Bun install. When Pi is older than PI WEB supports, the Updates panel offers this command as <strong>Update Pi</strong> on global npm and Pi-package installs. Updating Pi does not restart PI WEB. After upgrading or downgrading Pi, restart the web/API service before the session daemon to use the changed version. Restart promptly: an in-place update can leave active sessions unable to load parts of Pi until the daemon restarts. Restarting the daemon interrupts active sessions. If a Pi upgrade causes compatibility problems, you can downgrade Pi. If Pi was previously installed only as part of PI WEB, install Pi itself before updating PI WEB.</p>
               </details>
               <div class="callout warning">
                 <strong>Important PATH detail:</strong>

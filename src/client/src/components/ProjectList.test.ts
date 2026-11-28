@@ -230,21 +230,21 @@ describe("project move actions", () => {
     expect(list.shadowRoot?.querySelector(".action-menu-panel")).not.toBeNull();
   });
 
-  it("offers rename only when the parent handles it, and closes the menu without selecting", async () => {
+  it("opens project settings only when the parent handles it, without selecting the project", async () => {
     const target = project("target");
     const list = await mountProjectList([target], undefined);
     list.onSelect = vi.fn();
     openMenu(list, "target");
     await list.updateComplete;
-    expect(list.shadowRoot?.querySelector("[data-rename]")).toBeNull();
+    expect(list.shadowRoot?.querySelector("[data-project-settings]")).toBeNull();
 
-    const onRename = vi.fn();
-    list.onRename = onRename;
+    const onProjectSettings = vi.fn();
+    list.onProjectSettings = onProjectSettings;
     await list.updateComplete;
-    list.shadowRoot?.querySelector<HTMLButtonElement>("[data-rename]")?.click();
+    list.shadowRoot?.querySelector<HTMLButtonElement>("[data-project-settings]")?.click();
     await list.updateComplete;
 
-    expect(onRename).toHaveBeenCalledExactlyOnceWith(target);
+    expect(onProjectSettings).toHaveBeenCalledExactlyOnceWith(target);
     expect(list.onSelect).not.toHaveBeenCalled();
     expect(list.shadowRoot?.querySelector(".action-menu-panel")).toBeNull();
   });

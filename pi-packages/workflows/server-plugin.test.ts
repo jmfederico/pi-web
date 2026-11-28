@@ -1,5 +1,5 @@
 import { execFile as nodeExecFile, execFileSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -39,6 +39,7 @@ async function fixture(exec?: ServerPluginActivationContextV5["execFile"]) {
   const execFile = vi.fn(exec ?? (({ args }) => {
     if (args?.includes("--is-inside-work-tree") === true) return Promise.resolve(success("true\n"));
     if (args?.includes("--is-bare-repository") === true) return Promise.resolve(success("false\n"));
+    if (args?.includes("--show-toplevel") === true) return Promise.resolve(success(`${main.path}\n`));
     if (args?.includes("for-each-ref") === true) return Promise.resolve(success("refs/heads/main\nrefs/remotes/origin/main\nrefs/heads/main\n"));
     if (args?.includes("--abbrev-ref") === true) return Promise.resolve(success("main\n"));
     return Promise.resolve(success("commit\n"));
@@ -75,7 +76,7 @@ describe("Workflows v5 project peer", () => {
     const f = await fixture();
     expect(plugin.apiVersion).toBe(5);
     await expect(f.request("prepare")).resolves.toEqual({
-      workspaceId: main.id, workspacePath: main.path, branches: ["main", "origin/main"], defaultBase: "main",
+      workspaceId: main.id, workspacePath: main.path, branches: ["main", "origin/main"], defaultBase: "main", manual: null,
     });
     expect(f.list).toHaveBeenCalledWith(project.id, { signal });
     for (const [command] of f.execFile.mock.calls) {
@@ -121,15 +122,46 @@ describe("Workflows v5 project peer", () => {
     expect(substituteArgs("$ARGUMENTS", args)).toBe(`base: main\n\ndescription:\n${description}`);
   });
 
+  it("passes an explicit parent as a single JSON string in the prompt header", async () => {
+    const f = await fixture();
+    const worktreeParent = join(tmpdir(), `User's folder "with quotes"\nnext line`);
+    await f.request("dispatch", { base: "main", description: "Fix login", worktreeParent });
+    const command = f.run.mock.calls[0]?.[0]?.prompt ?? "";
+    const args = parseCommandArgs(command.slice("/worktree ".length));
+    expect(args).toEqual([`base: main\nworktree parent: ${JSON.stringify(worktreeParent)}\n\ndescription:\nFix login`]);
+  });
+
   it.each([
     null, [], {}, { base: "", description: "purpose" }, { base: "main", description: "  " },
     { base: "main\0", description: "purpose" }, { base: "a".repeat(1025), description: "purpose" },
     { base: "main", description: "é".repeat(8193) }, { base: "main", description: "purpose", workspaceId: "guessed" },
+    { base: "main", description: "purpose", worktreeParent: "../relative" },
   ].map((input) => ({ input })))("rejects invalid dispatch input without creating a session: %j", async ({ input }) => {
     const f = await fixture();
     await expect(f.request("dispatch", input)).rejects.toThrow();
     expect(f.run).not.toHaveBeenCalled();
     expect(f.execFile).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-absolute destinations and branch options before executing Git", async () => {
+    const f = await fixture();
+    for (const input of [
+      { destination: "relative/worktree", branch: "feature", base: "HEAD" },
+      { destination: main.path, branch: "--force", base: "HEAD" },
+      { destination: main.path, branch: "feature", base: "HEAD", workspaceId: "ignored" },
+    ]) {
+      await expect(f.request("create-worktree", input)).rejects.toThrow();
+    }
+    expect(f.execFile).not.toHaveBeenCalled();
+    expect(f.run).not.toHaveBeenCalled();
+  });
+
+  it("rejects manual creation outside the registered checkout root", async () => {
+    const f = await fixture();
+    await expect(f.request("create-worktree", { destination: main.path, branch: "feature", base: "HEAD" }))
+      .rejects.toThrow("registered at a Git checkout root");
+    expect(f.execFile.mock.calls.some(([command]) => command.args?.[0] === "worktree")).toBe(false);
+    expect(f.run).not.toHaveBeenCalled();
   });
 
   it("rejects wrong scopes and unknown operations", async () => {
@@ -187,7 +219,7 @@ describe("Workflows v5 project peer", () => {
   });
 });
 
-// Real Git owns detached HEAD, bare detection, and revision-option semantics.
+// Real Git owns detached HEAD, bare detection, revision-option and worktree-add semantics.
 const execAsync = promisify(nodeExecFile);
 async function realGit(request: ServerPluginExecFileRequest): Promise<ServerPluginExecFileResult> {
   const env: NodeJS.ProcessEnv = { ...process.env, GIT_DIR: "/poisoned", GIT_WORK_TREE: "/poisoned" };
@@ -199,6 +231,93 @@ async function realGit(request: ServerPluginExecFileRequest): Promise<ServerPlug
     return { ...success(), exitCode: 128, stderr: error instanceof Error ? error.message : String(error) };
   }
 }
+
+it("creates a new branch at the selected commit without starting a session or moving existing branches", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "manual-worktree-test-")));
+  roots.push(root);
+  const repo = join(root, "registered repo");
+  const parent = join(root, "worktree parent");
+  const alias = join(root, "parent alias");
+  await mkdir(parent);
+  await symlink(parent, alias, "junction");
+  const destination = join(alias, "my checkout");
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) if (key.startsWith("GIT_")) Reflect.deleteProperty(env, key);
+  const gitAt = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, env, encoding: "utf8" }).trim();
+  const git = (...args: string[]) => gitAt(repo, ...args);
+  gitAt(root, "init", "-b", "main", repo);
+  const commit = (message: string) => git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", message);
+  commit("starting point");
+  const baseCommit = git("rev-parse", "HEAD");
+  git("update-ref", "refs/remotes/origin/main", baseCommit);
+  commit("later commit");
+  git("branch", "existing");
+  const existingCommit = git("rev-parse", "refs/heads/existing");
+  const f = await fixture(realGit);
+  f.list.mockResolvedValue([{ ...main, path: repo }]);
+  const scope = { kind: "project", project: { ...project, path: repo } } as const;
+  const base = "refs/remotes/origin/main";
+  await expect(f.request("prepare", null, scope)).resolves.toMatchObject({
+    manual: { startingRefs: ["refs/heads/existing", "refs/heads/main", base] },
+  });
+  for (const branch of ["existing", "@{-1}"]) {
+    await expect(f.request("create-worktree", { destination, branch, base }, scope))
+      .rejects.toThrow(branch === "existing" ? "Branch already exists" : "Git command failed");
+    await expect(stat(destination)).rejects.toMatchObject({ code: "ENOENT" });
+  }
+  expect(git("rev-parse", "refs/heads/existing")).toBe(existingCommit);
+  await expect(f.request("create-worktree", { destination, branch: "topic/new", base }, scope)).resolves.toEqual({ path: join(parent, "my checkout") });
+  expect(gitAt(destination, "symbolic-ref", "HEAD")).toBe("refs/heads/topic/new");
+  expect(gitAt(destination, "rev-parse", "HEAD")).toBe(baseCommit);
+  expect(git("rev-parse", "HEAD")).toBe(existingCommit);
+
+  const occupied = join(root, "occupied");
+  await mkdir(occupied);
+  await writeFile(join(occupied, "existing file"), "keep");
+  await expect(f.request("create-worktree", { destination: occupied, branch: "left-behind", base }, scope))
+    .rejects.toThrow("Branch left-behind now exists. Choose a different branch name");
+  expect(git("rev-parse", "refs/heads/left-behind")).toBe(baseCommit);
+
+  const raced = join(root, "raced");
+  f.execFile.mockImplementation(async (request) => {
+    if (request.args?.[0] === "worktree" && request.args[1] === "add") {
+      git("worktree", "add", "-b", "raced", raced, existingCommit);
+    }
+    return realGit(request);
+  });
+  await expect(f.request("create-worktree", { destination: raced, branch: "raced", base }, scope))
+    .rejects.toThrow("Branch raced now exists");
+  expect(gitAt(raced, "rev-parse", "HEAD")).toBe(existingCommit);
+  expect(f.run).not.toHaveBeenCalled();
+});
+
+it("reports a registered worktree with a warning when its post-checkout hook fails", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "worktree-hook-test-")));
+  roots.push(root);
+  const repo = join(root, "repo");
+  const destination = join(root, "new checkout");
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) if (key.startsWith("GIT_")) Reflect.deleteProperty(env, key);
+  const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, env, encoding: "utf8" }).trim();
+  git(root, "init", "-b", "main", repo);
+  git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "initial");
+  const hooks = join(root, "hooks");
+  await mkdir(hooks);
+  await writeFile(join(hooks, "post-checkout"), "#!/bin/sh\necho 'checkout setup failed' >&2\nexit 1\n", { mode: 0o755 });
+  git(repo, "config", "core.hooksPath", hooks);
+  const f = await fixture(realGit);
+  f.list.mockResolvedValue([{ ...main, path: repo }]);
+  const scope = { kind: "project", project: { ...project, path: repo } } as const;
+  const input = { destination, branch: "work", base: "HEAD" };
+
+  const result = await f.request("create-worktree", input, scope);
+  expect(result).toHaveProperty("path", destination);
+  expect(result).toHaveProperty("warning", expect.stringContaining("checkout setup failed"));
+  expect(git(destination, "symbolic-ref", "HEAD")).toBe("refs/heads/work");
+  await expect(f.request("create-worktree", input, scope)).rejects.toThrow("Branch already exists");
+  await expect(f.request("create-worktree", { ...input, branch: "different" }, scope)).rejects.toThrow("Git command failed");
+  expect(f.run).not.toHaveBeenCalled();
+});
 
 it("supports detached HEAD and remote branches, rejects missing/malicious bases and bare/non-Git directories", async () => {
   const root = await mkdtemp(join(tmpdir(), "workflows-test-"));

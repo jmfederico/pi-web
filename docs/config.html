@@ -90,6 +90,7 @@
 <a href="#files">Where settings live</a>
 <a href="#ui-settings">Appearance &amp; defaults</a>
 <a href="#file-settings">Files &amp; uploads</a>
+<a href="#default-worktree-folder">Default worktree folder</a>
 <a href="#session-tools">Agent capabilities</a>
 <a href="#plugin-config">Plugins</a>
 <a href="#network">Networking</a>
@@ -420,6 +421,10 @@
 <p>Higher layers replace each root list rather than appending to its lower-layer list. Project additions remain a separate contribution unless <code>PI_WEB_PATH_ACCESS</code> supplies <code>allowedPaths</code>, including an empty list. The empty container <code>{}</code> enforces nothing.</p>
 <details class="config-details"><summary>Path formats, overwrite behavior, and folder rules</summary><ul><li><strong>External roots:</strong> existing directories using absolute paths or <code>~</code>, such as <code>/opt/reference</code>, <code>~/SDKs</code>, or Windows absolute paths on Windows hosts. Relative roots are not supported; symlink escapes are rejected.</li><li><strong>Upload/attachment folders:</strong> nonempty workspace-relative paths. Absolute paths and <code>..</code> traversal are rejected.</li><li><strong>Uploads:</strong> create parent folders; existing files are preserved unless overwrite is enabled in the review dialog. Direct drops never overwrite.</li><li><strong>Upload dialog only:</strong> clear the destination field to upload that batch to the workspace root.</li><li><strong>Attachments API:</strong> an explicit per-request folder overrides the configured default.</li></ul></details>
 </details>
+</section>
+<section id="default-worktree-folder"><h2>Default worktree folder</h2>
+<p>Choose where new Git worktrees go in <strong>Settings → General → Selected machine settings</strong>. An absolute machine default adds a subfolder named for the project's root folder. Relative paths start at the registered project root, not the active worktree. A machine-local project override can use an absolute folder as-is. Changing the default leaves existing worktrees where they are.</p>
+<p>See the <a href="config.md#default-worktree-folder">configuration reference</a> for examples and <code>PI_WEB_DEFAULT_WORKTREE_FOLDER</code> enforcement.</p>
 </section>
 <section id="session-tools"><h2>Agent capabilities</h2>
 <p>In <strong>Settings → Session daemon</strong>, choose whether agents can start independent sessions, delegate to tracked subsessions, message other sessions, and ask you questions through browser forms. Tracked delegation also requires independent session spawning.</p>

@@ -97,11 +97,13 @@ export class SettingsGeneralPanel extends LitElement {
       this.machineLocalError = "";
     }
     if ((changed.has("machineConfigResponse") || changed.has("targetId")) && this.machineConfigResponse !== undefined) {
-      const incoming = machineAccessDraftFromConfig(this.machineConfigResponse.effectiveConfig);
+      const response = this.machineConfigResponse;
+      const incoming = machineAccessDraftFromConfig(response.effectiveConfig);
+      if (enforcedSetting(response, "/defaultWorktreeFolder") === undefined) incoming.defaultWorktreeFolder = response.config.defaultWorktreeFolder ?? "";
       const submission = this.machineSubmission;
       const acknowledged = submission !== undefined && draftsEqual(incoming, submission.expected);
       this.machineDraft = reconcileConfigDraft(this.machineDraft, acknowledged ? submission.draft : this.machineBaseline, incoming);
-      for (const [field, setting] of [["installationName", "installationName"], ["allowedPathsText", "pathAccess/allowedPaths"], ["uploadDefaultFolder", "uploads/defaultFolder"], ["attachmentDefaultFolder", "attachments/defaultFolder"]] as const) {
+      for (const [field, setting] of [["installationName", "installationName"], ["allowedPathsText", "pathAccess/allowedPaths"], ["uploadDefaultFolder", "uploads/defaultFolder"], ["attachmentDefaultFolder", "attachments/defaultFolder"], ["defaultWorktreeFolder", "defaultWorktreeFolder"]] as const) {
         if (enforcedSetting(this.machineConfigResponse, `/${setting}`) !== undefined) Object.assign(this.machineDraft, { [field]: incoming[field] });
       }
       this.machineBaseline = incoming;
@@ -275,6 +277,15 @@ export class SettingsGeneralPanel extends LitElement {
             </label>
             ${settingControls(config, "/attachments/defaultFolder", this.machineLoading || this.saving, this.onResetMachine)}
 
+            <label class="field ui-form-field">
+              <span class="field-heading"><span>${messages.t("worktreeFolder")}</span></span>
+              <input class="ui-input" name="defaultWorktreeFolder" ?disabled=${enforcedSetting(config, "/defaultWorktreeFolder") !== undefined} .value=${this.machineDraft.defaultWorktreeFolder} autocomplete="off" spellcheck="false" @input=${(event: Event) => { this.updateMachineDraft({ defaultWorktreeFolder: inputValue(event) }); }}>
+              <small>${messages.t("worktreeFolderHelp")}</small>
+              ${config.config.defaultWorktreeFolder === undefined && enforcedSetting(config, "/defaultWorktreeFolder") === undefined && config.effectiveConfig.defaultWorktreeFolder !== undefined
+                ? html`<small>${messages.t("worktreeFolderInherited", { path: config.effectiveConfig.defaultWorktreeFolder })}</small>` : null}
+            </label>
+            ${settingControls(config, "/defaultWorktreeFolder", this.machineLoading || this.saving, this.onResetMachine)}
+
             ${this.renderMachineEffectiveConfig()}
 
             <footer class="form-actions ui-settings-actions">
@@ -398,14 +409,21 @@ export class SettingsGeneralPanel extends LitElement {
       const candidate = machineAccessConfigPatchFromDraft(this.machineDraft);
       const baseline = machineAccessConfigPatchFromDraft(this.machineBaseline);
       const config = explicitConfigUpdate(this.machineConfigResponse, candidate, baseline).set ?? {};
-      const unset = resetConfigUpdate(this.machineConfigResponse, (["uploads", "attachments"] as const)
+      const folderResets = (["uploads", "attachments"] as const)
         .filter((key) => candidate[key]?.defaultFolder === undefined && baseline[key]?.defaultFolder !== undefined)
-        .map((key) => `/${key}/defaultFolder`)).unset ?? [];
+        .map((key) => `/${key}/defaultFolder`);
+      if (candidate.defaultWorktreeFolder === undefined && baseline.defaultWorktreeFolder !== undefined) folderResets.push("/defaultWorktreeFolder");
+      const unset = resetConfigUpdate(this.machineConfigResponse, folderResets).unset ?? [];
       const expected = overlayPiWebConfig(this.machineConfigResponse.effectiveConfig, config);
       for (const key of ["uploads", "attachments"] as const) {
         if (unset.includes(`/${key}/defaultFolder`)) Object.assign(expected, { [key]: this.machineConfigResponse.defaultsConfig?.[key] ?? {} });
       }
-      const submission = { draft: this.machineDraft, expected: machineAccessDraftFromConfig(expected) };
+      const expectedDraft = machineAccessDraftFromConfig(expected);
+      if (enforcedSetting(this.machineConfigResponse, "/defaultWorktreeFolder") === undefined) {
+        expectedDraft.defaultWorktreeFolder = unset.includes("/defaultWorktreeFolder") ? ""
+          : config.defaultWorktreeFolder ?? this.machineConfigResponse.config.defaultWorktreeFolder ?? "";
+      }
+      const submission = { draft: this.machineDraft, expected: expectedDraft };
       this.machineSubmission = submission;
       try {
         if (unset.length) await this.onSaveMachineConfig(config, unset);
