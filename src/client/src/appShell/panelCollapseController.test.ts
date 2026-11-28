@@ -28,7 +28,7 @@ describe("panel collapse preferences", () => {
     expect(restored.shellClass("chat")).toContain("navigation-panel-collapsed");
     expect(restored.shellClass("chat")).toContain("workspace-panel-collapsed");
     restored.expandNavigationPanel();
-    restored.expandWorkspacePanel();
+    restored.toggleWorkspacePanel();
     const expanded = new PanelCollapseController(host(), { storage: saved });
     expect(expanded.navigationPanelCollapsed).toBe(false);
     expect(expanded.workspacePanelCollapsed).toBe(false);

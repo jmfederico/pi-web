@@ -47,6 +47,10 @@ export class AppPanelEdgeControl extends LitElement {
     super.disconnectedCallback();
   }
 
+  override updated(): void {
+    if (!this.resizable) this.finishActiveResize();
+  }
+
   override render() {
     return this.renderResizeHandle();
   }
@@ -187,7 +191,7 @@ export class AppPanelEdgeControl extends LitElement {
     :host { position: relative; min-width: 0; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: visible; background: var(--pi-border-muted); z-index: 2; }
     :host([side="navigation"]) { grid-column: 2; }
     :host([side="workspace"]) { grid-column: 4; }
-    /* Keep the wider resize target below the top-bar buttons, including when a panel is collapsed. */
+    /* Keep the wider resize target below the top-bar buttons. */
     .resize-handle { position: absolute; inset: 45px -8px 0; z-index: 0; cursor: col-resize; touch-action: none; outline: none; }
     .resize-handle::after { content: ""; position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; transform: translateX(-50%); background: transparent; transition: width .12s ease, background .12s ease, opacity .12s ease; }
     .resize-handle:hover::after, .resize-handle:focus-visible::after, :host([resizing]) .resize-handle::after { width: 3px; background: var(--pi-accent); opacity: .72; }
