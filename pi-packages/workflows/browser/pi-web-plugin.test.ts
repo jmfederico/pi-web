@@ -5,7 +5,7 @@ import plugin from "./pi-web-plugin.js";
 import { LocalizationService } from "../../../src/client/src/localization/service.js";
 import { createPluginLocalization } from "../../../src/client/src/plugins/localization.js";
 
-const prepared = { workspaceId: "main-tree", workspacePath: "/repo", branches: ["main", "origin/main", "feature"], defaultBase: "main" };
+const prepared = { workspaceId: "main-tree", workspacePath: "/repo", branches: ["main", "origin/main", "feature"], defaultBase: "main", manual: { startingRefs: ["refs/heads/main", "refs/remotes/origin/main"] } };
 const disposals: (() => void)[] = [];
 afterEach(() => { for (const dispose of disposals.splice(0)) dispose(); document.body.replaceChildren(); vi.restoreAllMocks(); });
 
@@ -21,8 +21,8 @@ function setup(request = vi.fn<(operation: string, input: JsonValue, options?: P
     signal: lifetime.signal,
   });
   disposals.push(() => { activation.dispose(); lifetime.abort(); });
-  const action = activation.contributions.actions[0];
-  if (!action) throw new Error("Worktree action missing");
+  const [action, manualAction] = activation.contributions.actions;
+  if (!action || !manualAction) throw new Error("Worktree actions missing");
   const catalog: PluginCatalog = {
     version: 1, machineId: "remote",
     projects: { list: vi.fn(), get: vi.fn() },
@@ -34,8 +34,14 @@ function setup(request = vi.fn<(operation: string, input: JsonValue, options?: P
     state: { mainView: "workspace", selectedProject: { id: "project", name: "Example", path: "/repo" }, selectedWorkspace: { id: "feature-tree", projectId: "project", label: "Feature", path: "/repo-feature", isMain: false } },
     catalog, backend: { machineId: "remote", forScope }, navigate: vi.fn(() => Promise.resolve()),
     prompt: { insertText: vi.fn(), getText: () => "existing draft", getSelection: () => null },
-  } satisfies Pick<PluginRuntimeContextV5, "state" | "catalog" | "backend" | "navigate" | "prompt">;
-  return { action, activation, context, request, forScope, lifetime, service, localization, registerRoot, releaseStyles };
+    projects: {
+      machineId: "remote", listProjects: vi.fn(),
+      suggestDirectories: vi.fn<(query: string) => Promise<{ path: string }[]>>().mockResolvedValue([]),
+      getWorktreeFolder: vi.fn().mockResolvedValue({ path: "/repo-worktrees", configured: false }),
+    },
+    refreshAppData: vi.fn(), refreshProjectWorkspaces: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+  } satisfies Pick<PluginRuntimeContextV5, "state" | "catalog" | "backend" | "navigate" | "prompt" | "projects" | "refreshAppData" | "refreshProjectWorkspaces">;
+  return { action, manualAction, activation, context, request, forScope, lifetime, service, localization, registerRoot, releaseStyles };
 }
 function root(): ShadowRoot {
   const shadow = document.body.firstElementChild?.shadowRoot;
@@ -49,7 +55,7 @@ function control<T extends Element>(selector: string, constructor: new () => T):
 }
 async function open(target: ReturnType<typeof setup>) {
   target.action.run(target.context);
-  await vi.waitFor(() => { expect(control("#base", HTMLInputElement).disabled).toBe(false); });
+  await vi.waitFor(() => { expect(control("#agent-fields", HTMLFieldSetElement).disabled).toBe(false); });
 }
 function submit() { control("form", HTMLFormElement).dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); }
 
@@ -75,7 +81,7 @@ describe("Workflows worktree dialog", () => {
     const description = shadow.querySelector<HTMLTextAreaElement>("#description");
     const form = shadow.querySelector<HTMLFormElement>("form");
     if (!base || !description || !form) throw new Error("Worktree fields missing");
-    await vi.waitFor(() => { expect(base.disabled).toBe(false); });
+    await vi.waitFor(() => { expect(shadow.querySelector<HTMLFieldSetElement>("#agent-fields")?.disabled).toBe(false); });
     base.value = "origin/main";
     description.value = "  ";
     form.dispatchEvent(new Event("submit", { cancelable: true }));
@@ -83,8 +89,8 @@ describe("Workflows worktree dialog", () => {
     description.value = "User purpose <script>";
     description.focus();
     await target.service.setPreferences({ language: "ar-XB", formatLocale: "ar-EG" });
-    expect(target.action.title).not.toBe("Create Worktree");
-    expect(target.action.description).not.toBe("Choose a base branch and purpose, then start a new conversation in the main workspace");
+    expect(target.action.title).not.toBe("New worktree: Ask an agent");
+    expect(target.action.description).not.toBe("Describe the work in a new conversation in the main workspace");
     expect(target.action.group).not.toBe("Workflows");
     expect(target.action.disabledReason()).not.toBe("Select a project with the Workflows backend available first.");
     expect(document.body.lastElementChild?.getAttribute("dir")).toBe("rtl");
@@ -97,7 +103,7 @@ describe("Workflows worktree dialog", () => {
     shadow.querySelector<HTMLButtonElement>("#cancel")?.click();
     expect(document.activeElement).toBe(opener);
     await target.service.setPreferences({ language: "en", formatLocale: "en-US" });
-    expect(shadow.querySelector("h2")?.textContent).not.toBe("Create worktree");
+    expect(shadow.querySelector("h2")?.textContent).not.toBe("New worktree");
   });
 
   it("localizes retained browser protocol errors but preserves identical backend diagnostics", async () => {
@@ -138,16 +144,19 @@ describe("Workflows worktree dialog", () => {
     expect(target.forScope).toHaveBeenCalledExactlyOnceWith({ kind: "project", projectId: "project" });
     expect(control("#base", HTMLInputElement).value).toBe("main");
     expect(Array.from(control("#branches", HTMLDataListElement).options, (option) => option.value)).toEqual(prepared.branches);
-    expect(control("#status", Element).textContent).toContain("/repo");
+    expect(control("#main-workspace", Element).textContent).toContain("/repo");
     expect(target.context.prompt.insertText).not.toHaveBeenCalled();
     control("#description", HTMLTextAreaElement).value = " Fix login redirects ";
     control("#base", HTMLInputElement).value = "origin/main";
     submit(); submit();
-    await vi.waitFor(() => { expect(target.context.navigate).toHaveBeenCalledExactlyOnceWith({ machineId: "remote", projectId: "project", workspaceId: "main-tree", sessionId: "fresh-session", view: "chat" }); });
+    await vi.waitFor(() => { expect(control("#status", Element).textContent).toContain("Conversation started"); });
+    expect(target.context.navigate).not.toHaveBeenCalled();
+    expect(control("#folder-hint", HTMLElement).hidden).toBe(true);
     const calls = target.request.mock.calls.filter(([operation]) => operation === "dispatch");
     expect(calls).toHaveLength(1);
     expect(calls[0]?.slice(0, 2)).toEqual(["dispatch", { base: "origin/main", description: "Fix login redirects" }]);
     expect(calls[0]?.[2]?.signal).toBeInstanceOf(AbortSignal);
+    control("#cancel", HTMLButtonElement).click();
     expect(document.body.children).toHaveLength(0);
     expect(target.context.prompt.insertText).not.toHaveBeenCalled();
   });
@@ -192,15 +201,60 @@ describe("Workflows worktree dialog", () => {
     expect(target.request).toHaveBeenCalledTimes(2);
   });
 
-  it("reports the existing session when navigation fails, without dispatching again", async () => {
+  it("shows and dispatches a resolved parent only when configured on the target", async () => {
     const target = setup();
-    target.context.navigate.mockRejectedValue(new Error("Navigation failed"));
+    const worktreeParent = "/configured parent/Project";
+    target.context.projects.getWorktreeFolder.mockResolvedValue({ path: worktreeParent, configured: true });
     await open(target);
+    expect(target.context.projects.getWorktreeFolder).toHaveBeenCalledExactlyOnceWith("project");
+    const hint = control("#folder-hint", HTMLElement);
+    expect(hint.hidden).toBe(false);
+    expect(hint.textContent).toContain(worktreeParent);
     control("#description", HTMLTextAreaElement).value = "Fix login";
     submit();
-    await vi.waitFor(() => { expect(control("#error", Element).textContent).toContain("Open conversation fresh-session in Sessions"); });
+    await vi.waitFor(() => { expect(control("#status", Element).textContent).toContain("Conversation started"); });
+    expect(target.request.mock.calls[1]?.slice(0, 2)).toEqual(["dispatch", { base: "main", description: "Fix login", worktreeParent }]);
+  });
+
+  it("creates a typed worktree without dispatching or navigating, then re-lists the project", async () => {
+    const target = setup(vi.fn((operation) => Promise.resolve(operation === "prepare" ? prepared : { path: "/chosen/path" })));
+    expect(target.manualAction.placement).toBe("workspace-create");
+    target.manualAction.run(target.context);
+    const destination = control("#destination", HTMLInputElement);
+    await vi.waitFor(() => { expect(destination.value).toBe("/repo-worktrees/"); });
+    expect(control("#agent-fields", HTMLElement).hidden).toBe(true);
+    control("#browse", HTMLButtonElement).click();
+    expect(target.context.projects.suggestDirectories).toHaveBeenLastCalledWith("/");
+    destination.value = "/chosen/path";
+    control("#branch", HTMLInputElement).value = "new-branch";
+    control("#starting-point", HTMLSelectElement).value = "refs/remotes/origin/main";
+    submit(); submit();
+    await vi.waitFor(() => { expect(control("#status", Element).textContent).toContain("/chosen/path"); });
+    expect(target.request.mock.calls.map((call) => call.slice(0, 2))).toEqual([
+      ["prepare", null], ["createWorktree", { destination: "/chosen/path", branch: "new-branch", base: "refs/remotes/origin/main" }],
+    ]);
+    expect(target.context.refreshProjectWorkspaces).toHaveBeenCalledOnce();
+    expect(target.context.navigate).not.toHaveBeenCalled();
+    expect(target.context.prompt.insertText).not.toHaveBeenCalled();
+  });
+
+  it("allows fixing a rejected branch without losing entered fields when switching modes", async () => {
+    const target = setup(vi.fn((operation) => operation === "prepare" ? Promise.resolve(prepared) : Promise.reject(new Error("branch already exists"))));
+    target.manualAction.run(target.context);
+    const destination = control("#destination", HTMLInputElement);
+    await vi.waitFor(() => { expect(destination.value).toBe("/repo-worktrees/"); });
+    destination.value = "/repo-worktrees/task";
+    const branch = control("#branch", HTMLInputElement);
+    branch.value = "feature";
     submit();
-    expect(target.request).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => { expect(control("#error", Element).textContent).toContain("branch already exists"); });
+    expect(target.context.refreshProjectWorkspaces).not.toHaveBeenCalled();
+    control("#agent-mode", HTMLButtonElement).click();
+    expect(control("#manual-fields", HTMLElement).hidden).toBe(true);
+    control("#manual-mode", HTMLButtonElement).click();
+    expect(branch.value).toBe("feature");
+    expect(destination.value).toBe("/repo-worktrees/task");
+    expect(control("button[type=submit]", HTMLButtonElement).disabled).toBe(false);
   });
 
   it("cleans up and discards preparation results after disposal", async () => {

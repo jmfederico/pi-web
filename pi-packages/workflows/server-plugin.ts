@@ -72,7 +72,7 @@ const plugin: PiWebServerPluginV5 = {
           const run = await sessions.run({
             projectId: scope.project.id,
             workspaceId: main.id,
-            prompt: worktreeCommand(details.base, details.description),
+            prompt: worktreeCommand(details),
           });
           const logDetails = { projectId: scope.project.id, workspaceId: main.id, sessionId: run.sessionId };
           void run.completion.then((completion) => {
@@ -95,14 +95,24 @@ const plugin: PiWebServerPluginV5 = {
 
 export default plugin;
 
-function dispatchInput(input: JsonValue): { base: string; description: string } {
+interface WorktreeDispatch {
+  base: string;
+  description: string;
+  worktreeParent?: string;
+}
+
+function dispatchInput(input: JsonValue): WorktreeDispatch {
   if (typeof input !== "object" || input === null || Array.isArray(input)
-    || Object.keys(input).some((key) => key !== "base" && key !== "description")) {
-    throw new Error("Dispatch input must contain only base and description");
+    || Object.keys(input).some((key) => key !== "base" && key !== "description" && key !== "worktreeParent")) {
+    throw new Error("Dispatch input must contain base and description, with an optional worktree parent");
   }
+  const rawParent: unknown = Reflect.get(input, "worktreeParent");
+  const worktreeParent = rawParent === undefined ? undefined : boundedString(rawParent, "worktree parent", 4096);
+  if (worktreeParent !== undefined && !isAbsolute(worktreeParent)) throw new Error("Worktree parent must be an absolute path on the project machine");
   return {
     base: boundedString(Reflect.get(input, "base"), "base", 1024),
     description: boundedString(Reflect.get(input, "description"), "description", 16 * 1024),
+    ...(worktreeParent === undefined ? {} : { worktreeParent }),
   };
 }
 
@@ -152,12 +162,13 @@ function boundedString(value: unknown, name: string, maxBytes: number): string {
   return value;
 }
 
-function worktreeCommand(base: string, description: string): string {
+function worktreeCommand({ base, description, worktreeParent }: WorktreeDispatch): string {
   // Pi 1.5.1+ parses quotes before expanding $ARGUMENTS. Keep the formatted
   // text in one single-quoted argument, where `\'` is a literal apostrophe.
   // A backslash before the closing quote would escape it, so trailing
   // backslashes follow the quote, where Pi keeps them as literal text.
-  const details = `base: ${base}\n\ndescription:\n${description}`;
+  const parent = worktreeParent === undefined ? "" : `\nworktree parent: ${JSON.stringify(worktreeParent)}`;
+  const details = `base: ${base}${parent}\n\ndescription:\n${description}`;
   const quoted = details.replace(/\\+$/u, "");
   return `/worktree '${quoted.replaceAll("'", "\\'")}'${details.slice(quoted.length)}`;
 }

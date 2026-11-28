@@ -965,9 +965,10 @@ export class PluginRegistry {
     return !this.gatewayPluginIds.has(sourcePluginId) || this.gatewayMachineSpecificPluginIds.has(sourcePluginId) || machineSpecific;
   }
 
-  getActions(context: PluginRuntimeContext): QualifiedPluginAction[] {
+  getActions(context: PluginRuntimeContext, placement?: PluginAction["placement"]): QualifiedPluginAction[] {
     const selectedMachineId = runtimeContextMachineId(context);
-    return this.actions.filter((action) => this.isContributionActive(action.pluginId, action.machineId, selectedMachineId, action.sourcePluginId)).map((action) => {
+    return this.actions.filter((action) => (placement === undefined || action.placement === placement)
+      && this.isContributionActive(action.pluginId, action.machineId, selectedMachineId, action.sourcePluginId)).map((action) => {
       const scopedContext = pluginRuntimeContextFor(context, action.pluginId);
       const enabled = action.enabled?.(scopedContext);
       const disabledReason = enabled === false ? action.disabledReason?.(scopedContext) : undefined;

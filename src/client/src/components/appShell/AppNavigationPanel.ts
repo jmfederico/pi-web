@@ -40,6 +40,7 @@ export class AppNavigationPanel extends LitElement {
   @property({ attribute: false }) projects: Project[] = [];
   @property({ attribute: false }) selectedProject?: Project;
   @property({ type: Boolean }) workspaceSelectionVisible = true;
+  @property({ attribute: false }) createWorkspaceAction?: Pick<import("../../actions").AppAction, "title" | "run">;
   @property({ attribute: false }) workspaces: Workspace[] = [];
   @property({ attribute: false }) selectedWorkspace?: Workspace;
   @property({ attribute: false }) sessions: SessionInfo[] = [];
@@ -279,6 +280,7 @@ export class AppNavigationPanel extends LitElement {
         style=${styleMap(this.sectionSizeStyle("workspaces"))}
         ?data-manual-size=${!this.compact && this.sectionSizes.height("workspaces") !== undefined}
         .workspaces=${this.workspaces}
+        .createAction=${this.createWorkspaceAction}
         .projectId=${this.selectedProject?.id ?? ""}
         .selected=${this.selectedWorkspace}
         .machineId=${this.selectedMachine?.id ?? "local"}

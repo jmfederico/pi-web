@@ -2,4 +2,4 @@
 "@jmfederico/pi-web": patch
 ---
 
-Set a default folder for new Git worktrees in the selected machine’s General settings.
+Create a Git worktree from the Workspaces **+** without starting an agent, or ask an agent in a new conversation without leaving your current one. Set a default worktree folder for the machine and override it in Project settings.

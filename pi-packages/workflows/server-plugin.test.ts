@@ -122,10 +122,20 @@ describe("Workflows v5 project peer", () => {
     expect(substituteArgs("$ARGUMENTS", args)).toBe(`base: main\n\ndescription:\n${description}`);
   });
 
+  it("passes an explicit parent as a single JSON string in the prompt header", async () => {
+    const f = await fixture();
+    const worktreeParent = join(tmpdir(), `User's folder "with quotes"\nnext line`);
+    await f.request("dispatch", { base: "main", description: "Fix login", worktreeParent });
+    const command = f.run.mock.calls[0]?.[0]?.prompt ?? "";
+    const args = parseCommandArgs(command.slice("/worktree ".length));
+    expect(args).toEqual([`base: main\nworktree parent: ${JSON.stringify(worktreeParent)}\n\ndescription:\nFix login`]);
+  });
+
   it.each([
     null, [], {}, { base: "", description: "purpose" }, { base: "main", description: "  " },
     { base: "main\0", description: "purpose" }, { base: "a".repeat(1025), description: "purpose" },
     { base: "main", description: "é".repeat(8193) }, { base: "main", description: "purpose", workspaceId: "guessed" },
+    { base: "main", description: "purpose", worktreeParent: "../relative" },
   ].map((input) => ({ input })))("rejects invalid dispatch input without creating a session: %j", async ({ input }) => {
     const f = await fixture();
     await expect(f.request("dispatch", input)).rejects.toThrow();

@@ -73,6 +73,37 @@ test("project settings opens from the row menu and returns keyboard focus to its
   await expect(page.locator('project-list [data-project-id="p1"]')).toHaveAttribute("data-current", "true");
 });
 
+test("workspaces plus opens a usable Set path dialog, including on narrow screens", async ({ page }) => {
+  const trigger = page.locator("workspace-list").getByRole("button", { name: "New worktree" });
+  await trigger.focus();
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: "New worktree" });
+  const setPath = dialog.getByRole("button", { name: "Set path" });
+  await expect(setPath).toBeFocused();
+  await expect(setPath).toHaveAttribute("aria-pressed", "true");
+  const destination = dialog.getByRole("textbox", { name: "Destination folder" });
+  await expect(destination).toHaveValue("/mnt/worktrees/");
+  expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await page.screenshot({ path: test.info().outputPath("new-worktree.png") });
+  await dialog.getByRole("button", { name: "Ask an agent" }).click();
+  await expect(dialog.getByRole("textbox", { name: "Purpose or description" })).toBeVisible();
+  await expect(dialog.getByText("Worktree parent folder: /mnt/worktrees")).toBeVisible();
+  await setPath.click();
+  await dialog.getByRole("button", { name: "Browse folders" }).click();
+  await dialog.getByRole("button", { name: "/mnt/team/" }).click();
+  await expect(destination).toBeFocused();
+  await expect(destination).toHaveValue("/mnt/team/");
+  await destination.fill("/mnt/team/fix");
+  await dialog.getByRole("textbox", { name: "New branch name" }).fill("fix");
+  await dialog.getByRole("button", { name: "Create worktree" }).click();
+  await expect(dialog.locator("#status")).toContainText("/mnt/team/fix");
+  await expect(dialog.getByRole("button", { name: "Close" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await expect(page.locator('workspace-list [data-workspace-id="w1"]')).toHaveAttribute("data-current", "true");
+});
+
 test("less-specific themes override navigation presentation across component roots", async ({ page }) => {
   const labels = lists.map(({ host }) => page.locator(host).locator(".ui-nav-row-label").first());
   const positions = await Promise.all(labels.map((label) => label.evaluate((element) => element.getBoundingClientRect().left)));

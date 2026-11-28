@@ -623,6 +623,8 @@ export interface PluginRuntimeContext {
     /** Invalidate plugin workspace-panel data for the selected workspace, optionally targeting one qualified panel id. */
     refreshWorkspacePanels: (panelId?: QualifiedContributionId) => void | Promise<void>;
     refreshAppData: () => void | Promise<void>;
+    /** Re-list the project captured by this context on its machine without navigating. Absent on older hosts. */
+    refreshProjectWorkspaces?: () => void | Promise<void>;
     /** Force a fresh PI WEB release check on the selected machine. Optional for compatibility with older hosts. */
     checkForPiWebUpdates?: () => void | Promise<void>;
     reloadPage: () => void;
@@ -709,6 +711,8 @@ export interface PluginAction {
     /** Former qualified action ids whose saved shortcut preference should still apply. */
     shortcutAliases?: QualifiedContributionId[];
     group?: string;
+    /** The first enabled workspace-create action also appears as a + in the Workspaces heading. */
+    placement?: "workspace-create";
     enabled?: (context: PluginRuntimeContext) => boolean;
     /** Explain why a disabled action is visible but unavailable. */
     disabledReason?: (context: PluginRuntimeContext) => string | undefined;

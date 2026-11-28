@@ -2551,6 +2551,7 @@ export class PiWebApp extends LitElement {
         .compact=${this.appShell.isMobileNavigationLayout}
         .projectsCollapsed=${this.navigationSections.isCollapsed("projects")}
         .workspaceSelectionVisible=${shouldShowWorkspaceSelection(this.state.workspaceResolution)}
+        .createWorkspaceAction=${this.workspaceCreationAction()}
         .workspacesCollapsed=${this.navigationSections.isCollapsed("workspaces")}
         .sessionsCollapsed=${this.navigationSections.isCollapsed("sessions")}
         .workspaceLabelItems=${guard(this.workspaceSurfaceInputs(), () => (workspace: Workspace) => this.workspaceLabelItems(workspace))}
@@ -3147,6 +3148,13 @@ export class PiWebApp extends LitElement {
     return [...pluginActions, ...this.workspaceSurfaceActions(), ...this.sessionActions(), ...this.navigationFocusActions(), ...this.panelLayoutActions()];
   }
 
+  private workspaceCreationAction(): Pick<AppAction, "title" | "run"> | undefined {
+    if (this.state.selectedProject === undefined || this.state.isLoadingWorkspaces || !shouldShowWorkspaceSelection(this.state.workspaceResolution)) return undefined;
+    const action = this.plugins.getActions(this.createPluginRuntimeContext(), "workspace-create").find((candidate) => candidate.enabled !== false);
+    if (action === undefined) return undefined;
+    return { title: action.title, run: () => { this.runAction(action); } };
+  }
+
   private workspaceSurfaceActions(): AppAction[] {
     return [{
       id: "core:workspace.refresh-current",
@@ -3521,6 +3529,7 @@ export class PiWebApp extends LitElement {
 
   private createPluginRuntimeContext(): PluginRuntimeContext {
     const machineId = selectedMachineId(this.state);
+    const projectId = this.state.selectedProject?.id;
     const createContext = (pluginId = "core"): PluginRuntimeContext => installPluginRuntimeScope({
       state: this.state,
       projects: createPluginProjects(projectsApi, machineId),
@@ -3552,6 +3561,11 @@ export class PiWebApp extends LitElement {
       refreshFiles: () => this.invalidateSelectedWorkspaceFiles(),
       refreshWorkspacePanels: (panelId) => this.invalidateWorkspacePanels(panelId),
       refreshAppData: () => this.refreshAppData(),
+      refreshProjectWorkspaces: async () => {
+        if (projectId !== undefined && selectedMachineId(this.state) === machineId) {
+          await this.workspaces.refreshProjectWorkspaces(projectId, machineId);
+        }
+      },
       checkForPiWebUpdates: () => this.piWebStatusController.checkForUpdates().finally(() => { this.schedulePiWebStatusRetry(); }),
       reloadPage: () => { this.hardReloadApp(); },
       deleteWorkspace: (workspace) => this.deleteWorkspace(workspace),
