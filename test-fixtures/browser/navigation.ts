@@ -2,6 +2,7 @@ import { MachineSwitcher } from "../../src/client/src/components/MachineSwitcher
 import { pluginStyles, stylesheetIntegrationCapability } from "../../src/client/src/plugins/styles";
 import { localization } from "../../src/client/src/localization/browser";
 import { createPluginLocalization } from "../../src/client/src/plugins/localization";
+import { createPluginCatalog } from "../../src/client/src/plugins/catalog";
 import { openWorktreeDialog } from "../../pi-packages/workflows/browser/worktreeDialog";
 import worktreeMessages from "../../pi-packages/workflows/browser/workflows.messages";
 import { ProjectList } from "../../src/client/src/components/ProjectList";
@@ -77,6 +78,16 @@ const workflowMessages = workflowLocalization.registerMessages("worktree", workt
 workspaces.createAction = { title: workflowMessages.t("title"), run: () => {
   openWorktreeDialog({
     state: { selectedProject }, refreshAppData: () => undefined,
+    catalog: createPluginCatalog("local", undefined, () => Promise.resolve(workspaces.workspaces)),
+    navigate: ({ machineId, projectId, workspaceId, sessionId, view }) => {
+      const workspace = workspaces.workspaces.find((entry) => entry.projectId === projectId && entry.id === workspaceId);
+      if (machineId !== "local" || workspace === undefined || (sessionId !== undefined && view !== "chat")) {
+        return Promise.reject(new Error("Unexpected navigation destination in fixture"));
+      }
+      workspaces.onSelect?.(workspace);
+      if (typeof sessionId === "string") result.textContent = `sessions:${sessionId}`;
+      return Promise.resolve();
+    },
     projects: {
       machineId: "remote", listProjects: () => Promise.resolve([selectedProject]),
       suggestDirectories: (query) => Promise.resolve(query === "/mnt/" ? [{ path: "/mnt/team/" }] : []),
@@ -84,9 +95,14 @@ workspaces.createAction = { title: workflowMessages.t("title"), run: () => {
     },
   }, { request: (operation, input) => {
     if (operation === "prepare") return Promise.resolve({ workspacePath: "/repo", branches: ["main"], defaultBase: "main", manual: { startingRefs: ["refs/heads/main"] } });
-    if (operation !== "createWorktree" || input === null || typeof input !== "object" || Array.isArray(input)) return Promise.reject(new Error("Unexpected fixture request"));
+    if (operation === "dispatch") return Promise.resolve({ workspaceId: selectedWorkspace.id, sessionId: "fresh-conversation" });
+    if (operation !== "create-worktree" || input === null || typeof input !== "object" || Array.isArray(input)) return Promise.reject(new Error("Unexpected fixture request"));
     const path: unknown = Reflect.get(input, "destination");
-    return typeof path === "string" ? Promise.resolve({ path }) : Promise.reject(new Error("Missing destination"));
+    if (typeof path !== "string") return Promise.reject(new Error("Missing destination"));
+    workspaces.workspaces = [...workspaces.workspaces, {
+      id: "created-worktree", projectId: selectedProject.id, path, label: "Created worktree", isMain: false, effectiveConfig: {},
+    }];
+    return Promise.resolve({ path });
   } }, "manual", workflowLocalization, workflowMessages, stylesheetIntegrationCapability, () => undefined);
 } };
 

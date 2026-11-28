@@ -640,12 +640,12 @@ Open the **Tasks** tab to run a command in a workspace terminal. These command b
 
 ### Workflows
 
-Select **+** next to **Workspaces** to open **New worktree** in **Set path** mode. Both modes also have their own action in the action palette.
+Select **+** next to **Workspaces** to open **New worktree** in **Create manually** mode. Both modes are also available in the action palette and share a **Starting point** field. It defaults to `HEAD` (the main workspace's current commit).
 
-- **Set path:** Browse folders on the project's machine or type the full destination. Enter a new branch name, then choose a local branch, remote branch, or `HEAD` (the main workspace's current commit). PI WEB creates the worktree and refreshes the list without starting an agent or switching workspaces. The project must be registered at a Git checkout root. An existing branch name is rejected, not reused.
-- **Ask an agent:** Choose a base branch and describe the task. The base defaults to the main workspace's current branch or `HEAD` when detached. PI WEB sends `/worktree` in a new conversation in the main workspace without switching away from your current conversation or draft. If you've set a worktree parent folder, the panel shows it and passes it to the agent. Otherwise the agent follows the project's conventions. If dispatch cannot be confirmed, check Sessions in the main workspace before trying again. A started conversation does not mean the worktree is ready.
+- **Create manually:** Enter a worktree name. PI WEB suggests a new branch and shows the path under the project's default worktree folder. You can edit the branch or use **Change location** to browse folders or enter a full path on the project's machine. PI WEB creates the worktree and refreshes the list without starting an agent. Choose **Go to worktree** to open it or **Close** to stay where you are. The project must be registered at a Git checkout root. An existing branch name is rejected, not reused.
+- **Ask an agent:** Describe the task. The agent uses your description to name the worktree and its new branch. PI WEB sends `/worktree` in a new conversation in the main workspace. Choose **Go to conversation** to open it or **Close** to stay with your current conversation and draft. If you've set a worktree parent folder, the panel shows it and passes it to the agent. Otherwise the agent follows the project's conventions. If dispatch cannot be confirmed, check Sessions in the main workspace before trying again. A started conversation does not mean the worktree is ready.
 
-Manage the parent folder in **Project settings…** or in the machine's [Default worktree folder](config.md#default-worktree-folder) setting. Editing the destination in **Set path** does not change either setting. Both modes use the Workflows server plugin on the selected machine.
+Manage the parent folder in **Project settings…** or in the machine's [Default worktree folder](config.md#default-worktree-folder) setting. Changing the location in **New worktree** does not change either setting. Both modes use the Workflows server plugin on the selected machine.
 
 You can also use `/worktree` directly in a conversation with the free-form hint **Purpose and/or base branch**:
 

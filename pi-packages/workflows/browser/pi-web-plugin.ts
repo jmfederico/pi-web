@@ -17,7 +17,7 @@ function isStylesheetIntegration(value: unknown): value is StylesheetIntegration
     && "subscribe" in value && typeof value.subscribe === "function";
 }
 
-type WorktreeContext = Pick<PluginRuntimeContextV5, "state" | "backend" | "catalog" | "projects" | "refreshAppData" | "refreshProjectWorkspaces">;
+type WorktreeContext = Pick<PluginRuntimeContextV5, "state" | "backend" | "catalog" | "navigate" | "projects" | "refreshAppData" | "refreshProjectWorkspaces">;
 function canCreateWorktree({ state, backend }: Pick<WorktreeContext, "state" | "backend">): boolean {
   return state.selectedProject !== undefined && backend !== undefined;
 }

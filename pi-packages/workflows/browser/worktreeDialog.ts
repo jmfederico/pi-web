@@ -3,7 +3,7 @@ import type { JsonObject, JsonValue, LocalizedMessages, PluginLocalization, Plug
 import type definitions from "./workflows.messages.js";
 
 export type WorktreeMode = "manual" | "agent";
-type DialogContext = Pick<PluginRuntimeContextV5, "state" | "projects" | "refreshAppData" | "refreshProjectWorkspaces">;
+type DialogContext = Pick<PluginRuntimeContextV5, "state" | "catalog" | "navigate" | "projects" | "refreshAppData" | "refreshProjectWorkspaces">;
 
 /** Plugin-owned UI; all machine operations go through the captured public context. */
 export function openWorktreeDialog(context: DialogContext, peer: PluginPeer, initialMode: WorktreeMode, localization: PluginLocalization, messages: LocalizedMessages<typeof definitions>, styles: StylesheetIntegrationCapabilityV1, onClose: () => void): () => void {
@@ -28,8 +28,10 @@ export function openWorktreeDialog(context: DialogContext, peer: PluginPeer, ini
       :where(.ui-input) { box-sizing:border-box; width:100%; min-height:44px; padding:8px 12px; border:1px solid var(--pi-border); border-radius:6px; background:var(--pi-bg); color:inherit; font:var(--pi-control-font-size, 16px)/1.4 var(--pi-font, system-ui, sans-serif); }
       :where(.ui-input:focus-visible) { outline:2px solid var(--pi-accent); outline-offset:1px; }
       input, select { direction:ltr; text-align:start; } textarea { resize:vertical; min-height:96px; unicode-bidi:plaintext; }
-      #destination, #branch, #folders button { font-family:var(--pi-mono, monospace); }
-      #browse { margin-top:8px; } #folders { max-height:128px; overflow:auto; }
+      #destination, #default-location, #branch, #starting-point, #folders button { font-family:var(--pi-mono, monospace); }
+      #location { margin-top:16px; } #location-heading { margin:0; font-weight:600; }
+      #default-location { margin-top:4px; }
+      #browse, #change-location { margin-top:8px; } #folders { max-height:128px; overflow:auto; }
       #folders button { display:flex; width:100%; justify-content:flex-start; text-align:start; white-space:normal; overflow-wrap:anywhere; }
       [hidden] { display:none !important; }
       footer { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:16px; }
@@ -46,30 +48,45 @@ export function openWorktreeDialog(context: DialogContext, peer: PluginPeer, ini
       <p id="status" role="status"></p>
       <form>
         <fieldset id="manual-fields" disabled hidden>
-          <label for="destination"></label>
-          <input id="destination" class="ui-input" maxlength="4096" spellcheck="false" autocapitalize="off" required aria-describedby="destination-help">
-          <small id="destination-help"></small>
-          <button type="button" id="browse" class="ui-button ui-button--action" aria-controls="folders" aria-expanded="false"></button>
-          <div id="folders" class="ui-selection-list" hidden><small id="folder-status" role="status"></small><div id="folder-options"></div></div>
+          <label for="worktree-name"></label>
+          <input id="worktree-name" class="ui-input" maxlength="255" spellcheck="false" autocapitalize="off" required>
           <label for="branch"></label>
-          <input id="branch" class="ui-input" maxlength="512" spellcheck="false" autocapitalize="off" required>
+          <input id="branch" class="ui-input" maxlength="512" spellcheck="false" autocapitalize="off" aria-required="true">
+        </fieldset>
+        <fieldset id="starting-point-fields" disabled>
           <label for="starting-point"></label>
-          <select id="starting-point" class="ui-input"><option value="HEAD" id="head"></option></select>
+          <input id="starting-point" class="ui-input" list="branches" value="HEAD" spellcheck="false" autocapitalize="off" required maxlength="512" aria-describedby="starting-point-help">
+          <datalist id="branches"></datalist>
+          <small id="starting-point-help"></small>
+        </fieldset>
+        <fieldset id="location-fields" disabled hidden>
+          <div id="location" role="group" aria-labelledby="location-heading">
+            <p id="location-heading"></p>
+            <small id="default-location" dir="ltr"></small>
+            <button type="button" id="change-location" class="ui-button" aria-controls="location-editor" aria-expanded="false"></button>
+            <div id="location-editor" hidden>
+              <label for="destination"></label>
+              <input id="destination" class="ui-input" maxlength="4096" spellcheck="false" autocapitalize="off" aria-describedby="destination-help">
+              <small id="destination-help"></small>
+              <button type="button" id="browse" class="ui-button ui-button--action" aria-controls="folders" aria-expanded="false"></button>
+              <div id="folders" class="ui-selection-list" hidden><small id="folder-status" role="status"></small><div id="folder-options"></div></div>
+            </div>
+          </div>
         </fieldset>
         <fieldset id="agent-fields" disabled hidden>
           <small id="agent-help"></small>
           <small id="main-workspace"></small>
           <small id="folder-hint" hidden></small>
-          <label for="base"></label>
-          <input id="base" class="ui-input" list="branches" spellcheck="false" autocapitalize="off" required maxlength="512" aria-describedby="base-help">
-          <datalist id="branches"></datalist>
-          <small id="base-help"></small>
           <label for="description"></label>
           <textarea id="description" class="ui-input" dir="auto" required maxlength="8000" aria-describedby="description-help"></textarea>
           <small id="description-help"></small>
         </fieldset>
         <p id="error" role="alert" hidden></p>
-        <footer><button type="button" id="cancel" class="ui-button"></button><button type="submit" class="ui-button ui-button--action ui-button--primary" disabled></button></footer>
+        <footer>
+          <button type="button" id="cancel" class="ui-button"></button>
+          <button type="button" id="go-to-result" class="ui-button ui-button--action ui-button--primary" hidden></button>
+          <button type="submit" class="ui-button ui-button--action ui-button--primary" disabled></button>
+        </footer>
       </form>
     </dialog>`;
   function element<T extends Element>(selector: string, constructor: new () => T): T {
@@ -81,11 +98,16 @@ export function openWorktreeDialog(context: DialogContext, peer: PluginPeer, ini
   const manual = element("#manual-mode", HTMLButtonElement);
   const agent = element("#agent-mode", HTMLButtonElement);
   const manualFields = element("#manual-fields", HTMLFieldSetElement);
+  const startingPointFields = element("#starting-point-fields", HTMLFieldSetElement);
+  const locationFields = element("#location-fields", HTMLFieldSetElement);
   const agentFields = element("#agent-fields", HTMLFieldSetElement);
+  const worktreeName = element("#worktree-name", HTMLInputElement);
   const destination = element("#destination", HTMLInputElement);
+  const locationEditor = element("#location-editor", HTMLDivElement);
+  const locationPreview = element("#default-location", HTMLElement);
+  const changeLocation = element("#change-location", HTMLButtonElement);
   const branch = element("#branch", HTMLInputElement);
-  const startingPoint = element("#starting-point", HTMLSelectElement);
-  const base = element("#base", HTMLInputElement);
+  const startingPoint = element("#starting-point", HTMLInputElement);
   const description = element("#description", HTMLTextAreaElement);
   const browse = element("#browse", HTMLButtonElement);
   const folders = element("#folders", HTMLDivElement);
@@ -93,6 +115,7 @@ export function openWorktreeDialog(context: DialogContext, peer: PluginPeer, ini
   const folderHint = element("#folder-hint", HTMLElement);
   const submit = element("button[type=submit]", HTMLButtonElement);
   const cancel = element("#cancel", HTMLButtonElement);
+  const go = element("#go-to-result", HTMLButtonElement);
   const error = element("#error", HTMLParagraphElement);
   const controller = new AbortController();
   let mode = initialMode;
@@ -100,10 +123,16 @@ export function openWorktreeDialog(context: DialogContext, peer: PluginPeer, ini
   let supportsManual = false;
   let busy = false;
   let finished = false;
+  let resultTarget: { kind: "worktree"; path: string } | { kind: "conversation"; workspaceId: string; sessionId: string } | undefined;
   let workspacePath: string | undefined;
+  let defaultParent: string | undefined;
   let configuredParent: string | undefined;
+  let editingLocation = false;
+  let customLocation = false;
+  let customBranch = false;
   let statusText = () => t("loading");
   let errorText = () => "";
+  let navigationError = () => "";
   let folderStatus = () => "";
   let folderQuery = 0;
 
@@ -113,25 +142,42 @@ export function openWorktreeDialog(context: DialogContext, peer: PluginPeer, ini
     const labels: [string, string][] = [
       ["#title", t("title")], ["#target", t("target", { project: projectName })],
       ["#manual-mode", t("manual")], ["#agent-mode", t("agent")],
+      ["label[for=worktree-name]", t("worktreeName")], ["#location-heading", t("location")],
       ["label[for=destination]", t("destination")], ["#destination-help", t("destinationHelp")],
-      ["label[for=branch]", t("branch")], ["label[for=starting-point]", t("startingPoint")], ["#head", t("head")],
-      ["label[for=base]", t("base")], ["#base-help", t("baseHelp")], ["#agent-help", t("agentHelp")],
+      ["label[for=branch]", t("branch")], ["label[for=starting-point]", t("startingPoint")],
+      ["#starting-point-help", t("startingPointHelp")], ["#agent-help", t("agentHelp")],
       ["label[for=description]", t("description")], ["#description-help", t("descriptionHelp")],
       ["#main-workspace", workspacePath === undefined ? "" : t("workspace", { path: workspacePath })],
       ["#status", ready && !busy && !finished && mode === "manual" && !supportsManual ? t("manualUnavailable") : statusText()],
-      ["#error", errorText()], ["#folder-status", folderStatus()],
+      ["#error", [errorText(), navigationError()].filter(Boolean).join("\n")], ["#folder-status", folderStatus()],
     ];
     for (const [selector, value] of labels) element(selector, HTMLElement).textContent = value;
-    element("#modes", HTMLElement).setAttribute("aria-label", t("mode"));
+    const confirmed = resultTarget !== undefined;
+    const modes = element("#modes", HTMLElement);
+    modes.setAttribute("aria-label", t("mode"));
+    modes.hidden = confirmed;
+    element("#target", HTMLElement).hidden = confirmed;
+    dialog.setAttribute("aria-describedby", confirmed ? "status" : "target");
     manual.setAttribute("aria-pressed", String(mode === "manual"));
     agent.setAttribute("aria-pressed", String(mode === "agent"));
     manual.disabled = agent.disabled = busy || finished;
-    manualFields.hidden = mode !== "manual";
+    manualFields.hidden = mode !== "manual" || confirmed;
     manualFields.disabled = !ready || !supportsManual || busy || finished || manualFields.hidden;
-    agentFields.hidden = mode !== "agent";
+    agentFields.hidden = mode !== "agent" || confirmed;
     agentFields.disabled = !ready || busy || finished || agentFields.hidden;
+    startingPointFields.hidden = confirmed;
+    startingPointFields.disabled = mode === "manual" ? manualFields.disabled : agentFields.disabled;
+    locationFields.hidden = manualFields.hidden;
+    locationFields.disabled = manualFields.disabled;
     folderHint.hidden = configuredParent === undefined;
     folderHint.textContent = configuredParent === undefined ? "" : t("folderHint", { path: configuredParent });
+    const showLocation = ready && supportsManual;
+    locationEditor.hidden = !showLocation || (!editingLocation && defaultParent !== undefined);
+    locationPreview.hidden = !showLocation || !locationEditor.hidden;
+    locationPreview.textContent = destination.value.trim();
+    changeLocation.hidden = !showLocation || defaultParent === undefined;
+    changeLocation.textContent = t(editingLocation ? "hideLocation" : "changeLocation");
+    changeLocation.setAttribute("aria-expanded", String(!locationEditor.hidden));
     browse.hidden = context.projects === undefined;
     browse.textContent = t(folders.hidden === true ? "browse" : "hideFolders");
     browse.setAttribute("aria-expanded", String(folders.hidden === false));
@@ -141,6 +187,9 @@ export function openWorktreeDialog(context: DialogContext, peer: PluginPeer, ini
     submit.textContent = t(mode === "manual" ? "create" : "start");
     cancel.disabled = busy;
     cancel.textContent = t(finished ? "close" : "cancel");
+    go.hidden = !confirmed;
+    go.disabled = busy;
+    go.textContent = t(resultTarget?.kind === "conversation" ? "goToConversation" : "goToWorktree");
   }
   function setMode(next: WorktreeMode) {
     if (mode === next || busy || finished) return;
@@ -166,9 +215,11 @@ export function openWorktreeDialog(context: DialogContext, peer: PluginPeer, ini
         button.dir = "ltr";
         button.textContent = path;
         button.addEventListener("click", () => {
-          destination.value = folderPrefix(path);
+          customLocation = true;
+          const parent = folderPrefix(path);
+          destination.value = parent + folderName(worktreeName.value);
           destination.focus();
-          void listFolders(destination.value);
+          void listFolders(parent);
         });
         folderOptions.append(button);
       }
@@ -193,12 +244,12 @@ export function openWorktreeDialog(context: DialogContext, peer: PluginPeer, ini
       const refs = result["manual"];
       const startingRefs = refs === null || refs === undefined ? undefined : branchList(object(refs)["startingRefs"]);
       workspacePath = text(result["workspacePath"]);
-      base.value = text(result["defaultBase"]);
-      element("#branches", HTMLDataListElement).replaceChildren(...branchList(result["branches"]).map(option));
-      startingPoint.append(...(startingRefs ?? []).map(option));
+      const branches = branchList(result["branches"]);
+      element("#branches", HTMLDataListElement).replaceChildren(...["HEAD", ...(startingRefs ?? branches)].map(option));
       supportsManual = startingRefs !== undefined;
+      defaultParent = folder?.path;
       configuredParent = folder?.configured === true ? folder.path : undefined;
-      if (folder !== undefined) destination.value = folderPrefix(folder.path);
+      updateNameDefaults();
       ready = true;
       statusText = () => "";
     } catch (cause) {
@@ -207,23 +258,30 @@ export function openWorktreeDialog(context: DialogContext, peer: PluginPeer, ini
       errorText = () => errorMessage(cause);
     }
     render();
+    if (ready && mode === "manual" && supportsManual && root.activeElement === manual) worktreeName.focus();
   }
-  async function create(path: string, name: string) {
+  function updateNameDefaults() {
+    const name = folderName(worktreeName.value);
+    if (!customBranch) branch.value = name.replace(/\s+/gu, "-");
+    if (!customLocation && defaultParent !== undefined) destination.value = folderPrefix(defaultParent) + name;
+  }
+  async function create(path: string, name: string, ref: string) {
     statusText = () => t("creating");
     render();
-    let createdPath: string;
+    let pathOnDisk: string;
     let warning: string | undefined;
     try {
-      const result = object(await request("createWorktree", { destination: path, branch: name, base: startingPoint.value }, { signal: controller.signal }));
-      createdPath = text(result["path"]);
+      const result = object(await request("create-worktree", { destination: path, branch: name, base: ref }, { signal: controller.signal }));
+      pathOnDisk = text(result["path"]);
       if (typeof result["warning"] === "string") warning = result["warning"];
     } catch (cause) {
       statusText = () => "";
       errorText = () => t("createFailed", { error: errorMessage(cause) });
       return;
     }
+    resultTarget = { kind: "worktree", path: pathOnDisk };
     finished = true;
-    statusText = () => t("created", { path: createdPath });
+    statusText = () => t("created", { path: pathOnDisk });
     const creationWarning = () => warning === undefined ? "" : t("createWarning", { error: warning });
     errorText = creationWarning;
     if (controller.signal.aborted) return;
@@ -232,6 +290,38 @@ export function openWorktreeDialog(context: DialogContext, peer: PluginPeer, ini
       await (context.refreshProjectWorkspaces ?? context.refreshAppData)();
     } catch (cause) {
       errorText = () => [creationWarning(), t("refreshFailed", { error: errorMessage(cause) })].filter(Boolean).join("\n");
+    }
+  }
+  async function goToResult() {
+    const target = resultTarget;
+    const isClosed = () => controller.signal.aborted;
+    if (target === undefined || busy || isClosed()) return;
+    busy = true;
+    navigationError = () => "";
+    render();
+    try {
+      const scope = { machineId: context.catalog.machineId, projectId };
+      if (target.kind === "conversation") {
+        await context.navigate({ ...scope, workspaceId: target.workspaceId, sessionId: target.sessionId, view: "chat" });
+      } else {
+        const workspaces = await context.catalog.workspaces.list(projectId, { signal: controller.signal });
+        if (isClosed()) return;
+        const workspace = workspaces.find((entry) => !entry.isMain && entry.path === target.path);
+        if (workspace === undefined) {
+          navigationError = () => t("worktreeNotListed");
+          return;
+        }
+        await context.navigate({ ...scope, workspaceId: workspace.id });
+      }
+      close();
+    } catch (cause) {
+      navigationError = () => t(target.kind === "conversation" ? "openConversationFailed" : "openWorktreeFailed", { error: errorMessage(cause) });
+    } finally {
+      busy = false;
+      if (!isClosed()) {
+        render();
+        go.focus();
+      }
     }
   }
   async function dispatch(ref: string, purpose: string) {
@@ -243,7 +333,7 @@ export function openWorktreeDialog(context: DialogContext, peer: PluginPeer, ini
       const result = object(await request("dispatch", {
         base: ref, description: purpose, ...(configuredParent === undefined ? {} : { worktreeParent: configuredParent }),
       }, { signal: controller.signal }));
-      text(result["sessionId"]);
+      resultTarget = { kind: "conversation", workspaceId: text(result["workspaceId"]), sessionId: text(result["sessionId"]) };
       statusText = () => t("started");
     } catch (cause) {
       statusText = () => t("uncertain");
@@ -266,14 +356,32 @@ export function openWorktreeDialog(context: DialogContext, peer: PluginPeer, ini
   }
   manual.addEventListener("click", () => { setMode("manual"); });
   agent.addEventListener("click", () => { setMode("agent"); });
+  worktreeName.addEventListener("input", () => {
+    updateNameDefaults();
+    render();
+  });
+  branch.addEventListener("input", () => { customBranch = true; });
+  changeLocation.addEventListener("click", () => {
+    editingLocation = !editingLocation;
+    if (!editingLocation) {
+      folders.hidden = true;
+      ++folderQuery;
+    }
+    render();
+    if (editingLocation) destination.focus();
+  });
   browse.addEventListener("click", () => {
     folders.hidden = folders.hidden === false;
     if (folders.hidden) ++folderQuery;
-    else void listFolders(browseQuery(destination.value));
+    else void listFolders(browseQuery(!customLocation && defaultParent !== undefined ? folderPrefix(defaultParent) : destination.value));
     render();
   });
-  destination.addEventListener("input", () => { void listFolders(destination.value); });
+  destination.addEventListener("input", () => {
+    customLocation = true;
+    void listFolders(destination.value);
+  });
   cancel.addEventListener("click", close);
+  go.addEventListener("click", () => { void goToResult(); });
   dialog.addEventListener("cancel", (event) => { event.preventDefault(); if (!busy) close(); });
   dialog.addEventListener("close", close);
   element("form", HTMLFormElement).addEventListener("submit", (event) => {
@@ -281,23 +389,46 @@ export function openWorktreeDialog(context: DialogContext, peer: PluginPeer, ini
     if (submit.disabled || controller.signal.aborted || busy) return;
     const path = destination.value.trim();
     const name = branch.value.trim();
-    const ref = base.value.trim();
+    const ref = startingPoint.value.trim();
     const purpose = description.value.trim();
-    const invalid = mode === "manual"
-      ? path === "" || /[\\/]$/u.test(path) || name === ""
-      : ref === "" || purpose === "";
-    if (invalid) {
-      errorText = () => t(mode === "manual" ? "manualRequired" : "required");
+    if (ref === "") {
+      errorText = () => t("startingPointRequired");
+      render();
+      startingPoint.focus();
+      return;
+    }
+    if (mode === "manual") {
+      if (folderName(worktreeName.value) === "") {
+        errorText = () => t("invalidWorktreeName");
+        render();
+        worktreeName.focus();
+        return;
+      }
+      if (name === "") {
+        errorText = () => t("branchRequired");
+        render();
+        branch.focus();
+        return;
+      }
+      if (path === "" || /[\\/]$/u.test(path)) {
+        editingLocation = true;
+        errorText = () => t("invalidLocation");
+        render();
+        destination.focus();
+        return;
+      }
+    } else if (purpose === "") {
+      errorText = () => t("required");
       render();
       return;
     }
     busy = true;
     errorText = () => "";
-    void (mode === "manual" ? create(path, name) : dispatch(ref, purpose)).finally(() => {
+    void (mode === "manual" ? create(path, name, ref) : dispatch(ref, purpose)).finally(() => {
       if (controller.signal.aborted) return;
       busy = false;
       render();
-      if (finished) cancel.focus();
+      if (finished) (resultTarget === undefined ? cancel : go).focus();
     });
   });
   document.body.append(host);
@@ -307,7 +438,15 @@ export function openWorktreeDialog(context: DialogContext, peer: PluginPeer, ini
   return close;
 }
 
-function folderPrefix(path: string): string { return /[\\/]$/u.test(path) ? path : `${path}/`; }
+function folderName(value: string): string {
+  const name = value.trim();
+  return name === "." || name === ".." || /[\\/]/u.test(name) ? "" : name;
+}
+
+function folderPrefix(path: string): string {
+  const separator = path.lastIndexOf("\\") > path.lastIndexOf("/") ? "\\" : "/";
+  return path.endsWith(separator) ? path : path + separator;
+}
 
 function browseQuery(path: string): string {
   // The suggested parent itself may not exist yet. Start one level up so the

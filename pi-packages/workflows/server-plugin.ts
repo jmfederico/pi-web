@@ -34,11 +34,11 @@ const plugin: PiWebServerPluginV5 = {
       peer: {
         async request({ scope, operation, input, signal }) {
           if (scope.kind !== "project") throw new Error("Workflows requires project scope");
-          if (operation !== "prepare" && operation !== "dispatch" && operation !== "createWorktree") {
+          if (operation !== "prepare" && operation !== "dispatch" && operation !== "create-worktree") {
             throw new Error("Unknown Workflows operation");
           }
           const details = operation === "dispatch" ? dispatchInput(input) : undefined;
-          const creation = operation === "createWorktree" ? createWorktreeInput(input) : undefined;
+          const creation = operation === "create-worktree" ? createWorktreeInput(input) : undefined;
           if (catalog === undefined || sessions === undefined) throw new Error("Workflows has not started");
           // Always discover current authority, including when dispatch follows prepare.
           const workspaces = await catalog.workspaces.list(scope.project.id, { signal });
@@ -160,21 +160,25 @@ async function createWorktree(git: Git, cwd: string, input: WorktreeCreation, si
   } catch (cause) {
     // A post-checkout hook can fail after Git has registered the worktree.
     // Keep the original diagnostic if we cannot confirm that outcome.
-    if (!(await hasCreatedWorktree(git, destination, branchRef).catch(() => false))) throw cause;
-    return { path: destination, warning: cause instanceof Error ? cause.message : String(cause) };
+    const path = await confirmedWorktreePath(git, destination, branchRef).catch(() => undefined);
+    if (path === undefined) throw cause;
+    return { path, warning: cause instanceof Error ? cause.message : String(cause) };
   }
-  return { path: destination };
+  // Git discovers linked worktrees under their canonical paths, even when the
+  // destination was entered through a symlink. Creation still succeeded if the path lookup fails.
+  return { path: await realpath(destination).catch(() => destination) };
 }
 
-async function hasCreatedWorktree(git: Git, destination: string, branchRef: string): Promise<boolean> {
+async function confirmedWorktreePath(git: Git, destination: string, branchRef: string): Promise<string | undefined> {
   const path = await realpath(destination);
   const output = await git(["worktree", "list", "--porcelain", "-z"]);
-  return output.split("\0\0").some((record) => {
+  const created = output.split("\0\0").some((record) => {
     const [worktree, ...fields] = record.split("\0");
     return worktree?.startsWith("worktree ") === true
       && resolve(worktree.slice("worktree ".length)) === path
       && fields.includes(`branch ${branchRef}`);
   });
+  return created ? path : undefined;
 }
 
 function boundedString(value: unknown, name: string, maxBytes: number): string {

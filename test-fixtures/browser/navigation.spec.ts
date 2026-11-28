@@ -73,35 +73,89 @@ test("project settings opens from the row menu and returns keyboard focus to its
   await expect(page.locator('project-list [data-project-id="p1"]')).toHaveAttribute("data-current", "true");
 });
 
-test("workspaces plus opens a usable Set path dialog, including on narrow screens", async ({ page }) => {
+test("workspaces plus opens a name-first worktree dialog with an optional location override", async ({ page }) => {
   const trigger = page.locator("workspace-list").getByRole("button", { name: "New worktree" });
   await trigger.focus();
   await trigger.click();
   const dialog = page.getByRole("dialog", { name: "New worktree" });
-  const setPath = dialog.getByRole("button", { name: "Set path" });
-  await expect(setPath).toBeFocused();
-  await expect(setPath).toHaveAttribute("aria-pressed", "true");
-  const destination = dialog.getByRole("textbox", { name: "Destination folder" });
-  await expect(destination).toHaveValue("/mnt/worktrees/");
+  const manual = dialog.getByRole("button", { name: "Create manually" });
+  const name = dialog.getByRole("textbox", { name: "Worktree name" });
+  const branch = dialog.getByRole("textbox", { name: "New branch" });
+  const startingPoint = dialog.getByLabel("Starting point", { exact: true });
+  const destination = dialog.getByRole("textbox", { name: "Folder path" });
+  await expect(name).toBeFocused();
+  await expect(manual).toHaveAttribute("aria-pressed", "true");
+  await name.fill("draft");
+  await page.keyboard.press("Tab");
+  await expect(branch).toBeFocused();
+  await name.fill("fix");
+  await expect(branch).toHaveValue("fix");
+  await expect(dialog.getByText("/mnt/worktrees/fix", { exact: true })).toBeVisible();
+  await expect(destination).toBeHidden();
   expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
   await page.screenshot({ path: test.info().outputPath("new-worktree.png") });
+  await expect(startingPoint).toHaveValue("HEAD");
+  await startingPoint.fill("refs/heads/main");
   await dialog.getByRole("button", { name: "Ask an agent" }).click();
+  await expect(startingPoint).toHaveValue("refs/heads/main");
+  await expect(branch).toBeHidden();
   await expect(dialog.getByRole("textbox", { name: "Purpose or description" })).toBeVisible();
   await expect(dialog.getByText("Worktree parent folder: /mnt/worktrees")).toBeVisible();
-  await setPath.click();
+  await manual.click();
+  await expect(startingPoint).toHaveValue("refs/heads/main");
+  await dialog.getByRole("button", { name: "Change location" }).click();
+  await expect(destination).toBeFocused();
+  await expect(destination).toHaveValue("/mnt/worktrees/fix");
   await dialog.getByRole("button", { name: "Browse folders" }).click();
   await dialog.getByRole("button", { name: "/mnt/team/" }).click();
   await expect(destination).toBeFocused();
-  await expect(destination).toHaveValue("/mnt/team/");
-  await destination.fill("/mnt/team/fix");
-  await dialog.getByRole("textbox", { name: "New branch name" }).fill("fix");
+  await expect(destination).toHaveValue("/mnt/team/fix");
+  await branch.fill("topic/fix");
+  await dialog.getByRole("button", { name: "Hide location options" }).click();
+  await name.fill("renamed");
+  await expect(branch).toHaveValue("topic/fix");
+  await expect(dialog.getByText("/mnt/team/fix", { exact: true })).toBeVisible();
   await dialog.getByRole("button", { name: "Create worktree" }).click();
-  await expect(dialog.locator("#status")).toContainText("/mnt/team/fix");
-  await expect(dialog.getByRole("button", { name: "Close" })).toBeFocused();
-  await page.keyboard.press("Escape");
+  await expect(dialog.getByRole("status")).toContainText("/mnt/team/fix");
+  await expect(name).toBeHidden();
+  await expect(startingPoint).toBeHidden();
+  await expect(manual).toBeHidden();
+  await expect(dialog.getByRole("button", { name: "Go to worktree" })).toBeFocused();
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(trigger).toBeFocused();
   await expect(page.locator('workspace-list [data-workspace-id="w1"]')).toHaveAttribute("data-current", "true");
+});
+
+test("Enter opens the newly created worktree from the confirmation", async ({ page }) => {
+  const list = page.locator("workspace-list");
+  await list.getByRole("button", { name: "New worktree" }).click();
+  const dialog = page.getByRole("dialog", { name: "New worktree" });
+  await dialog.getByRole("textbox", { name: "Worktree name" }).fill("test-worktree");
+  await dialog.getByRole("button", { name: "Create worktree" }).click();
+  await expect(dialog.getByRole("button", { name: "Go to worktree" })).toBeFocused();
+  await expect(list.locator('[data-workspace-id="w1"]')).toHaveAttribute("data-current", "true");
+  await page.keyboard.press("Enter");
+  await expect(dialog).toHaveCount(0);
+  await expect(list.locator('[data-workspace-id="created-worktree"]')).toHaveAttribute("data-current", "true");
+});
+
+test("Enter opens the new agent conversation from the confirmation", async ({ page }) => {
+  await page.locator("workspace-list").getByRole("button", { name: "New worktree" }).click();
+  const dialog = page.getByRole("dialog", { name: "New worktree" });
+  const agent = dialog.getByRole("button", { name: "Ask an agent" });
+  await agent.click();
+  const purpose = dialog.getByRole("textbox", { name: "Purpose or description" });
+  await purpose.fill("Fix a regression");
+  await dialog.getByRole("button", { name: "Start conversation" }).click();
+  await expect(dialog.getByRole("status")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Go to conversation" })).toBeFocused();
+  await expect(purpose).toBeHidden();
+  await expect(agent).toBeHidden();
+  await expect(dialog.getByRole("button", { name: "Close", exact: true })).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator("#last-selected")).toHaveText("sessions:fresh-conversation");
 });
 
 test("less-specific themes override navigation presentation across component roots", async ({ page }) => {

@@ -1,5 +1,5 @@
 import { execFile as nodeExecFile, execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -150,7 +150,7 @@ describe("Workflows v5 project peer", () => {
       { destination: main.path, branch: "--force", base: "HEAD" },
       { destination: main.path, branch: "feature", base: "HEAD", workspaceId: "ignored" },
     ]) {
-      await expect(f.request("createWorktree", input)).rejects.toThrow();
+      await expect(f.request("create-worktree", input)).rejects.toThrow();
     }
     expect(f.execFile).not.toHaveBeenCalled();
     expect(f.run).not.toHaveBeenCalled();
@@ -158,7 +158,7 @@ describe("Workflows v5 project peer", () => {
 
   it("rejects manual creation outside the registered checkout root", async () => {
     const f = await fixture();
-    await expect(f.request("createWorktree", { destination: main.path, branch: "feature", base: "HEAD" }))
+    await expect(f.request("create-worktree", { destination: main.path, branch: "feature", base: "HEAD" }))
       .rejects.toThrow("registered at a Git checkout root");
     expect(f.execFile.mock.calls.some(([command]) => command.args?.[0] === "worktree")).toBe(false);
     expect(f.run).not.toHaveBeenCalled();
@@ -236,7 +236,11 @@ it("creates a new branch at the selected commit without starting a session or mo
   const root = await realpath(await mkdtemp(join(tmpdir(), "manual-worktree-test-")));
   roots.push(root);
   const repo = join(root, "registered repo");
-  const destination = join(root, "worktree parent", "my checkout");
+  const parent = join(root, "worktree parent");
+  const alias = join(root, "parent alias");
+  await mkdir(parent);
+  await symlink(parent, alias, "junction");
+  const destination = join(alias, "my checkout");
   const env = { ...process.env };
   for (const key of Object.keys(env)) if (key.startsWith("GIT_")) Reflect.deleteProperty(env, key);
   const gitAt = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, env, encoding: "utf8" }).trim();
@@ -257,12 +261,12 @@ it("creates a new branch at the selected commit without starting a session or mo
     manual: { startingRefs: ["refs/heads/existing", "refs/heads/main", base] },
   });
   for (const branch of ["existing", "@{-1}"]) {
-    await expect(f.request("createWorktree", { destination, branch, base }, scope))
+    await expect(f.request("create-worktree", { destination, branch, base }, scope))
       .rejects.toThrow(branch === "existing" ? "Branch already exists" : "Git command failed");
     await expect(stat(destination)).rejects.toMatchObject({ code: "ENOENT" });
   }
   expect(git("rev-parse", "refs/heads/existing")).toBe(existingCommit);
-  await expect(f.request("createWorktree", { destination, branch: "topic/new", base }, scope)).resolves.toEqual({ path: destination });
+  await expect(f.request("create-worktree", { destination, branch: "topic/new", base }, scope)).resolves.toEqual({ path: join(parent, "my checkout") });
   expect(gitAt(destination, "symbolic-ref", "HEAD")).toBe("refs/heads/topic/new");
   expect(gitAt(destination, "rev-parse", "HEAD")).toBe(baseCommit);
   expect(git("rev-parse", "HEAD")).toBe(existingCommit);
@@ -288,12 +292,12 @@ it("reports a registered worktree with a warning when its post-checkout hook fai
   const scope = { kind: "project", project: { ...project, path: repo } } as const;
   const input = { destination, branch: "work", base: "HEAD" };
 
-  const result = await f.request("createWorktree", input, scope);
+  const result = await f.request("create-worktree", input, scope);
   expect(result).toHaveProperty("path", destination);
   expect(result).toHaveProperty("warning", expect.stringContaining("checkout setup failed"));
   expect(git(destination, "symbolic-ref", "HEAD")).toBe("refs/heads/work");
-  await expect(f.request("createWorktree", input, scope)).rejects.toThrow("Branch already exists");
-  await expect(f.request("createWorktree", { ...input, branch: "different" }, scope)).rejects.toThrow("Git command failed");
+  await expect(f.request("create-worktree", input, scope)).rejects.toThrow("Branch already exists");
+  await expect(f.request("create-worktree", { ...input, branch: "different" }, scope)).rejects.toThrow("Git command failed");
   expect(f.run).not.toHaveBeenCalled();
 });
 
