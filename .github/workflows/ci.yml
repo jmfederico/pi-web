@@ -34,7 +34,7 @@ jobs:
 
       - name: Save browser failure traces
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: browser-surface-failures
           path: test-results/
