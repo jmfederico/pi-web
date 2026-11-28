@@ -230,8 +230,10 @@ describe("Workflows worktree dialog", () => {
   });
 
   it("creates from the name alone without dispatching or navigating, then re-lists the project", async () => {
-    const path = "/repo-worktrees/fix build";
+    const parent = "/srv/team\\archive";
+    const path = `${parent}/fix: build`;
     const target = setup(vi.fn((operation) => Promise.resolve(operation === "prepare" ? prepared : { path })));
+    target.context.projects.getWorktreeFolder.mockResolvedValue({ path: parent, configured: true });
     expect(target.manualAction.placement).toBe("workspace-create");
     target.manualAction.run(target.context);
     await vi.waitFor(() => { expect(control("#manual-fields", HTMLFieldSetElement).disabled).toBe(false); });
@@ -241,7 +243,7 @@ describe("Workflows worktree dialog", () => {
     submit();
     expect(control("#error", HTMLElement).hidden).toBe(false);
     expect(target.request).toHaveBeenCalledTimes(1);
-    fill("#worktree-name", "fix build");
+    fill("#worktree-name", "fix: build");
     submit(); submit();
     await vi.waitFor(() => { expect(control("#status", Element).textContent).toContain(path); });
     expect(target.request.mock.calls.map((call) => call.slice(0, 2))).toEqual([
@@ -250,6 +252,26 @@ describe("Workflows worktree dialog", () => {
     expect(target.context.refreshProjectWorkspaces).toHaveBeenCalledOnce();
     expect(target.context.navigate).not.toHaveBeenCalled();
     expect(target.context.prompt.insertText).not.toHaveBeenCalled();
+  });
+
+  it("retries the folder lookup without rerunning Git preparation or bypassing the configured parent", async () => {
+    const target = setup();
+    const parent = "/configured parent";
+    target.context.projects.getWorktreeFolder.mockRejectedValueOnce(new Error("Temporary lookup failure"))
+      .mockResolvedValueOnce({ path: parent, configured: true });
+    target.action.run(target.context);
+    await vi.waitFor(() => { expect(control("#error", HTMLElement).textContent).toContain("Temporary lookup failure"); });
+    expect(control("button[type=submit]", HTMLButtonElement).disabled).toBe(true);
+    submit();
+    expect(target.request).toHaveBeenCalledTimes(1);
+    control("#retry-folder", HTMLButtonElement).click();
+    await vi.waitFor(() => { expect(control("button[type=submit]", HTMLButtonElement).disabled).toBe(false); });
+    control("#description", HTMLTextAreaElement).value = "Fix login";
+    submit();
+    await vi.waitFor(() => { expect(control("#status", HTMLElement).textContent).toContain("Conversation started"); });
+    expect(target.request.mock.calls.map((call) => call.slice(0, 2))).toEqual([
+      ["prepare", null], ["dispatch", { base: "HEAD", description: "Fix login", worktreeParent: parent }],
+    ]);
   });
 
   it("retries opening a worktree that was not listed without creating it again", async () => {

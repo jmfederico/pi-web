@@ -1983,6 +1983,8 @@ const catalogs: Record<string, Record<string, string>> = {
     "checkSessions": "{error} Revisa Sesiones antes de reintentar; es posible que ya se haya iniciado una conversación.",
     "workspace": "Espacio de trabajo principal: {path}",
     "loadFailed": "No se pudieron cargar las opciones del árbol de trabajo.",
+    "loadWorktreeFolderFailed": "No se pudo cargar la carpeta predeterminada del árbol de trabajo: {error}",
+    "retryFolder": "Volver a buscar la carpeta",
     "invalidBranches": "Lista de ramas de Workflows no válida.",
     "invalidResponse": "Respuesta de Workflows no válida.",
     "noProject": "Selecciona primero un proyecto.",

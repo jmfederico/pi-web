@@ -148,8 +148,8 @@ async function createWorktree(git: Git, cwd: string, input: WorktreeCreation, si
   await git(["check-ref-format", branchRef]);
   // Do not mistake a worktree that already uses this branch for a new one
   // when checking durable state after a failed add.
-  const existingRefs = await git(["for-each-ref", "--format=%(refname)", branchRef]);
-  if (existingRefs.split(/\r?\n/u).includes(branchRef)) throw new Error(`Branch already exists: ${input.branch}`);
+  const hasBranch = async () => (await git(["for-each-ref", "--format=%(refname)", branchRef])).split(/\r?\n/u).includes(branchRef);
+  if (await hasBranch()) throw new Error(`Branch already exists: ${input.branch}`);
   const commit = (await git(["rev-parse", "--verify", "--end-of-options", `${input.base}^{commit}`])).trim();
   if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(commit)) throw new Error("Git returned an invalid starting commit");
   const destination = resolve(cwd, input.destination);
@@ -160,23 +160,30 @@ async function createWorktree(git: Git, cwd: string, input: WorktreeCreation, si
   } catch (cause) {
     // A post-checkout hook can fail after Git has registered the worktree.
     // Keep the original diagnostic if we cannot confirm that outcome.
-    const path = await confirmedWorktreePath(git, destination, branchRef).catch(() => undefined);
-    if (path === undefined) throw cause;
-    return { path, warning: cause instanceof Error ? cause.message : String(cause) };
+    const path = await confirmedWorktreePath(git, destination, branchRef, commit).catch(() => undefined);
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    if (path !== undefined) return { path, warning: detail };
+    // Git can create the branch before rejecting the destination. Do not delete
+    // it: another Git operation may have created or started using it.
+    if (await hasBranch().catch(() => false)) {
+      throw new Error(`${detail}\nBranch ${input.branch} now exists. Choose a different branch name, or inspect and remove that branch before retrying.`, { cause });
+    }
+    throw cause;
   }
   // Git discovers linked worktrees under their canonical paths, even when the
   // destination was entered through a symlink. Creation still succeeded if the path lookup fails.
   return { path: await realpath(destination).catch(() => destination) };
 }
 
-async function confirmedWorktreePath(git: Git, destination: string, branchRef: string): Promise<string | undefined> {
+async function confirmedWorktreePath(git: Git, destination: string, branchRef: string, commit: string): Promise<string | undefined> {
   const path = await realpath(destination);
   const output = await git(["worktree", "list", "--porcelain", "-z"]);
   const created = output.split("\0\0").some((record) => {
     const [worktree, ...fields] = record.split("\0");
     return worktree?.startsWith("worktree ") === true
       && resolve(worktree.slice("worktree ".length)) === path
-      && fields.includes(`branch ${branchRef}`);
+      && fields.includes(`branch ${branchRef}`)
+      && fields.includes(`HEAD ${commit}`);
   });
   return created ? path : undefined;
 }

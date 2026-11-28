@@ -270,6 +270,24 @@ it("creates a new branch at the selected commit without starting a session or mo
   expect(gitAt(destination, "symbolic-ref", "HEAD")).toBe("refs/heads/topic/new");
   expect(gitAt(destination, "rev-parse", "HEAD")).toBe(baseCommit);
   expect(git("rev-parse", "HEAD")).toBe(existingCommit);
+
+  const occupied = join(root, "occupied");
+  await mkdir(occupied);
+  await writeFile(join(occupied, "existing file"), "keep");
+  await expect(f.request("create-worktree", { destination: occupied, branch: "left-behind", base }, scope))
+    .rejects.toThrow("Branch left-behind now exists. Choose a different branch name");
+  expect(git("rev-parse", "refs/heads/left-behind")).toBe(baseCommit);
+
+  const raced = join(root, "raced");
+  f.execFile.mockImplementation(async (request) => {
+    if (request.args?.[0] === "worktree" && request.args[1] === "add") {
+      git("worktree", "add", "-b", "raced", raced, existingCommit);
+    }
+    return realGit(request);
+  });
+  await expect(f.request("create-worktree", { destination: raced, branch: "raced", base }, scope))
+    .rejects.toThrow("Branch raced now exists");
+  expect(gitAt(raced, "rev-parse", "HEAD")).toBe(existingCommit);
   expect(f.run).not.toHaveBeenCalled();
 });
 

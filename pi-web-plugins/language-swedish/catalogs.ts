@@ -1983,6 +1983,8 @@ const catalogs: Record<string, Record<string, string>> = {
     "checkSessions": "{error} Kontrollera Sessioner innan du försöker igen; en konversation kan redan ha startat.",
     "workspace": "Huvudarbetsyta: {path}",
     "loadFailed": "Kunde inte läsa in alternativ för arbetsträd.",
+    "loadWorktreeFolderFailed": "Kunde inte läsa in standardmappen för arbetsträdet: {error}",
+    "retryFolder": "Försök läsa in mappen igen",
     "invalidBranches": "Ogiltig grenlista från Arbetsflöden.",
     "invalidResponse": "Ogiltigt svar från Arbetsflöden.",
     "noProject": "Välj ett projekt först.",

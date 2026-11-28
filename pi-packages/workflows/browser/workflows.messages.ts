@@ -61,6 +61,8 @@ export default {
   checkSessions: text<{ error: string }>("{error} Check Sessions before trying again; a conversation may already have started.", "Uncertain dispatch recovery; backend error remains unchanged"),
   workspace: text<{ path: string }>("Main workspace: {path}", "Prepared workspace location; path remains unchanged"),
   loadFailed: text("Could not load worktree options.", "Status after preparing the dialog fails"),
+  loadWorktreeFolderFailed: text<{ error: string }>("Could not load the default worktree folder: {error}", "Default folder lookup failure; leave the detail unchanged"),
+  retryFolder: text("Retry folder lookup", "Retry fetching the project's default worktree folder"),
   invalidBranches: text("Invalid branch list from Workflows.", "Malformed backend branch list detected by the browser"),
   invalidResponse: text("Invalid response from Workflows.", "Malformed backend response detected by the browser"),
   noProject: text("Select a project first.", "Dialog cannot open without a selected project"),
