@@ -50,7 +50,7 @@ it("updates CodeMirror hints and accessibility without replacing document, histo
   const content = view.contentDOM;
   await language(editor, "de");
   expect(content.getAttribute("aria-placeholder")).toBe("Schreibe / @ #");
-  expect(content.querySelector(".prompt-placeholder")?.getAttribute("data-placeholder")).toBe("Schreibe / @ #");
+  expect(content.getAttribute("data-placeholder")).toBe("Schreibe / @ #");
   expect(content.textContent).toBe("");
   editor.replaceText("Raw العربية / @ # <tag>");
   view.dispatch({ selection: { anchor: 4, head: 10 } });
@@ -71,7 +71,7 @@ it("updates CodeMirror hints and accessibility without replacing document, histo
   stopStatusChurn = undefined;
   expect(undo(view)).toBe(true);
   expect(view.state.doc.toString()).toBe("");
-  expect(content.querySelector(".prompt-placeholder")?.getAttribute("data-placeholder")).toBe(messages.t("placeholder"));
+  expect(content.getAttribute("data-placeholder")).toBe(messages.t("placeholder"));
 });
 
 it("retains chips, draft and in-flight submission and localizes settled feedback", async () => {

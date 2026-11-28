@@ -10,7 +10,7 @@ afterEach(() => {
   localStorage.clear();
 });
 
-it("keeps the empty prompt hint out of editable text and restores it after clearing", async () => {
+it("keeps the empty prompt hint out of the editable line and restores it after clearing", async () => {
   const editor = new PromptEditor();
   editors.push(editor);
   document.body.append(editor);
@@ -21,16 +21,18 @@ it("keeps the empty prompt hint out of editable text and restores it after clear
   const assertEmptyHint = () => {
     expect(view.state.doc.toString()).toBe("");
     expect(view.contentDOM.textContent).toBe("");
-    const hint = view.contentDOM.querySelector(".prompt-placeholder");
-    expect(hint?.getAttribute("data-placeholder")).toBe(view.contentDOM.getAttribute("aria-placeholder"));
-    expect(hint?.getAttribute("data-placeholder")).toContain("# for models");
-    expect(hint?.closest(".cm-placeholder")?.getAttribute("aria-hidden")).toBe("true");
+    // A widget in the empty line makes iOS place the caret after it and
+    // CodeMirror correct it, which dismisses the native long-press edit menu.
+    expect(view.contentDOM.querySelector(".cm-line")?.innerHTML).toBe("<br>");
+    expect(view.contentDOM.hasAttribute("data-empty")).toBe(true);
+    expect(view.contentDOM.getAttribute("data-placeholder")).toBe(view.contentDOM.getAttribute("aria-placeholder"));
+    expect(view.contentDOM.getAttribute("data-placeholder")).toContain("# for models");
   };
   assertEmptyHint();
 
   editor.replaceText("Hello");
   expect(view.contentDOM.textContent).toBe("Hello");
-  expect(view.contentDOM.querySelector(".cm-placeholder")).toBeNull();
+  expect(view.contentDOM.hasAttribute("data-empty")).toBe(false);
 
   editor.replaceText("");
   assertEmptyHint();
