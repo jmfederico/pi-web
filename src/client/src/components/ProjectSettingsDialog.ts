@@ -46,12 +46,12 @@ export class ProjectSettingsDialog extends LitElement {
   }
 
   private settingsPatch(): ProjectSettingsUpdate | undefined {
-    const project = this.settings?.project;
-    if (project === undefined) return undefined;
+    if (this.settings === undefined) return undefined;
+    const { project, worktreeFolder } = this.settings;
     const name = this.name.trim();
     const folder = this.folder.trim();
     const nameChanged = name !== project.name;
-    const folderChanged = folder !== (project.worktreeFolder ?? "");
+    const folderChanged = worktreeFolder.source !== "environment" && folder !== (project.worktreeFolder ?? "");
     if (!nameChanged && !folderChanged) return undefined;
     const set = {
       ...(nameChanged ? { name } : {}),
@@ -119,6 +119,7 @@ export class ProjectSettingsDialog extends LitElement {
   }
 
   private renderFields({ project, worktreeFolder }: ProjectSettings) {
+    const folderLocked = worktreeFolder.source === "environment";
     return html`
       <p class="hint"><bdi dir="ltr">${project.path}</bdi><br />${messages.t("projectSettingsScope")}</p>
       ${this.saveError === undefined ? null : html`<div class="ui-form-error" role="alert">${messages.t("saveProjectSettingsFailed", { error: this.saveError })}</div>`}
@@ -129,8 +130,8 @@ export class ProjectSettingsDialog extends LitElement {
       </div>
       <div class="ui-form-field">
         <label for="project-worktree-folder">${messages.t("projectWorktreeFolder")}</label>
-        <input class="ui-input" id="project-worktree-folder" name="worktree-folder" type="text" dir="ltr" autocomplete="off" spellcheck="false" aria-describedby="project-worktree-help" ?readonly=${this.submitting} .value=${this.folder} @input=${(event: InputEvent) => { if (event.target instanceof HTMLInputElement) this.folder = event.target.value; }} />
-        <small id="project-worktree-help" class="hint">${messages.t("projectWorktreeHelp")}</small>
+        <input class="ui-input" id="project-worktree-folder" name="worktree-folder" type="text" dir="ltr" autocomplete="off" spellcheck="false" aria-describedby="project-worktree-help" ?readonly=${this.submitting || folderLocked} .value=${this.folder} @input=${(event: InputEvent) => { if (event.target instanceof HTMLInputElement) this.folder = event.target.value; }} />
+        <small id="project-worktree-help" class="hint">${messages.t(folderLocked ? "projectWorktreeLocked" : "projectWorktreeHelp")}</small>
       </div>
       <dl class="effective-folder">
         <dt>${messages.t("savedWorktreeFolder")}</dt>

@@ -212,9 +212,11 @@ export function openWorktreeDialog(context: DialogContext, peer: PluginPeer, ini
     statusText = () => t("creating");
     render();
     let createdPath: string;
+    let warning: string | undefined;
     try {
       const result = object(await request("createWorktree", { destination: path, branch: name, base: startingPoint.value }, { signal: controller.signal }));
       createdPath = text(result["path"]);
+      if (typeof result["warning"] === "string") warning = result["warning"];
     } catch (cause) {
       statusText = () => "";
       errorText = () => t("createFailed", { error: errorMessage(cause) });
@@ -222,12 +224,14 @@ export function openWorktreeDialog(context: DialogContext, peer: PluginPeer, ini
     }
     finished = true;
     statusText = () => t("created", { path: createdPath });
+    const creationWarning = () => warning === undefined ? "" : t("createWarning", { error: warning });
+    errorText = creationWarning;
     if (controller.signal.aborted) return;
     render();
     try {
       await (context.refreshProjectWorkspaces ?? context.refreshAppData)();
     } catch (cause) {
-      errorText = () => t("refreshFailed", { error: errorMessage(cause) });
+      errorText = () => [creationWarning(), t("refreshFailed", { error: errorMessage(cause) })].filter(Boolean).join("\n");
     }
   }
   async function dispatch(ref: string, purpose: string) {

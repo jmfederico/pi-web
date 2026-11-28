@@ -238,6 +238,26 @@ describe("Workflows worktree dialog", () => {
     expect(target.context.prompt.insertText).not.toHaveBeenCalled();
   });
 
+  it("refreshes Workspaces and prevents retry after confirmed creation with a Git warning", async () => {
+    const path = "/repo-worktrees/task";
+    const warning = "checkout setup failed";
+    const target = setup(vi.fn((operation) => Promise.resolve(operation === "prepare" ? prepared : { path, warning })));
+    target.manualAction.run(target.context);
+    const destination = control("#destination", HTMLInputElement);
+    await vi.waitFor(() => { expect(destination.value).toBe("/repo-worktrees/"); });
+    destination.value = path;
+    control("#branch", HTMLInputElement).value = "feature";
+    submit();
+    await vi.waitFor(() => { expect(control("#cancel", HTMLButtonElement).disabled).toBe(false); });
+
+    expect(control("#status", Element).textContent).toContain(path);
+    expect(control("#error", Element).textContent).toContain(warning);
+    expect(target.context.refreshProjectWorkspaces).toHaveBeenCalledOnce();
+    expect(control("button[type=submit]", HTMLButtonElement).hidden).toBe(true);
+    submit();
+    expect(target.request).toHaveBeenCalledTimes(2);
+  });
+
   it("allows fixing a rejected branch without losing entered fields when switching modes", async () => {
     const target = setup(vi.fn((operation) => operation === "prepare" ? Promise.resolve(prepared) : Promise.reject(new Error("branch already exists"))));
     target.manualAction.run(target.context);

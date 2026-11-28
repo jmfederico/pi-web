@@ -1,5 +1,5 @@
 import { execFile as nodeExecFile, execFileSync } from "node:child_process";
-import { mkdtemp, realpath, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -257,7 +257,8 @@ it("creates a new branch at the selected commit without starting a session or mo
     manual: { startingRefs: ["refs/heads/existing", "refs/heads/main", base] },
   });
   for (const branch of ["existing", "@{-1}"]) {
-    await expect(f.request("createWorktree", { destination, branch, base }, scope)).rejects.toThrow("Git command failed");
+    await expect(f.request("createWorktree", { destination, branch, base }, scope))
+      .rejects.toThrow(branch === "existing" ? "Branch already exists" : "Git command failed");
     await expect(stat(destination)).rejects.toMatchObject({ code: "ENOENT" });
   }
   expect(git("rev-parse", "refs/heads/existing")).toBe(existingCommit);
@@ -265,6 +266,34 @@ it("creates a new branch at the selected commit without starting a session or mo
   expect(gitAt(destination, "symbolic-ref", "HEAD")).toBe("refs/heads/topic/new");
   expect(gitAt(destination, "rev-parse", "HEAD")).toBe(baseCommit);
   expect(git("rev-parse", "HEAD")).toBe(existingCommit);
+  expect(f.run).not.toHaveBeenCalled();
+});
+
+it("reports a registered worktree with a warning when its post-checkout hook fails", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "worktree-hook-test-")));
+  roots.push(root);
+  const repo = join(root, "repo");
+  const destination = join(root, "new checkout");
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) if (key.startsWith("GIT_")) Reflect.deleteProperty(env, key);
+  const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, env, encoding: "utf8" }).trim();
+  git(root, "init", "-b", "main", repo);
+  git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "initial");
+  const hooks = join(root, "hooks");
+  await mkdir(hooks);
+  await writeFile(join(hooks, "post-checkout"), "#!/bin/sh\necho 'checkout setup failed' >&2\nexit 1\n", { mode: 0o755 });
+  git(repo, "config", "core.hooksPath", hooks);
+  const f = await fixture(realGit);
+  f.list.mockResolvedValue([{ ...main, path: repo }]);
+  const scope = { kind: "project", project: { ...project, path: repo } } as const;
+  const input = { destination, branch: "work", base: "HEAD" };
+
+  const result = await f.request("createWorktree", input, scope);
+  expect(result).toHaveProperty("path", destination);
+  expect(result).toHaveProperty("warning", expect.stringContaining("checkout setup failed"));
+  expect(git(destination, "symbolic-ref", "HEAD")).toBe("refs/heads/work");
+  await expect(f.request("createWorktree", input, scope)).rejects.toThrow("Branch already exists");
+  await expect(f.request("createWorktree", { ...input, branch: "different" }, scope)).rejects.toThrow("Git command failed");
   expect(f.run).not.toHaveBeenCalled();
 });
 

@@ -35,6 +35,7 @@ export default {
   projectSettingsScope: message("These settings are saved on this machine, not in the project folder.", "Project settings storage scope"),
   projectWorktreeFolder: message("Worktree folder override", "Project worktree parent folder override field"),
   projectWorktreeHelp: message("Use an absolute path or a path relative to the project folder. Clear this field to use the machine default.", "How to set or clear the project worktree folder override"),
+  projectWorktreeLocked: message("The machine’s enforced default takes precedence over this override.", "Read-only project worktree folder help when the machine default is enforced"),
   savedWorktreeFolder: message("Effective folder (saved)", "Currently resolved parent folder for new worktrees, before any unsaved edits"),
   folderSourceProject: message("Project override", "Source of the effective worktree folder"),
   folderSourceMachine: message("Machine default", "Source of the effective worktree folder"),

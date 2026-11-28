@@ -31,6 +31,7 @@ export default {
   creating: text("Creating worktree…", "Manual creation in progress"),
   created: text<{ path: string }>("Worktree created at {path}.", "Manual creation success; path is unchanged"),
   createFailed: text<{ error: string }>("Could not confirm creation: {error}", "Manual creation failure; leave the detail unchanged"),
+  createWarning: text<{ error: string }>("Git reported an error while creating the worktree: {error}", "Worktree creation was confirmed despite a Git error; leave the detail unchanged"),
   refreshFailed: text<{ error: string }>("Could not refresh Workspaces. Use Refresh to update the list. {error}", "Creation succeeded but the list refresh failed"),
   manualUnavailable: text("Set path requires a project registered at a Git checkout root and support on its machine.", "Manual operation is not supported for this project"),
   manualRequired: text("Enter a destination with a folder name and a new branch name.", "Inline validation for incomplete manual fields"),

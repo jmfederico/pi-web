@@ -44,6 +44,25 @@ describe("project settings dialog", () => {
     expect(onSubmit).toHaveBeenCalledExactlyOnceWith({ unset: ["/worktreeFolder"] });
   });
 
+  it("locks an enforced folder without touching the saved override when renaming", async () => {
+    const onSubmit = vi.fn(() => Promise.resolve());
+    const enforcedBy = "PI_WEB_DEFAULT_WORKTREE_FOLDER";
+    const path = "/enforced/app";
+    const dialog = await mountDialog(onSubmit, () => Promise.resolve({
+      ...settings, worktreeFolder: { path, source: "environment", enforcedBy },
+    }));
+    expect(input(dialog, "worktree-folder").readOnly).toBe(true);
+    expect(input(dialog, "worktree-folder").value).toBe("trees");
+    expect(dialog.shadowRoot?.textContent).toContain(path);
+    expect(dialog.shadowRoot?.textContent).toContain(enforcedBy);
+    expect(input(dialog, "name").readOnly).toBe(false);
+
+    await type(dialog, "name", "Billing");
+    submitButton(dialog).click();
+    await settleRenderedDialog(dialog);
+    expect(onSubmit).toHaveBeenCalledExactlyOnceWith({ set: { name: "Billing" } });
+  });
+
   it("keeps edits and allows retry after a save error", async () => {
     const onSubmit = vi.fn<(update: ProjectSettingsUpdate) => Promise<void>>().mockRejectedValueOnce(new Error("Project not found")).mockResolvedValueOnce(undefined);
     const dialog = await mountDialog(onSubmit);

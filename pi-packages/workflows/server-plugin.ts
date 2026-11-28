@@ -1,3 +1,4 @@
+import { realpath } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import {
   PI_WEB_HOST_CATALOG_CAPABILITY,
@@ -143,15 +144,37 @@ async function isCheckoutRoot(git: Git, projectPath: string, workspacePath: stri
 
 async function createWorktree(git: Git, cwd: string, input: WorktreeCreation, signal: AbortSignal): Promise<JsonValue> {
   // Check the literal ref: `check-ref-format --branch` can expand @{-1}.
-  await git(["check-ref-format", `refs/heads/${input.branch}`]);
+  const branchRef = `refs/heads/${input.branch}`;
+  await git(["check-ref-format", branchRef]);
+  // Do not mistake a worktree that already uses this branch for a new one
+  // when checking durable state after a failed add.
+  const existingRefs = await git(["for-each-ref", "--format=%(refname)", branchRef]);
+  if (existingRefs.split(/\r?\n/u).includes(branchRef)) throw new Error(`Branch already exists: ${input.branch}`);
   const commit = (await git(["rev-parse", "--verify", "--end-of-options", `${input.base}^{commit}`])).trim();
   if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(commit)) throw new Error("Git returned an invalid starting commit");
   const destination = resolve(cwd, input.destination);
   signal.throwIfAborted();
-  // Git owns the atomic branch collision check. Never use -B, --force or a
-  // branch-less add, all of which can change or reuse an existing branch.
-  await git(["worktree", "add", "--no-track", "-b", input.branch, "--", destination, commit]);
+  // Git still owns the atomic collision check; the read above is not a lock.
+  try {
+    await git(["worktree", "add", "--no-track", "-b", input.branch, "--", destination, commit]);
+  } catch (cause) {
+    // A post-checkout hook can fail after Git has registered the worktree.
+    // Keep the original diagnostic if we cannot confirm that outcome.
+    if (!(await hasCreatedWorktree(git, destination, branchRef).catch(() => false))) throw cause;
+    return { path: destination, warning: cause instanceof Error ? cause.message : String(cause) };
+  }
   return { path: destination };
+}
+
+async function hasCreatedWorktree(git: Git, destination: string, branchRef: string): Promise<boolean> {
+  const path = await realpath(destination);
+  const output = await git(["worktree", "list", "--porcelain", "-z"]);
+  return output.split("\0\0").some((record) => {
+    const [worktree, ...fields] = record.split("\0");
+    return worktree?.startsWith("worktree ") === true
+      && resolve(worktree.slice("worktree ".length)) === path
+      && fields.includes(`branch ${branchRef}`);
+  });
 }
 
 function boundedString(value: unknown, name: string, maxBytes: number): string {
